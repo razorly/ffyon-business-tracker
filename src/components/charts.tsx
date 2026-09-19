@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import {
   Area,
   AreaChart,
@@ -237,9 +237,17 @@ export interface Slice {
 
 export function CategoryDonut({ data, centreLabel }: { data: Slice[]; centreLabel: string }) {
   const total = data.reduce((s, d) => s + d.value, 0);
+  const [hovering, setHovering] = useState(false);
   return (
     <div className="flex flex-col items-center gap-4">
       <div className="relative h-[180px] w-[180px] shrink-0">
+        {/* Centre label sits beneath the chart so the hover tooltip always draws over it */}
+        <div
+          className={`pointer-events-none absolute inset-0 flex flex-col items-center justify-center transition-opacity ${hovering ? "opacity-0" : ""}`}
+        >
+          <span className="eyebrow text-[10px] text-ink-2">{centreLabel}</span>
+          <span className="font-display text-[24px] leading-tight">{moneyCompact(total)}</span>
+        </div>
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
             <Pie
@@ -250,7 +258,9 @@ export function CategoryDonut({ data, centreLabel }: { data: Slice[]; centreLabe
               outerRadius={86}
               paddingAngle={0}
               stroke="var(--surface)"
-              strokeWidth={2}
+              strokeWidth={data.length > 1 ? 2 : 0}
+              onMouseEnter={() => setHovering(true)}
+              onMouseLeave={() => setHovering(false)}
               startAngle={90}
               endAngle={-270}
             >
@@ -259,6 +269,7 @@ export function CategoryDonut({ data, centreLabel }: { data: Slice[]; centreLabe
               ))}
             </Pie>
             <Tooltip
+              wrapperStyle={{ zIndex: 20 }}
               content={({ active, payload }) => {
                 if (!active || !payload?.length) return null;
                 const s = payload[0].payload as Slice;
@@ -267,10 +278,6 @@ export function CategoryDonut({ data, centreLabel }: { data: Slice[]; centreLabe
             />
           </PieChart>
         </ResponsiveContainer>
-        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-          <span className="eyebrow text-[10px] text-ink-2">{centreLabel}</span>
-          <span className="font-display text-[24px] leading-tight">{moneyCompact(total)}</span>
-        </div>
       </div>
       <ul className="w-full space-y-2">
         {data.map((d) => (
