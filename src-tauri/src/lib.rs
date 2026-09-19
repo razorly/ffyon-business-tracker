@@ -62,6 +62,16 @@ fn migrations() -> Vec<Migration> {
             UPDATE categories SET colour = '#b0305a' WHERE colour = '#e34948';
         "#,
         kind: MigrationKind::Up,
+    },
+    Migration {
+        version: 3,
+        description: "category_default_amount",
+        // Optional usual price per category. Only ever prefills a NEW entry's amount —
+        // entries already saved keep the amount they were saved with.
+        sql: r#"
+            ALTER TABLE categories ADD COLUMN default_pence INTEGER;
+        "#,
+        kind: MigrationKind::Up,
     }]
 }
 

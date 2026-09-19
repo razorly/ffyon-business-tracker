@@ -13,7 +13,7 @@ import {
 } from "@/lib/db";
 import { useData, useLoad } from "@/lib/data";
 import { taxYear } from "@/lib/dates";
-import { isoDate } from "@/lib/format";
+import { isoDate, money, parseAmount, penceToInput } from "@/lib/format";
 import { exportSpreadsheet, loadBackup, saveBackup } from "@/lib/export";
 import { nextColour, PALETTE, themedColour } from "@/lib/palette";
 import { useTheme, type ThemePref } from "@/lib/theme";
@@ -51,7 +51,9 @@ function CategoriesCard({ type }: { type: TxType }) {
         title={type === "income" ? "Income categories" : "Expense categories"}
         subtitle={type === "income" ? "The services and products you sell" : "What you spend money on"}
         action={
-          <Button size="sm" onClick={() => setEditing({ name: "", type, colour: nextColour(cats.map((c) => c.colour)) })}>
+          <Button size="sm" onClick={() =>
+              setEditing({ name: "", type, colour: nextColour(cats.map((c) => c.colour)), default_pence: null })
+            }>
             <Plus size={14} /> Add
           </Button>
         }
@@ -61,6 +63,11 @@ function CategoriesCard({ type }: { type: TxType }) {
           <li key={c.id} className="group flex items-center justify-between rounded-lg px-3 py-2">
             <span className="flex items-center gap-2.5 text-sm">
               <Swatch colour={themedColour(c.colour, dark)} className="h-3 w-3" /> {c.name}
+              {c.default_pence != null && (
+                <span className="tabular rounded-full bg-surface-2 px-2 py-0.5 text-[12px] text-ink-2">
+                  {money(c.default_pence)}
+                </span>
+              )}
             </span>
             <span className="flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
               <Button variant="ghost" size="icon" onClick={() => setEditing(c)} aria-label={`Edit ${c.name}`}>
@@ -120,18 +127,25 @@ function CategoryForm({
   const { dark } = useTheme();
   const [name, setName] = useState("");
   const [colour, setColour] = useState(PALETTE[0].light);
+  const [usual, setUsual] = useState("");
   const [last, setLast] = useState<typeof category>(null);
   if (category !== last) {
     setLast(category);
     setName(category?.name ?? "");
     setColour(category?.colour ?? PALETTE[0].light);
+    setUsual(category?.default_pence != null ? penceToInput(category.default_pence) : "");
   }
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!category || !name.trim()) return;
-    if (category.id) await updateCategory({ ...(category as Category), name: name.trim(), colour });
-    else await createCategory({ name: name.trim(), type: category.type!, colour });
+    const defaultPence = usual.trim() ? parseAmount(usual) : null;
+    if (usual.trim() && defaultPence == null) return;
+    if (category.id) {
+      await updateCategory({ ...(category as Category), name: name.trim(), colour, default_pence: defaultPence });
+    } else {
+      await createCategory({ name: name.trim(), type: category.type!, colour, default_pence: defaultPence });
+    }
     toast.success(category.id ? "Category updated" : "Category added");
     onSaved();
   };
@@ -141,6 +155,21 @@ function CategoryForm({
       <form onSubmit={submit} className="space-y-4">
         <Field label="Name">
           <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Rapid Tan" />
+        </Field>
+        <Field
+          label="Usual price (optional)"
+          hint="Fills in the amount when you pick this category on a new entry. Change it any time — entries you've already saved keep their own amount."
+        >
+          <div className="relative">
+            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted">£</span>
+            <Input
+              inputMode="decimal"
+              placeholder="Leave blank for none"
+              className="pl-7 tabular"
+              value={usual}
+              onChange={(e) => setUsual(e.target.value)}
+            />
+          </div>
         </Field>
         <Field label="Colour">
           <div className="flex flex-wrap gap-2">

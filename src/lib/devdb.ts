@@ -11,6 +11,7 @@ import type { Db } from "./db";
 export async function createDevDb(): Promise<Db> {
   const SQL = await initSqlJs({ locateFile: () => wasmUrl });
   const db = new SQL.Database();
+  // Migrations must use a Rust raw string (r#"…"#) so they are picked up here too.
   for (const m of rustSource.matchAll(/sql: r#"([\s\S]*?)"#/g)) db.exec(m[1]);
 
   const bind = (params: unknown[] = []) =>

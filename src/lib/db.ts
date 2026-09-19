@@ -7,6 +7,8 @@ export interface Category {
   name: string;
   type: TxType;
   colour: string;
+  /** Usual price, in pence. Prefills the amount on a new entry only — saved entries keep their own amount. */
+  default_pence: number | null;
 }
 
 export interface Client {
@@ -73,16 +75,22 @@ export async function listCategories(type?: TxType): Promise<Category[]> {
 
 export async function createCategory(c: Omit<Category, "id">) {
   const db = await getDb();
-  await db.execute("INSERT INTO categories (name, type, colour) VALUES ($1, $2, $3)", [
+  await db.execute("INSERT INTO categories (name, type, colour, default_pence) VALUES ($1, $2, $3, $4)", [
     c.name,
     c.type,
     c.colour,
+    c.default_pence,
   ]);
 }
 
 export async function updateCategory(c: Category) {
   const db = await getDb();
-  await db.execute("UPDATE categories SET name = $1, colour = $2 WHERE id = $3", [c.name, c.colour, c.id]);
+  await db.execute("UPDATE categories SET name = $1, colour = $2, default_pence = $3 WHERE id = $4", [
+    c.name,
+    c.colour,
+    c.default_pence,
+    c.id,
+  ]);
 }
 
 export async function deleteCategory(id: number) {
@@ -321,12 +329,10 @@ export async function restoreAll(b: Backup) {
   await db.execute("DELETE FROM clients");
   await db.execute("DELETE FROM categories");
   for (const c of b.categories) {
-    await db.execute("INSERT INTO categories (id, name, type, colour) VALUES ($1, $2, $3, $4)", [
-      c.id,
-      c.name,
-      c.type,
-      c.colour,
-    ]);
+    await db.execute(
+      "INSERT INTO categories (id, name, type, colour, default_pence) VALUES ($1, $2, $3, $4, $5)",
+      [c.id, c.name, c.type, c.colour, c.default_pence ?? null],
+    );
   }
   for (const c of b.clients) {
     await db.execute(

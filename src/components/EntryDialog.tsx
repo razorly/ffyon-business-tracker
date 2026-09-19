@@ -30,6 +30,8 @@ export function EntryDialog() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // true while the amount box still holds a category default the user hasn't touched
+  const [amountIsDefault, setAmountIsDefault] = useState(false);
   const [saving, setSaving] = useState(false);
   const amountRef = useRef<HTMLInputElement>(null);
 
@@ -40,12 +42,19 @@ export function EntryDialog() {
       setCategories(cats);
       setClients(cls);
       const t = editing?.type ?? entry.type;
+      const first = cats.find((c) => c.type === t);
       setType(t);
       setDate(editing?.date ?? isoDate(new Date()));
-      setAmount(editing ? penceToInput(editing.amount_pence) : "");
-      setCategoryId(
-        editing ? String(editing.category_id ?? "") : String(cats.find((c) => c.type === t)?.id ?? ""),
+      // A category's usual price only ever prefills a new entry; an existing entry keeps its own amount.
+      setAmount(
+        editing
+          ? penceToInput(editing.amount_pence)
+          : first?.default_pence != null
+            ? penceToInput(first.default_pence)
+            : "",
       );
+      setAmountIsDefault(!editing && first?.default_pence != null);
+      setCategoryId(editing ? String(editing.category_id ?? "") : String(first?.id ?? ""));
       const cid = editing?.client_id ?? entry.clientId ?? null;
       setClient({ id: cid, name: cid ? (cls.find((c) => c.id === cid)?.name ?? "") : "" });
       setDescription(editing?.description ?? "");
@@ -58,7 +67,18 @@ export function EntryDialog() {
 
   const switchType = (t: TxType) => {
     setType(t);
-    setCategoryId(String(categories.find((c) => c.type === t)?.id ?? ""));
+    pickCategory(String(categories.find((c) => c.type === t)?.id ?? ""));
+  };
+
+  /** Selecting a category fills in its usual price, unless the user has typed an amount of their own. */
+  const pickCategory = (id: string) => {
+    setCategoryId(id);
+    if (editing) return; // never rewrite the amount on an entry that already exists
+    const usual = categories.find((c) => String(c.id) === id)?.default_pence ?? null;
+    if (!amount.trim() || amountIsDefault) {
+      setAmount(usual != null ? penceToInput(usual) : "");
+      setAmountIsDefault(usual != null);
+    }
   };
 
   const submit = async (e: React.FormEvent) => {
@@ -138,7 +158,10 @@ export function EntryDialog() {
                 placeholder="0.00"
                 className="pl-7 tabular"
                 value={amount}
-                onChange={(e) => setAmount(e.target.value)}
+                onChange={(e) => {
+                  setAmount(e.target.value);
+                  setAmountIsDefault(false);
+                }}
               />
             </div>
           </Field>
@@ -146,9 +169,15 @@ export function EntryDialog() {
             <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
           </Field>
         </div>
+        {amountIsDefault && (
+          <p className="-mt-2 text-xs text-muted">
+            Usual price for {typeCategories.find((c) => String(c.id) === categoryId)?.name} — just type over it if this
+            one was different.
+          </p>
+        )}
 
         <Field label="Category">
-          <Select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+          <Select value={categoryId} onChange={(e) => pickCategory(e.target.value)}>
             <option value="">Uncategorised</option>
             {typeCategories.map((c) => (
               <option key={c.id} value={c.id}>
