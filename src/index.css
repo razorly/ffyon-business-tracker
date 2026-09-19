@@ -1,0 +1,119 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+:root {
+  color-scheme: light;
+  --page: #f6f4f1;
+  --surface: #fdfcfb;
+  --surface-2: #f1eee9;
+  --ink: #1b1714;
+  --ink-2: #57514b;
+  --muted: #8b847c;
+  --border: rgba(27, 23, 20, 0.09);
+  --grid: #e6e2dc;
+  --axis: #c9c3ba;
+
+  --accent: #a9531d;
+  --accent-hover: #914515;
+  --accent-ink: #ffffff;
+  --accent-soft: #f6e6da;
+
+  --good: #006300;
+  --bad: #c22f2f;
+
+  /* Chart series — validated reference palette (light) */
+  --series-income: #2a78d6;
+  --series-expense: #eb6834;
+  --series-neg: #e34948;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0f0e0d;
+  --surface: #1a1918;
+  --surface-2: #242220;
+  --ink: #f6f3ef;
+  --ink-2: #c6bfb6;
+  --muted: #8e877f;
+  --border: rgba(255, 255, 255, 0.08);
+  --grid: #2c2a28;
+  --axis: #3d3a37;
+
+  --accent: #e39058;
+  --accent-hover: #eca273;
+  --accent-ink: #1b1110;
+  --accent-soft: #3a2619;
+
+  --good: #2fb32f;
+  --bad: #ef6b6b;
+
+  /* Chart series — validated reference palette (dark) */
+  --series-income: #3987e5;
+  --series-expense: #d95926;
+  --series-neg: #e66767;
+}
+
+@theme inline {
+  --color-page: var(--page);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-muted: var(--muted);
+  --color-line: var(--border);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-good: var(--good);
+  --color-bad: var(--bad);
+  --color-income: var(--series-income);
+  --color-expense: var(--series-expense);
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+input,
+textarea,
+select,
+td {
+  user-select: text;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Recharts focus outline off — hover tooltips carry interaction */
+.recharts-wrapper *:focus {
+  outline: none;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--grid);
+  border-radius: 8px;
+  border: 2px solid var(--page);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
