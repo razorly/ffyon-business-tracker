@@ -1,6 +1,6 @@
 [package]
 name = "ffyon-tracker"
-version = "0.2.1"
+version = "0.3.0"
 description = "Income and expense tracker for Ffyon"
 authors = ["you"]
 edition = "2021"
