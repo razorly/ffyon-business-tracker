@@ -113,7 +113,7 @@ export function EntryDialog() {
               value: "income",
               label: (
                 <span className="inline-flex items-center gap-1.5">
-                  <ArrowDownLeft size={14} className="text-good" /> Money in
+                  <ArrowDownLeft size={14} /> Money in
                 </span>
               ),
             },
@@ -121,7 +121,7 @@ export function EntryDialog() {
               value: "expense",
               label: (
                 <span className="inline-flex items-center gap-1.5">
-                  <ArrowUpRight size={14} className="text-bad" /> Money out
+                  <ArrowUpRight size={14} /> Money out
                 </span>
               ),
             },

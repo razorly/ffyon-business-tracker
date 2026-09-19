@@ -24,24 +24,24 @@ export function KpiCard({
   const showDelta = delta !== undefined;
   const good = delta != null && (upIsGood ? delta >= 0 : delta <= 0);
   return (
-    <Card className={cn("p-5", hero && "bg-gradient-to-br from-accent-soft to-surface")}>
+    <Card className={cn("p-5", hero && "bg-accent text-accent-ink border-transparent")}>
       <div className="flex items-center justify-between">
-        <span className="text-[13px] font-medium text-ink-2">{label}</span>
-        {icon && <span className="text-muted">{icon}</span>}
+        <span className={cn("eyebrow", hero ? "text-accent-ink/80" : "text-ink-2")}>{label}</span>
+        {icon && <span className={hero ? "text-accent-ink/70" : "text-rose"}>{icon}</span>}
       </div>
-      <div className={cn("mt-2 font-semibold tracking-tight", hero ? "text-[32px]" : "text-[26px]")}>{value}</div>
+      <div className={cn("mt-2 font-display leading-none", hero ? "text-[40px]" : "text-[32px]")}>{value}</div>
       {showDelta && (
-        <div className="mt-1.5 flex items-center gap-1.5 text-[12px]">
+        <div className="mt-2.5 flex items-center gap-1.5 text-[12px]">
           {delta == null ? (
-            <span className="text-muted">No data for {deltaLabel ?? "last period"}</span>
+            <span className={hero ? "text-accent-ink/70" : "text-muted"}>No data for {deltaLabel ?? "last period"}</span>
           ) : (
             <>
-              <span className={cn("inline-flex items-center gap-0.5 font-medium", good ? "text-good" : "text-bad")}>
+              <span className={cn("inline-flex items-center gap-0.5 font-medium", hero ? "text-accent-ink" : good ? "text-good" : "text-bad")}>
                 {delta >= 0 ? <TrendingUp size={13} /> : <TrendingDown size={13} />}
                 {delta >= 0 ? "+" : ""}
                 {delta.toFixed(0)}%
               </span>
-              <span className="text-muted">vs {deltaLabel ?? "last period"}</span>
+              <span className={hero ? "text-accent-ink/70" : "text-muted"}>vs {deltaLabel ?? "last period"}</span>
             </>
           )}
         </div>

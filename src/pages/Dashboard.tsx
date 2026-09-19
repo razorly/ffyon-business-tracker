@@ -44,7 +44,7 @@ export function Dashboard() {
 
   return (
     <>
-      <PageHeader title={`${greeting()} ✨`} subtitle={`Here's how ${format(now, "MMMM")} is going`} />
+      <PageHeader title={greeting()} subtitle={`Here's how ${format(now, "MMMM")} is going`} />
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <KpiCard
@@ -108,19 +108,19 @@ export function Dashboard() {
             <Card>
               <CardHeader title="Tax year so far" subtitle={`${tax.label} · from 6 April`} />
               <div className="grid grid-cols-2 gap-3 px-5 pb-4">
-                <div className="rounded-xl bg-surface-2 p-3">
-                  <div className="text-[12px] text-muted">Income</div>
-                  <div className="mt-0.5 text-lg font-semibold">{money(taxIncome)}</div>
+                <div className="rounded-2xl bg-surface-2 p-3.5">
+                  <div className="eyebrow text-[10px] text-ink-2">Income</div>
+                  <div className="mt-1.5 font-display text-[22px] leading-none">{money(taxIncome)}</div>
                 </div>
-                <div className="rounded-xl bg-surface-2 p-3">
-                  <div className="text-[12px] text-muted">Profit</div>
-                  <div className={`mt-0.5 text-lg font-semibold ${taxProfit < 0 ? "text-bad" : ""}`}>
+                <div className="rounded-2xl bg-surface-2 p-3.5">
+                  <div className="eyebrow text-[10px] text-ink-2">Profit</div>
+                  <div className={`mt-1.5 font-display text-[22px] leading-none ${taxProfit < 0 ? "text-bad" : ""}`}>
                     {money(taxProfit)}
                   </div>
                 </div>
               </div>
               <div className="px-5 pb-5">
-                <div className="mb-3 text-[13px] font-medium text-ink-2">Income by service</div>
+                <div className="eyebrow mb-3 text-ink-2">Income by service</div>
                 {cats.length ? (
                   <CategoryDonut
                     centreLabel="Income"
@@ -144,7 +144,7 @@ export function Dashboard() {
               <CardHeader
                 title="Recent entries"
                 action={
-                  <Link to="/monthly" className="text-[13px] font-medium text-accent hover:underline">
+                  <Link to="/monthly" className="eyebrow text-ink-2 underline decoration-rose underline-offset-4 hover:text-ink">
                     View all
                   </Link>
                 }

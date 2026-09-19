@@ -1,57 +1,62 @@
 @import "tailwindcss";
+@import "@fontsource/dm-serif-display/latin-400.css";
+@import "@fontsource-variable/jost/wght.css";
 
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
+/* Brand: blush pink, deep chocolate, dusty rose — serif display + spaced caps */
 :root {
   color-scheme: light;
-  --page: #f6f4f1;
-  --surface: #fdfcfb;
-  --surface-2: #f1eee9;
-  --ink: #1b1714;
-  --ink-2: #57514b;
-  --muted: #8b847c;
-  --border: rgba(27, 23, 20, 0.09);
-  --grid: #e6e2dc;
-  --axis: #c9c3ba;
+  --page: #f4d8ce;
+  --surface: #fdf3ef;
+  --surface-2: #f8e3db;
+  --ink: #4a2414;
+  --ink-2: #74483a;
+  --muted: #8f6a5c;
+  --border: rgba(74, 36, 20, 0.12);
+  --grid: #f0dbd2;
+  --axis: #ddc0b4;
+  --rose: #d9918a;
 
-  --accent: #a9531d;
-  --accent-hover: #914515;
-  --accent-ink: #ffffff;
-  --accent-soft: #f6e6da;
+  --accent: #4a2414;
+  --accent-hover: #5f3120;
+  --accent-ink: #fdf3ef;
+  --accent-soft: #f6d3c9;
 
-  --good: #006300;
-  --bad: #c22f2f;
+  --good: #2c7a3a;
+  --bad: #b3261e;
 
-  /* Chart series — validated reference palette (light) */
-  --series-income: #2a78d6;
-  --series-expense: #eb6834;
-  --series-neg: #e34948;
+  /* Chart series — brand palette, validated for colour-blind separation (light) */
+  --series-income: #9c4a2a;
+  --series-expense: #e8798f;
+  --series-neg: #b0305a;
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --page: #0f0e0d;
-  --surface: #1a1918;
-  --surface-2: #242220;
-  --ink: #f6f3ef;
-  --ink-2: #c6bfb6;
-  --muted: #8e877f;
-  --border: rgba(255, 255, 255, 0.08);
-  --grid: #2c2a28;
-  --axis: #3d3a37;
+  --page: #1c110c;
+  --surface: #2a1a14;
+  --surface-2: #36231b;
+  --ink: #f8e1d8;
+  --ink-2: #d9b8aa;
+  --muted: #a88a7d;
+  --border: rgba(248, 225, 216, 0.1);
+  --grid: #3a261d;
+  --axis: #54392c;
+  --rose: #e0968d;
 
-  --accent: #e39058;
-  --accent-hover: #eca273;
-  --accent-ink: #1b1110;
-  --accent-soft: #3a2619;
+  --accent: #eea69b;
+  --accent-hover: #f4b8ae;
+  --accent-ink: #2a1a14;
+  --accent-soft: #45281f;
 
-  --good: #2fb32f;
-  --bad: #ef6b6b;
+  --good: #5cc26a;
+  --bad: #f07a70;
 
-  /* Chart series — validated reference palette (dark) */
-  --series-income: #3987e5;
-  --series-expense: #d95926;
-  --series-neg: #e66767;
+  /* Chart series — brand palette (dark steps) */
+  --series-income: #a9552f;
+  --series-expense: #dc6a86;
+  --series-neg: #b0366a;
 }
 
 @theme inline {
@@ -62,6 +67,7 @@
   --color-ink-2: var(--ink-2);
   --color-muted: var(--muted);
   --color-line: var(--border);
+  --color-rose: var(--rose);
   --color-accent: var(--accent);
   --color-accent-hover: var(--accent-hover);
   --color-accent-ink: var(--accent-ink);
@@ -70,7 +76,8 @@
   --color-bad: var(--bad);
   --color-income: var(--series-income);
   --color-expense: var(--series-expense);
-  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --font-sans: "Jost Variable", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "DM Serif Display", Georgia, "Times New Roman", serif;
 }
 
 html,
@@ -84,7 +91,7 @@ body {
   background: var(--page);
   color: var(--ink);
   font-family: var(--font-sans);
-  font-size: 14px;
+  font-size: 14.5px;
   -webkit-font-smoothing: antialiased;
   user-select: none;
 }
@@ -100,7 +107,15 @@ td {
   font-variant-numeric: tabular-nums;
 }
 
-/* Recharts focus outline off — hover tooltips carry interaction */
+/* Spaced capitals, like "SPRAY TAN • GLOW • BELONG" */
+.eyebrow {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+/* Recharts focus outline off â€” hover tooltips carry interaction */
 .recharts-wrapper *:focus {
   outline: none;
 }

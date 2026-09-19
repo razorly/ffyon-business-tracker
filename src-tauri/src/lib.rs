@@ -47,6 +47,21 @@ fn migrations() -> Vec<Migration> {
                 ('Other', 'expense', '#008300');
         "#,
         kind: MigrationKind::Up,
+    },
+    Migration {
+        version: 2,
+        description: "brand_palette",
+        sql: r#"
+            UPDATE categories SET colour = '#9c4a2a' WHERE colour = '#2a78d6';
+            UPDATE categories SET colour = '#e8798f' WHERE colour = '#eb6834';
+            UPDATE categories SET colour = '#2f7fcf' WHERE colour = '#1baf7a';
+            UPDATE categories SET colour = '#dca021' WHERE colour = '#eda100';
+            UPDATE categories SET colour = '#7a4aa0' WHERE colour = '#e87ba4';
+            UPDATE categories SET colour = '#1c9a78' WHERE colour = '#008300';
+            UPDATE categories SET colour = '#e0603a' WHERE colour = '#4a3aa7';
+            UPDATE categories SET colour = '#b0305a' WHERE colour = '#e34948';
+        "#,
+        kind: MigrationKind::Up,
     }]
 }
 

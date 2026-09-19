@@ -29,8 +29,8 @@ interface TipRow {
 
 function TooltipCard({ title, rows, footer }: { title: string; rows: TipRow[]; footer?: ReactNode }) {
   return (
-    <div className="min-w-[160px] rounded-xl border border-line bg-surface px-3 py-2.5 text-[13px] shadow-lg">
-      <div className="mb-1.5 font-semibold text-ink">{title}</div>
+    <div className="min-w-[170px] rounded-2xl border border-line bg-surface px-3.5 py-3 text-[13px] shadow-lg">
+      <div className="mb-1.5 font-display text-[16px] text-ink">{title}</div>
       {rows.map((r) => (
         <div key={r.label} className="flex items-center justify-between gap-4 py-0.5">
           <span className="flex items-center gap-2 text-ink-2">
@@ -268,8 +268,8 @@ export function CategoryDonut({ data, centreLabel }: { data: Slice[]; centreLabe
           </PieChart>
         </ResponsiveContainer>
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-          <span className="text-[11px] uppercase tracking-wide text-muted">{centreLabel}</span>
-          <span className="text-lg font-semibold">{moneyCompact(total)}</span>
+          <span className="eyebrow text-[10px] text-ink-2">{centreLabel}</span>
+          <span className="font-display text-[24px] leading-tight">{moneyCompact(total)}</span>
         </div>
       </div>
       <ul className="w-full space-y-2">

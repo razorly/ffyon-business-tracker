@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { CalendarDays, LayoutDashboard, Plus, Settings, Sun, Users } from "lucide-react";
+import { CalendarDays, Heart, LayoutDashboard, Plus, Settings, Users } from "lucide-react";
 import { useData } from "@/lib/data";
 import { cn } from "@/lib/utils";
 import { Button } from "./ui";
@@ -15,15 +15,19 @@ export function Layout() {
   const { openNewEntry } = useData();
   return (
     <div className="flex h-full">
-      <aside className="flex w-60 shrink-0 flex-col border-r border-line bg-surface px-3 py-5">
-        <div className="mb-6 flex items-center gap-2.5 px-2">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-[#e8a15f] to-[#a9531d] text-white shadow-sm">
-            <Sun size={19} strokeWidth={2.25} />
+      <aside className="flex w-60 shrink-0 flex-col border-r border-line bg-surface px-4 py-6">
+        <div className="mb-7 px-2 pt-1 text-center">
+          <div className="relative inline-block font-display text-[40px] leading-[0.95] text-ink">
+            Ffyon
+            <Heart
+              size={18}
+              strokeWidth={2.5}
+              className="absolute -right-6 top-1 rotate-12 text-rose"
+              aria-hidden
+            />
           </div>
-          <div className="leading-tight">
-            <div className="font-semibold">Ffyon</div>
-            <div className="text-[12px] text-muted">Business Tracker</div>
-          </div>
+          <div className="eyebrow mt-1.5 text-[10px] text-ink-2">Business Tracker</div>
+          <div className="mx-auto mt-3 h-px w-3/4 bg-rose" />
         </div>
 
         <Button variant="primary" className="mb-5 w-full" onClick={() => openNewEntry()}>
@@ -38,8 +42,8 @@ export function Layout() {
               end={to === "/"}
               className={({ isActive }) =>
                 cn(
-                  "flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors",
-                  isActive ? "bg-accent-soft text-accent" : "text-ink-2 hover:bg-surface-2 hover:text-ink",
+                  "flex items-center gap-3 rounded-full px-4 py-2.5 text-[14.5px] font-medium transition-colors",
+                  isActive ? "bg-accent-soft text-ink" : "text-ink-2 hover:bg-surface-2 hover:text-ink",
                 )
               }
             >
@@ -48,7 +52,7 @@ export function Layout() {
           ))}
         </nav>
 
-        <div className="mt-auto px-2 text-[11px] text-muted">Data is stored on this computer.</div>
+        <div className="eyebrow mt-auto text-center text-[9.5px] text-muted">Track · Glow · Grow</div>
       </aside>
 
       <main className="min-w-0 flex-1 overflow-y-auto">
@@ -64,8 +68,9 @@ export function PageHeader({ title, subtitle, children }: { title: string; subti
   return (
     <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
-        {subtitle && <p className="mt-1 text-sm text-muted">{subtitle}</p>}
+        <h1 className="font-display text-[38px] leading-none text-ink">{title}</h1>
+        <div className="mt-3 h-px w-16 bg-rose" />
+        {subtitle && <p className="eyebrow mt-3 text-ink-2">{subtitle}</p>}
       </div>
       {children && <div className="flex items-center gap-2">{children}</div>}
     </div>

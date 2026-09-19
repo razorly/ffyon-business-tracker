@@ -62,7 +62,7 @@ export function Clients() {
           <div className="flex items-center justify-between gap-3 px-5 pt-4 pb-3">
             <div className="relative">
               <Search size={15} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
-              <Input className="w-60 pl-8" placeholder="Search clients" value={search} onChange={(e) => setSearch(e.target.value)} />
+              <Input className="w-60 rounded-full pl-8" placeholder="Search clients" value={search} onChange={(e) => setSearch(e.target.value)} />
             </div>
             <div className="flex items-center gap-1 text-[13px] text-muted">
               Sort
@@ -71,8 +71,8 @@ export function Clients() {
                   key={k}
                   onClick={() => setSort(k)}
                   className={cn(
-                    "rounded-md px-2 py-1 font-medium cursor-pointer",
-                    sort === k ? "bg-surface-2 text-ink" : "hover:text-ink",
+                    "rounded-full px-2.5 py-1 font-medium cursor-pointer",
+                    sort === k ? "bg-accent-soft text-ink" : "hover:text-ink",
                   )}
                 >
                   {k === "recent" ? "Recent" : k === "total" ? "Top spend" : "A–Z"}
@@ -88,7 +88,7 @@ export function Clients() {
           ) : (
             <table className="w-full text-[13.5px]">
               <thead>
-                <tr className="border-y border-line bg-surface-2/50 text-left text-[12px] uppercase tracking-wide text-muted">
+                <tr className="eyebrow border-y border-line bg-surface-2/60 text-left text-ink-2">
                   <th className="py-2 pl-5 pr-3 font-medium">Client</th>
                   <th className="px-3 py-2 text-right font-medium">Visits</th>
                   <th className="px-3 py-2 text-right font-medium">Spent</th>
@@ -100,7 +100,7 @@ export function Clients() {
                   <tr
                     key={c.id}
                     onClick={() => setSelectedId(c.id)}
-                    className={cn("cursor-pointer hover:bg-surface-2/50", selectedId === c.id && "bg-accent-soft/60 hover:bg-accent-soft/60")}
+                    className={cn("cursor-pointer hover:bg-surface-2/50", selectedId === c.id && "bg-accent-soft hover:bg-accent-soft")}
                   >
                     <td className="py-2.5 pl-5 pr-3">
                       <div className="flex items-center gap-2.5">
@@ -131,7 +131,7 @@ export function Clients() {
                 <div className="flex items-center gap-3">
                   <Avatar name={selected.name} large />
                   <div>
-                    <div className="text-base font-semibold">{selected.name}</div>
+                    <div className="font-display text-[24px] leading-tight">{selected.name}</div>
                     <div className="text-[13px] text-muted">{selected.phone || "No phone number"}</div>
                   </div>
                 </div>
@@ -151,7 +151,7 @@ export function Clients() {
                 <MiniStat label="Average" value={selected.visits ? money(Math.round(selected.total_pence / selected.visits)) : "—"} />
               </div>
               <div className="flex items-center justify-between px-5 pt-5 pb-2">
-                <span className="text-[13px] font-semibold">History</span>
+                <span className="eyebrow text-ink-2">History</span>
                 <Button size="sm" onClick={() => openNewEntry("income", selected.id)}>
                   <Plus size={14} /> Log visit
                 </Button>
@@ -270,8 +270,8 @@ function Avatar({ name, large }: { name: string; large?: boolean }) {
   return (
     <span
       className={cn(
-        "flex shrink-0 items-center justify-center rounded-full bg-accent-soft font-semibold text-accent",
-        large ? "h-11 w-11 text-sm" : "h-8 w-8 text-[12px]",
+        "flex shrink-0 items-center justify-center rounded-full bg-accent-soft font-display text-ink",
+        large ? "h-12 w-12 text-[18px]" : "h-8 w-8 text-[13px]",
       )}
     >
       {initials || "?"}
@@ -282,8 +282,8 @@ function Avatar({ name, large }: { name: string; large?: boolean }) {
 function MiniStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-xl bg-surface-2 px-3 py-2.5">
-      <div className="text-[11.5px] text-muted">{label}</div>
-      <div className="mt-0.5 text-[15px] font-semibold">{value}</div>
+      <div className="eyebrow text-[10px] text-ink-2">{label}</div>
+      <div className="mt-1 font-display text-[19px] leading-none">{value}</div>
     </div>
   );
 }

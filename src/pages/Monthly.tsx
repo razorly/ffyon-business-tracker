@@ -70,11 +70,11 @@ export function Monthly() {
   return (
     <>
       <PageHeader title="Monthly view" subtitle="Every entry for the month, with totals">
-        <div className="flex items-center gap-1 rounded-xl border border-line bg-surface p-1">
+        <div className="flex items-center gap-1 rounded-full border border-line bg-surface p-1">
           <Button variant="ghost" size="icon" onClick={() => setMonth((m) => subMonths(m, 1))} aria-label="Previous month">
             <ChevronLeft size={16} />
           </Button>
-          <span className="w-36 text-center text-sm font-semibold">{format(month, "MMMM yyyy")}</span>
+          <span className="w-40 text-center font-display text-[18px]">{format(month, "MMMM yyyy")}</span>
           <Button variant="ghost" size="icon" onClick={() => setMonth((m) => addMonths(m, 1))} aria-label="Next month">
             <ChevronRight size={16} />
           </Button>
@@ -125,7 +125,7 @@ export function Monthly() {
             <div className="relative">
               <Search size={15} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
               <Input
-                className="w-56 pl-8"
+                className="w-60 rounded-full pl-8"
                 placeholder="Search client, category, note"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -145,7 +145,7 @@ export function Monthly() {
           <div className="overflow-x-auto">
             <table className="w-full text-[13.5px]">
               <thead>
-                <tr className="border-y border-line bg-surface-2/50 text-left text-[12px] uppercase tracking-wide text-muted">
+                <tr className="eyebrow border-y border-line bg-surface-2/60 text-left text-ink-2">
                   <SortTh label="Date" active={sort.key === "date"} desc={sort.desc} onClick={() => toggleSort("date")} className="pl-5" />
                   <th className="px-3 py-2 font-medium">Category</th>
                   <th className="px-3 py-2 font-medium">Client</th>
@@ -218,9 +218,9 @@ export function Monthly() {
 
 function Stat({ label, value, tone, strong }: { label: string; value: string; tone?: "good" | "bad"; strong?: boolean }) {
   return (
-    <Card className={cn("px-5 py-4", strong && "bg-gradient-to-br from-accent-soft to-surface")}>
-      <div className="text-[13px] font-medium text-ink-2">{label}</div>
-      <div className={cn("mt-1 text-[22px] font-semibold tracking-tight", tone === "good" && "text-good", tone === "bad" && "text-bad")}>
+    <Card className={cn("px-5 py-4", strong && "border-transparent bg-accent text-accent-ink")}>
+      <div className={cn("eyebrow", strong ? "text-accent-ink/80" : "text-ink-2")}>{label}</div>
+      <div className={cn("mt-2 font-display text-[28px] leading-none", !strong && tone === "good" && "text-good", !strong && tone === "bad" && "text-bad")}>
         {value}
       </div>
     </Card>
@@ -242,7 +242,7 @@ function SortTh({
 }) {
   return (
     <th className={cn("px-3 py-2 font-medium", className)}>
-      <button onClick={onClick} className={cn("inline-flex items-center gap-1 uppercase cursor-pointer", active && "text-ink")}>
+      <button onClick={onClick} className={cn("eyebrow inline-flex items-center gap-1 cursor-pointer", active && "text-ink")}>
         {label}
         {active && (desc ? <ArrowDown size={12} /> : <ArrowUp size={12} />)}
       </button>

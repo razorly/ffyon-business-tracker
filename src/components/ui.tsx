@@ -12,10 +12,10 @@ export const Button = forwardRef<
   <button
     ref={ref}
     className={cn(
-      "inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-colors cursor-pointer",
+      "inline-flex items-center justify-center gap-2 rounded-full font-medium tracking-wide transition-colors cursor-pointer",
       "disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
-      size === "md" && "h-9 px-3.5 text-sm",
-      size === "sm" && "h-8 px-2.5 text-[13px]",
+      size === "md" && "h-9 px-4 text-sm",
+      size === "sm" && "h-8 px-3 text-[13px]",
       size === "icon" && "h-8 w-8",
       variant === "primary" && "bg-accent text-accent-ink hover:bg-accent-hover shadow-sm",
       variant === "secondary" && "bg-surface border border-line text-ink hover:bg-surface-2",
@@ -29,7 +29,7 @@ export const Button = forwardRef<
 
 export function Card({ className, children }: { className?: string; children: ReactNode }) {
   return (
-    <div className={cn("rounded-2xl border border-line bg-surface shadow-[0_1px_2px_rgba(0,0,0,0.03)]", className)}>
+    <div className={cn("rounded-3xl border border-line bg-surface shadow-[0_1px_3px_rgba(74,36,20,0.05)]", className)}>
       {children}
     </div>
   );
@@ -39,7 +39,7 @@ export function CardHeader({ title, subtitle, action }: { title: string; subtitl
   return (
     <div className="flex items-start justify-between gap-4 px-5 pt-4 pb-2">
       <div>
-        <h3 className="text-[15px] font-semibold text-ink">{title}</h3>
+        <h3 className="font-display text-[19px] leading-tight text-ink">{title}</h3>
         {subtitle && <p className="mt-0.5 text-[13px] text-muted">{subtitle}</p>}
       </div>
       {action}
@@ -48,8 +48,8 @@ export function CardHeader({ title, subtitle, action }: { title: string; subtitl
 }
 
 const fieldBase =
-  "w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink placeholder:text-muted " +
-  "focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent";
+  "w-full rounded-xl border border-line bg-surface px-3 text-sm text-ink placeholder:text-muted " +
+  "focus:outline-none focus:ring-2 focus:ring-rose/50 focus:border-rose";
 
 export const Input = forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
   ({ className, ...props }, ref) => <input ref={ref} className={cn(fieldBase, "h-9", className)} {...props} />,
@@ -68,7 +68,7 @@ export const Select = forwardRef<HTMLSelectElement, React.SelectHTMLAttributes<H
 export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
   return (
     <label className="block">
-      <span className="mb-1.5 block text-[13px] font-medium text-ink-2">{label}</span>
+      <span className="eyebrow mb-1.5 block text-ink-2">{label}</span>
       {children}
       {hint && <span className="mt-1 block text-xs text-muted">{hint}</span>}
     </label>
@@ -87,15 +87,15 @@ export function Segmented<T extends string>({
   className?: string;
 }) {
   return (
-    <div className={cn("inline-flex rounded-lg bg-surface-2 p-0.5", className)}>
+    <div className={cn("inline-flex rounded-full bg-surface-2 p-1", className)}>
       {options.map((o) => (
         <button
           key={o.value}
           type="button"
           onClick={() => onChange(o.value)}
           className={cn(
-            "flex-1 whitespace-nowrap rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors cursor-pointer",
-            value === o.value ? "bg-surface text-ink shadow-sm" : "text-muted hover:text-ink",
+            "flex-1 whitespace-nowrap rounded-full px-3.5 py-1.5 text-[13px] font-medium transition-colors cursor-pointer",
+            value === o.value ? "bg-accent text-accent-ink shadow-sm" : "text-ink-2 hover:text-ink",
           )}
         >
           {o.label}
@@ -129,21 +129,21 @@ export function Modal({
   if (!open) return null;
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/45" onClick={onClose} />
+      <div className="absolute inset-0 bg-[#2a1208]/45" onClick={onClose} />
       <div
         ref={panel}
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className={cn("relative w-full rounded-2xl border border-line bg-surface shadow-2xl", width)}
+        className={cn("relative w-full rounded-3xl border border-line bg-surface shadow-2xl", width)}
       >
-        <div className="flex items-center justify-between px-5 pt-4">
-          <h2 className="text-base font-semibold">{title}</h2>
+        <div className="flex items-center justify-between px-6 pt-5">
+          <h2 className="font-display text-[22px]">{title}</h2>
           <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close">
             <X size={16} />
           </Button>
         </div>
-        <div className="px-5 pb-5 pt-3">{children}</div>
+        <div className="px-6 pb-6 pt-3">{children}</div>
       </div>
     </div>,
     document.body,
@@ -187,10 +187,10 @@ export function ConfirmModal({
 export function EmptyState({ icon, title, children }: { icon: ReactNode; title: string; children?: ReactNode }) {
   return (
     <div className="flex flex-col items-center justify-center py-12 text-center">
-      <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-accent-soft text-accent">
+      <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-accent-soft text-rose">
         {icon}
       </div>
-      <p className="font-medium">{title}</p>
+      <p className="font-display text-lg">{title}</p>
       {children && <div className="mt-1 text-[13px] text-muted">{children}</div>}
     </div>
   );

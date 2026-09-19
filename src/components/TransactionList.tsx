@@ -20,7 +20,7 @@ export function TransactionList({ rows, showDate = true }: { rows: TransactionRo
               <span
                 className={cn(
                   "flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
-                  income ? "bg-good/10 text-good" : "bg-bad/10 text-bad",
+                  income ? "bg-accent-soft text-ink" : "bg-surface-2 text-rose",
                 )}
               >
                 {income ? <ArrowDownLeft size={15} /> : <ArrowUpRight size={15} />}

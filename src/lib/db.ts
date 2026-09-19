@@ -251,7 +251,7 @@ export async function categoryTotals(type: TxType, from: string, to: string): Pr
   const db = await getDb();
   return db.select<CategoryTotal[]>(
     `SELECT cat.id AS id, COALESCE(cat.name, 'Uncategorised') AS name,
-       COALESCE(cat.colour, '#8b847c') AS colour, SUM(t.amount_pence) AS total
+       COALESCE(cat.colour, '#a88a7d') AS colour, SUM(t.amount_pence) AS total
      FROM transactions t LEFT JOIN categories cat ON cat.id = t.category_id
      WHERE t.type = $1 AND t.date >= $2 AND t.date <= $3
      GROUP BY cat.id ORDER BY total DESC`,
