@@ -184,6 +184,39 @@ export function ConfirmModal({
   );
 }
 
+/** Big figure on a card — the totals above the monthly and schedule tables. */
+export function Stat({
+  label,
+  value,
+  tone,
+  strong,
+  hint,
+}: {
+  label: string;
+  value: string;
+  tone?: "good" | "bad";
+  strong?: boolean;
+  hint?: string;
+}) {
+  return (
+    <Card className={cn("px-5 py-4", strong && "border-transparent bg-accent text-accent-ink")}>
+      <div className={cn("eyebrow", strong ? "text-accent-ink/80" : "text-ink-2")}>{label}</div>
+      <div
+        className={cn(
+          "mt-2 font-display text-[28px] leading-none",
+          !strong && tone === "good" && "text-good",
+          !strong && tone === "bad" && "text-bad",
+        )}
+      >
+        {value}
+      </div>
+      {hint && (
+        <div className={cn("mt-1.5 text-[12px] leading-snug", strong ? "text-accent-ink/70" : "text-muted")}>{hint}</div>
+      )}
+    </Card>
+  );
+}
+
 export function EmptyState({ icon, title, children }: { icon: ReactNode; title: string; children?: ReactNode }) {
   return (
     <div className="flex flex-col items-center justify-center py-12 text-center">

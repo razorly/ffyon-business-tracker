@@ -1,16 +1,17 @@
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Pencil, Plus, Search, Trash2, UserRound, Users } from "lucide-react";
+import { CalendarPlus, Check, Pencil, Plus, Search, Trash2, UserRound, Users } from "lucide-react";
 import {
   createClient,
   deleteClient,
   listClients,
   listTransactions,
+  upcomingForClient,
   updateClient,
   type ClientWithStats,
 } from "@/lib/db";
 import { useData, useLoad } from "@/lib/data";
-import { money, ukDate } from "@/lib/format";
+import { isoDate, money, shortDate, timeLabel, ukDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/Layout";
 import { Button, Card, ConfirmModal, EmptyState, Field, Input, Modal, Textarea } from "@/components/ui";
@@ -19,7 +20,7 @@ import { TransactionList } from "@/components/TransactionList";
 type SortKey = "name" | "total" | "recent";
 
 export function Clients() {
-  const { refresh, openNewEntry } = useData();
+  const { refresh, openNewEntry, openNewAppointment, openEditAppointment } = useData();
   const [clients] = useLoad(listClients, [], []);
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<SortKey>("recent");
@@ -43,6 +44,11 @@ export function Clients() {
   const selected = clients.find((c) => c.id === selectedId) ?? null;
   const [history] = useLoad(
     () => (selectedId ? listTransactions({ clientId: selectedId }) : Promise.resolve([])),
+    [selectedId],
+    [],
+  );
+  const [upcoming] = useLoad(
+    () => (selectedId ? upcomingForClient(selectedId, isoDate(new Date())) : Promise.resolve([])),
     [selectedId],
     [],
   );
@@ -150,6 +156,40 @@ export function Clients() {
                 <MiniStat label="Total spent" value={money(selected.total_pence)} />
                 <MiniStat label="Average" value={selected.visits ? money(Math.round(selected.total_pence / selected.visits)) : "—"} />
               </div>
+              <div className="flex items-center justify-between px-5 pt-5 pb-2">
+                <span className="eyebrow text-ink-2">Booked in</span>
+                <Button
+                  size="sm"
+                  onClick={() =>
+                    openNewAppointment({ date: isoDate(new Date()), start_time: "09:00", clientId: selected.id })
+                  }
+                >
+                  <CalendarPlus size={14} /> Book
+                </Button>
+              </div>
+              {upcoming.length ? (
+                <ul className="divide-y divide-line">
+                  {upcoming.map((a) => (
+                    <li key={a.id}>
+                      <button
+                        onClick={() => openEditAppointment(a)}
+                        className="flex w-full items-center gap-3 px-5 py-2 text-left text-[13px] hover:bg-surface-2/60 cursor-pointer"
+                      >
+                        <span className="min-w-0 flex-1">
+                          <span className="font-medium">{shortDate(a.date)}</span>
+                          <span className="text-muted"> · {timeLabel(a.start_time)}</span>
+                          {a.category_name && <span className="block text-[12px] text-muted">{a.category_name}</span>}
+                        </span>
+                        {a.status === "paid" && <Check size={13} strokeWidth={3} className="shrink-0 text-good" />}
+                        {a.price_pence != null && <span className="tabular shrink-0">{money(a.price_pence)}</span>}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="px-5 text-[13px] text-muted">Nothing booked in yet.</p>
+              )}
+
               <div className="flex items-center justify-between px-5 pt-5 pb-2">
                 <span className="eyebrow text-ink-2">History</span>
                 <Button size="sm" onClick={() => openNewEntry("income", selected.id)}>

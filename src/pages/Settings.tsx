@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Check, Download, FileSpreadsheet, Monitor, Moon, Pencil, Plus, Sun, Trash2, Upload } from "lucide-react";
+import { Check, Download, FileSpreadsheet, FolderCheck, Monitor, Moon, Pencil, Plus, Sun, Trash2, Upload } from "lucide-react";
 import {
   categoryUsage,
   createCategory,
@@ -13,10 +13,21 @@ import {
 } from "@/lib/db";
 import { useData, useLoad } from "@/lib/data";
 import { taxYear } from "@/lib/dates";
-import { isoDate, money, parseAmount, penceToInput } from "@/lib/format";
-import { exportSpreadsheet, loadBackup, saveBackup } from "@/lib/export";
+import { isoDate, money, parseAmount, penceToInput, ukDate } from "@/lib/format";
+import {
+  chooseAutoBackupFolder,
+  exportSpreadsheet,
+  loadBackup,
+  readAutoBackup,
+  runAutoBackup,
+  saveBackup,
+  writeAutoBackup,
+  type AutoBackup,
+} from "@/lib/export";
 import { nextColour, PALETTE, themedColour } from "@/lib/palette";
 import { useTheme, type ThemePref } from "@/lib/theme";
+import { checkForUpdate } from "@/lib/update";
+import { isTauri } from "@/lib/db";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/Layout";
 import { Button, Card, CardHeader, ConfirmModal, Field, Input, Modal, Segmented, Select, Swatch } from "@/components/ui";
@@ -31,6 +42,7 @@ export function Settings() {
         <ExportCard />
         <BackupCard />
         <AppearanceCard />
+        <AboutCard />
       </div>
     </>
   );
@@ -281,6 +293,22 @@ function BackupCard() {
   const [confirmRestore, setConfirmRestore] = useState(false);
   const [confirmWipe, setConfirmWipe] = useState(false);
   const [wipeText, setWipeText] = useState("");
+  const [auto, setAuto] = useState<AutoBackup | null>(() => readAutoBackup());
+  const [backingUp, setBackingUp] = useState(false);
+
+  const backUpNow = async () => {
+    setBackingUp(true);
+    try {
+      await runAutoBackup(true);
+      setAuto(readAutoBackup());
+      toast.success("Backup saved to your folder");
+    } catch (e) {
+      console.error(e);
+      toast.error("Couldn't write to that folder — try choosing it again");
+    } finally {
+      setBackingUp(false);
+    }
+  };
 
   return (
     <Card>
@@ -309,8 +337,60 @@ function BackupCard() {
           another computer.
         </p>
         <div className="border-t border-line pt-4">
+          <div className="text-[13px] font-medium">Automatic backups</div>
+          {auto ? (
+            <>
+              <p className="mt-1 break-all text-xs text-ink-2">{auto.dir}</p>
+              <p className="mt-1 text-xs text-muted">
+                {auto.lastRun ? `Last copy saved ${ukDate(auto.lastRun)}` : "No copy saved yet"} · a copy each day you
+                open the app, keeping the last 10
+              </p>
+              <div className="mt-2 flex gap-2">
+                <Button size="sm" disabled={backingUp} onClick={backUpNow}>
+                  <Download size={14} /> Back up now
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    writeAutoBackup(null);
+                    setAuto(null);
+                    toast.success("Automatic backups turned off");
+                  }}
+                >
+                  Turn off
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="mt-0.5 text-xs text-muted">
+                Save a copy on its own every day. Pick a folder that syncs — OneDrive or iCloud Drive — and the data is
+                safe even if this computer isn't.
+              </p>
+              <Button
+                size="sm"
+                className="mt-2"
+                onClick={async () => {
+                  try {
+                    const chosen = await chooseAutoBackupFolder();
+                    if (!chosen) return;
+                    setAuto(chosen);
+                    await backUpNow();
+                  } catch (e) {
+                    toast.error(e instanceof Error ? e.message : "Couldn't set that up");
+                  }
+                }}
+              >
+                <FolderCheck size={14} /> Choose a folder…
+              </Button>
+            </>
+          )}
+        </div>
+
+        <div className="border-t border-line pt-4">
           <div className="text-[13px] font-medium">Start fresh</div>
-          <p className="mt-0.5 text-xs text-muted">Delete all entries and clients (categories are kept).</p>
+          <p className="mt-0.5 text-xs text-muted">Delete all entries, appointments and clients (categories are kept).</p>
           <Button variant="ghost" className="mt-2 -ml-2 text-bad" onClick={() => setConfirmWipe(true)}>
             <Trash2 size={15} /> Delete all data…
           </Button>
@@ -338,7 +418,7 @@ function BackupCard() {
 
       <Modal open={confirmWipe} onClose={() => setConfirmWipe(false)} title="Delete all data?" width="max-w-sm">
         <p className="text-sm text-ink-2">
-          This permanently deletes every entry and client. Save a backup first if you might need it. Type <b>DELETE</b> to
+          This permanently deletes every entry, appointment and client. Save a backup first if you might need it. Type <b>DELETE</b> to
           confirm.
         </p>
         <Input className="mt-3" value={wipeText} onChange={(e) => setWipeText(e.target.value)} placeholder="DELETE" />
@@ -380,6 +460,54 @@ function AppearanceCard() {
             { value: "system", label: <span className="inline-flex items-center gap-1.5"><Monitor size={14} /> System</span> },
           ]}
         />
+      </div>
+    </Card>
+  );
+}
+
+// ---------- About ----------
+
+function AboutCard() {
+  // The bundled version is right for the browser preview; the installed app
+  // knows better, so it overrides it once it answers.
+  const [version, setVersion] = useState(__APP_VERSION__);
+  const [checking, setChecking] = useState(false);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    import("@tauri-apps/api/app")
+      .then((m) => m.getVersion())
+      .then(setVersion)
+      .catch(() => {});
+  }, []);
+
+  return (
+    <Card>
+      <CardHeader title="About" subtitle="Ffyon Business Tracker" />
+      <div className="space-y-4 px-5 pb-5">
+        <div className="rounded-2xl bg-surface-2 p-3.5">
+          <div className="eyebrow text-[10px] text-ink-2">Installed version</div>
+          <div className="tabular mt-1.5 font-display text-[22px] leading-none">{version}</div>
+        </div>
+        <Button
+          disabled={checking}
+          onClick={async () => {
+            setChecking(true);
+            try {
+              await checkForUpdate(false);
+            } catch (e) {
+              console.error(e);
+              toast.error("Couldn't reach GitHub — check the internet connection");
+            } finally {
+              setChecking(false);
+            }
+          }}
+        >
+          <Download size={15} /> Check for updates
+        </Button>
+        <p className="text-xs text-muted">
+          New versions install themselves when you say so, and the app restarts. Your data isn't touched.
+        </p>
       </div>
     </Card>
   );

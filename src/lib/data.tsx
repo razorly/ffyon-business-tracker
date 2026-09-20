@@ -1,5 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
-import type { TransactionRow, TxType } from "./db";
+import type { AppointmentRow, TransactionRow, TxType } from "./db";
+
+/** Where a new appointment starts: the slot that was clicked, and who it's for. */
+export interface AppointmentDraft {
+  date: string;
+  start_time: string;
+  clientId?: number;
+}
 
 interface DataCtx {
   /** Bumped whenever data changes — pages re-query when it moves. */
@@ -10,6 +17,11 @@ interface DataCtx {
   openNewEntry: (type?: TxType, clientId?: number) => void;
   openEditEntry: (tx: TransactionRow) => void;
   closeEntry: () => void;
+  /** Appointment dialog control — opened from the schedule, a client, or the money owed list */
+  appointment: { open: boolean; editing: AppointmentRow | null; draft: AppointmentDraft | null };
+  openNewAppointment: (draft: AppointmentDraft) => void;
+  openEditAppointment: (a: AppointmentRow) => void;
+  closeAppointment: () => void;
 }
 
 const Ctx = createContext<DataCtx>(null as unknown as DataCtx);
@@ -17,6 +29,11 @@ const Ctx = createContext<DataCtx>(null as unknown as DataCtx);
 export function DataProvider({ children }: { children: ReactNode }) {
   const [version, setVersion] = useState(0);
   const [entry, setEntry] = useState<DataCtx["entry"]>({ open: false, type: "income", editing: null });
+  const [appointment, setAppointment] = useState<DataCtx["appointment"]>({
+    open: false,
+    editing: null,
+    draft: null,
+  });
 
   const refresh = useCallback(() => setVersion((v) => v + 1), []);
   const openNewEntry = useCallback(
@@ -28,6 +45,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
     [],
   );
   const closeEntry = useCallback(() => setEntry((e) => ({ ...e, open: false })), []);
+
+  const openNewAppointment = useCallback(
+    (draft: AppointmentDraft) => setAppointment({ open: true, editing: null, draft }),
+    [],
+  );
+  const openEditAppointment = useCallback(
+    (a: AppointmentRow) => setAppointment({ open: true, editing: a, draft: null }),
+    [],
+  );
+  const closeAppointment = useCallback(() => setAppointment((a) => ({ ...a, open: false })), []);
 
   // Ctrl/Cmd + N opens a new entry anywhere in the app
   useEffect(() => {
@@ -42,7 +69,20 @@ export function DataProvider({ children }: { children: ReactNode }) {
   }, [openNewEntry]);
 
   return (
-    <Ctx.Provider value={{ version, refresh, entry, openNewEntry, openEditEntry, closeEntry }}>
+    <Ctx.Provider
+      value={{
+        version,
+        refresh,
+        entry,
+        openNewEntry,
+        openEditEntry,
+        closeEntry,
+        appointment,
+        openNewAppointment,
+        openEditAppointment,
+        closeAppointment,
+      }}
+    >
       {children}
     </Ctx.Provider>
   );

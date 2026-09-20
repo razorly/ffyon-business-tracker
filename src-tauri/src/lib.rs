@@ -72,6 +72,71 @@ fn migrations() -> Vec<Migration> {
             ALTER TABLE categories ADD COLUMN default_pence INTEGER;
         "#,
         kind: MigrationKind::Up,
+    },
+    Migration {
+        version: 4,
+        description: "appointments",
+        // Bookings are kept apart from the money. An appointment only reaches the
+        // transactions table when it is marked paid, so nothing unpaid or upcoming
+        // can show up in any of the income figures.
+        sql: r#"
+            CREATE TABLE appointments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL,
+                start_time TEXT NOT NULL,
+                duration_min INTEGER NOT NULL DEFAULT 30,
+                client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+                category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+                price_pence INTEGER,
+                notes TEXT,
+                status TEXT NOT NULL DEFAULT 'booked' CHECK (status IN ('booked', 'paid')),
+                transaction_id INTEGER REFERENCES transactions(id) ON DELETE SET NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE INDEX idx_appointments_date ON appointments(date);
+            CREATE INDEX idx_appointments_client ON appointments(client_id);
+        "#,
+        kind: MigrationKind::Up,
+    },
+    Migration {
+        version: 5,
+        description: "appointment_status_and_series",
+        // Adds 'cancelled' and 'no_show' to the status check (SQLite can't alter a
+        // CHECK in place, so the table is rebuilt), plus series_id, which ties the
+        // occurrences of a repeating booking together.
+        sql: r#"
+            CREATE TABLE appointments_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL,
+                start_time TEXT NOT NULL,
+                duration_min INTEGER NOT NULL DEFAULT 30,
+                client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+                category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+                price_pence INTEGER,
+                notes TEXT,
+                status TEXT NOT NULL DEFAULT 'booked'
+                    CHECK (status IN ('booked', 'paid', 'cancelled', 'no_show')),
+                transaction_id INTEGER REFERENCES transactions(id) ON DELETE SET NULL,
+                series_id TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            INSERT INTO appointments_new
+                (id, date, start_time, duration_min, client_id, category_id, price_pence,
+                 notes, status, transaction_id, created_at)
+            SELECT id, date, start_time, duration_min, client_id, category_id, price_pence,
+                 notes, status, transaction_id, created_at
+            FROM appointments;
+
+            DROP TABLE appointments;
+            ALTER TABLE appointments_new RENAME TO appointments;
+
+            CREATE INDEX idx_appointments_date ON appointments(date);
+            CREATE INDEX idx_appointments_client ON appointments(client_id);
+            CREATE INDEX idx_appointments_series ON appointments(series_id);
+        "#,
+        kind: MigrationKind::Up,
     }]
 }
 
@@ -85,6 +150,9 @@ pub fn run() {
         )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_persisted_scope::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

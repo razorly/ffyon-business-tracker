@@ -10,7 +10,7 @@ import { themedColour } from "@/lib/palette";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/Layout";
-import { Button, Card, CardHeader, ConfirmModal, EmptyState, Input, Segmented, Swatch } from "@/components/ui";
+import { Button, Card, CardHeader, ConfirmModal, EmptyState, Input, Segmented, Stat, Swatch } from "@/components/ui";
 import { DailyBars, Legend } from "@/components/charts";
 
 type Filter = "all" | "income" | "expense";
@@ -213,17 +213,6 @@ export function Monthly() {
         }}
       />
     </>
-  );
-}
-
-function Stat({ label, value, tone, strong }: { label: string; value: string; tone?: "good" | "bad"; strong?: boolean }) {
-  return (
-    <Card className={cn("px-5 py-4", strong && "border-transparent bg-accent text-accent-ink")}>
-      <div className={cn("eyebrow", strong ? "text-accent-ink/80" : "text-ink-2")}>{label}</div>
-      <div className={cn("mt-2 font-display text-[28px] leading-none", !strong && tone === "good" && "text-good", !strong && tone === "bad" && "text-bad")}>
-        {value}
-      </div>
-    </Card>
   );
 }
 

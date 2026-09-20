@@ -1,11 +1,12 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { CalendarDays, Heart, LayoutDashboard, Plus, Settings, Users } from "lucide-react";
+import { CalendarDays, CalendarHeart, Heart, LayoutDashboard, Plus, Settings, Users } from "lucide-react";
 import { useData } from "@/lib/data";
 import { cn } from "@/lib/utils";
 import { Button } from "./ui";
 
 const nav = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/schedule", label: "Schedule", icon: CalendarHeart },
   { to: "/monthly", label: "Monthly", icon: CalendarDays },
   { to: "/clients", label: "Clients", icon: Users },
   { to: "/settings", label: "Settings", icon: Settings },

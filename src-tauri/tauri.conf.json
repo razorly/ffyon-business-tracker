@@ -27,6 +27,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -34,5 +35,11 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": ["https://github.com/razorly/ffyon-business-tracker/releases/latest/download/latest.json"],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDMyODc0MDRGNEI1OEY4NTYKUldSVytGaExUMENITW96N1B1SU5mRHFsVU9tTUtOUjI0bjFKVmZRUndQK0VXb0hPTis4aFFjelMK"
+    }
   }
 }

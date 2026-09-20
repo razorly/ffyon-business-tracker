@@ -1,11 +1,11 @@
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import { format, subMonths } from "date-fns";
-import { PoundSterling, Receipt, Sparkles, Users, Wallet } from "lucide-react";
-import { categoryTotals, distinctClients, listTransactions, monthlyTotals, type MonthTotal } from "@/lib/db";
+import { BanknoteArrowDown, ChevronRight, PoundSterling, Receipt, Sparkles, Users, Wallet } from "lucide-react";
+import { categoryTotals, distinctClients, listTransactions, monthlyTotals, unpaidBefore, type MonthTotal } from "@/lib/db";
 import { useData, useLoad } from "@/lib/data";
 import { lastMonths, monthRange, taxYear } from "@/lib/dates";
-import { money, monthLabel, percentChange } from "@/lib/format";
+import { isoDate, money, monthLabel, percentChange } from "@/lib/format";
 import { themedColour } from "@/lib/palette";
 import { useTheme } from "@/lib/theme";
 import { PageHeader } from "@/components/Layout";
@@ -27,6 +27,7 @@ export function Dashboard() {
   const [cats] = useLoad(() => categoryTotals("income", tax.from, tax.to), [], []);
   const [clientsThisMonth] = useLoad(() => distinctClients(thisMonth.from, thisMonth.to), [], 0);
   const [recent, loadingRecent] = useLoad(() => listTransactions({ limit: 6 }), [], []);
+  const [overdue] = useLoad(() => unpaidBefore(isoDate(now)), [], []);
 
   const byMonth = useMemo(() => new Map(monthly.map((m) => [m.month, m])), [monthly]);
   const series = months.map((m) => ({
@@ -72,6 +73,25 @@ export function Dashboard() {
         />
         <KpiCard label="Clients this month" value={String(clientsThisMonth)} icon={<Users size={17} />} />
       </div>
+
+      {overdue.length > 0 && (
+        <Link
+          to="/schedule"
+          className="mt-4 flex items-center gap-3 rounded-3xl border border-line bg-surface px-5 py-3.5 hover:bg-surface-2/60"
+        >
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-soft text-rose">
+            <BanknoteArrowDown size={17} />
+          </span>
+          <span className="min-w-0 flex-1 text-[13.5px]">
+            <b>{money(overdue.reduce((s, a) => s + (a.price_pence ?? 0), 0))}</b> still to collect from{" "}
+            {overdue.length} past appointment{overdue.length === 1 ? "" : "s"}
+            <span className="block text-[12px] text-muted">
+              None of it is in the figures above until you mark them paid
+            </span>
+          </span>
+          <ChevronRight size={16} className="shrink-0 text-muted" />
+        </Link>
+      )}
 
       {empty ? (
         <Card className="mt-6">

@@ -20,6 +20,14 @@ export function themedColour(hex: string, dark: boolean): string {
   return slot ? slot.dark : hex;
 }
 
+/** A translucent wash of a category colour — used for appointment blocks. */
+export function tint(hex: string, alpha: number): string {
+  const h = hex.replace("#", "");
+  const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
+  const n = parseInt(full, 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+}
+
 /** First palette slot not already used, else the first slot. */
 export function nextColour(used: string[]): string {
   const lower = used.map((u) => u.toLowerCase());
