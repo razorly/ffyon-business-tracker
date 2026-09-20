@@ -47,6 +47,8 @@ Put the contents of `~/.ffyon-updater.key` in the repo's `TAURI_SIGNING_PRIVATE_
 
 A release only reaches people once it's **published** on GitHub — the workflow leaves it as a draft so you can test it first.
 
+The app downloads updates from the releases page without signing in, so **the repo has to be public** for this to work. A private repo's release files need authentication, and the check will quietly find nothing every time. Nothing sensitive lives in the repo: the signing key is kept outside it, and the database never leaves the computer it's on. If you'd rather keep the code private, publish the installers to a separate public repo and point `plugins.updater.endpoints` in `src-tauri/tauri.conf.json` at that one instead.
+
 ## Stack
 
 Tauri 2 · React 19 · TypeScript · Vite · Tailwind CSS 4 · Recharts · SQLite (`tauri-plugin-sql`) · SheetJS
@@ -73,7 +75,7 @@ TAURI_SIGNING_PRIVATE_KEY=$(cat ~/.ffyon-updater.key) TAURI_SIGNING_PRIVATE_KEY_
 
 A Mac app can't be built on Windows, so GitHub Actions builds it for free:
 
-1. Push this folder to a GitHub repo. It can be private.
+1. Push this folder to a GitHub repo.
 2. On GitHub, open **Actions → Build apps → Run workflow**.
 3. After about 15 minutes, a draft **Release** appears with `Ffyon Business Tracker_x.y.z_universal.dmg`, which works on both Intel and Apple Silicon Macs, plus the Windows installers.
 
