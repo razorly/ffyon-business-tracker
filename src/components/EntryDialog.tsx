@@ -14,6 +14,7 @@ import {
 } from "@/lib/db";
 import { useData } from "@/lib/data";
 import { isoDate, money, parseAmount, penceToInput } from "@/lib/format";
+import { toastDeleted } from "@/lib/undo";
 import { Button, Field, Input, Modal, Segmented, Select, Textarea } from "./ui";
 import { ClientCombobox, type ClientChoice } from "./ClientCombobox";
 
@@ -115,8 +116,7 @@ export function EntryDialog() {
 
   const remove = async () => {
     if (!editing) return;
-    await deleteTransaction(editing.id);
-    toast.success("Entry deleted");
+    toastDeleted(await deleteTransaction(editing.id), refresh);
     refresh();
     closeEntry();
   };

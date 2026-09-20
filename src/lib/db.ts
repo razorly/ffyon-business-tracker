@@ -128,11 +128,14 @@ export async function updateCategory(c: Category) {
   ]);
 }
 
-export async function deleteCategory(id: number) {
+export async function deleteCategory(id: number): Promise<DeletedSnapshot> {
   const db = await getDb();
+  const [cat] = await db.select<Category[]>("SELECT * FROM categories WHERE id = $1", [id]);
+  const links = await clearedLinks(db, "category_id", id);
   await db.execute("UPDATE transactions SET category_id = NULL WHERE category_id = $1", [id]);
   await db.execute("UPDATE appointments SET category_id = NULL WHERE category_id = $1", [id]);
   await db.execute("DELETE FROM categories WHERE id = $1", [id]);
+  return snapshot(cat?.name ?? "Category", { categories: cat ? [cat] : [], links });
 }
 
 export async function categoryUsage(id: number): Promise<number> {
@@ -180,11 +183,14 @@ export async function updateClient(c: Pick<Client, "id" | "name" | "phone" | "no
   ]);
 }
 
-export async function deleteClient(id: number) {
+export async function deleteClient(id: number): Promise<DeletedSnapshot> {
   const db = await getDb();
+  const [client] = await db.select<Client[]>("SELECT * FROM clients WHERE id = $1", [id]);
+  const links = await clearedLinks(db, "client_id", id);
   await db.execute("UPDATE transactions SET client_id = NULL WHERE client_id = $1", [id]);
   await db.execute("UPDATE appointments SET client_id = NULL WHERE client_id = $1", [id]);
   await db.execute("DELETE FROM clients WHERE id = $1", [id]);
+  return snapshot(client?.name ?? "Client", { clients: client ? [client] : [], links });
 }
 
 // ---------- Transactions ----------
@@ -245,15 +251,24 @@ export async function updateTransaction(id: number, t: TransactionInput) {
   await db.execute("UPDATE appointments SET price_pence = $1 WHERE transaction_id = $2", [t.amount_pence, id]);
 }
 
-export async function deleteTransaction(id: number) {
+export async function deleteTransaction(id: number): Promise<DeletedSnapshot> {
   const db = await getDb();
+  const [tx] = await db.select<Transaction[]>("SELECT * FROM transactions WHERE id = $1", [id]);
   // An appointment whose entry has been deleted goes back to unpaid, so the
   // money it was worth leaves the totals with it.
+  const wasPaying = await db.select<{ id: number; status: AppointmentStatus }[]>(
+    "SELECT id, status FROM appointments WHERE transaction_id = $1",
+    [id],
+  );
   await db.execute(
     "UPDATE appointments SET status = 'booked', transaction_id = NULL WHERE transaction_id = $1",
     [id],
   );
   await db.execute("DELETE FROM transactions WHERE id = $1", [id]);
+  return snapshot("Entry", {
+    transactions: tx ? [tx] : [],
+    unpaid: wasPaying.map((a) => ({ id: a.id, status: a.status, transaction_id: id })),
+  });
 }
 
 // ---------- Appointments ----------
@@ -328,17 +343,24 @@ export async function seriesRemaining(seriesId: string, fromDate: string): Promi
 }
 
 /** Deletes this appointment and the rest of its run, with any entries they created. */
-export async function deleteAppointmentSeries(seriesId: string, fromDate: string) {
+export async function deleteAppointmentSeries(seriesId: string, fromDate: string): Promise<DeletedSnapshot> {
   const db = await getDb();
-  const rows = await db.select<{ transaction_id: number | null }[]>(
-    "SELECT transaction_id FROM appointments WHERE series_id = $1 AND date >= $2",
+  const rows = await db.select<Appointment[]>(
+    "SELECT * FROM appointments WHERE series_id = $1 AND date >= $2",
     [seriesId, fromDate],
   );
+  const entries: Transaction[] = [];
   for (const r of rows) {
-    if (r.transaction_id != null) await db.execute("DELETE FROM transactions WHERE id = $1", [r.transaction_id]);
+    if (r.transaction_id == null) continue;
+    const [tx] = await db.select<Transaction[]>("SELECT * FROM transactions WHERE id = $1", [r.transaction_id]);
+    if (tx) entries.push(tx);
+    await db.execute("DELETE FROM transactions WHERE id = $1", [r.transaction_id]);
   }
   await db.execute("DELETE FROM appointments WHERE series_id = $1 AND date >= $2", [seriesId, fromDate]);
-  return rows.length;
+  return snapshot(`${rows.length} appointment${rows.length === 1 ? "" : "s"}`, {
+    appointments: rows,
+    transactions: entries,
+  });
 }
 
 /** Saves an appointment. A paid one owns its income entry, so the entry is kept in step. */
@@ -363,11 +385,19 @@ export async function updateAppointment(id: number, a: AppointmentInput) {
 }
 
 /** Deletes an appointment, and the income entry it created if it was paid. */
-export async function deleteAppointment(id: number) {
+export async function deleteAppointment(id: number): Promise<DeletedSnapshot> {
   const db = await getDb();
-  const txId = await linkedTransactionId(id);
-  if (txId != null) await db.execute("DELETE FROM transactions WHERE id = $1", [txId]);
+  const [appt] = await db.select<Appointment[]>("SELECT * FROM appointments WHERE id = $1", [id]);
+  const [entry] =
+    appt?.transaction_id != null
+      ? await db.select<Transaction[]>("SELECT * FROM transactions WHERE id = $1", [appt.transaction_id])
+      : [];
+  if (entry) await db.execute("DELETE FROM transactions WHERE id = $1", [entry.id]);
   await db.execute("DELETE FROM appointments WHERE id = $1", [id]);
+  return snapshot(entry ? "Appointment and its entry" : "Appointment", {
+    appointments: appt ? [appt] : [],
+    transactions: entry ? [entry] : [],
+  });
 }
 
 async function linkedTransactionId(id: number): Promise<number | null> {
@@ -497,6 +527,121 @@ export async function distinctClients(from: string, to: string): Promise<number>
   return rows[0]?.n ?? 0;
 }
 
+// ---------- Undo ----------
+
+/**
+ * Everything a delete took away, so it can be put straight back. Deleted rows
+ * keep their original ids — the tables are AUTOINCREMENT, so an id is never
+ * handed out twice and re-inserting one can't collide with anything newer.
+ */
+export interface DeletedSnapshot {
+  /** What went, for the message on screen: "Entry", "Sarah Jones", "3 appointments". */
+  label: string;
+  categories: Category[];
+  clients: Client[];
+  transactions: Transaction[];
+  appointments: Appointment[];
+  /** A client_id or category_id cleared on a row that survived the delete. */
+  links: { table: "transactions" | "appointments"; column: "client_id" | "category_id"; id: number; value: number }[];
+  /** An appointment knocked back to unpaid because the entry it created went. */
+  unpaid: { id: number; status: AppointmentStatus; transaction_id: number }[];
+}
+
+function snapshot(label: string, parts: Partial<DeletedSnapshot> = {}): DeletedSnapshot {
+  return {
+    label,
+    categories: [],
+    clients: [],
+    transactions: [],
+    appointments: [],
+    links: [],
+    unpaid: [],
+    ...parts,
+  };
+}
+
+/** The rows about to have `column` cleared, noted down so the link can be put back. */
+async function clearedLinks(db: Db, column: "client_id" | "category_id", value: number) {
+  const links: DeletedSnapshot["links"] = [];
+  // Both names come from this file's own literals, never from anything typed in.
+  for (const table of ["transactions", "appointments"] as const) {
+    const rows = await db.select<{ id: number }[]>(`SELECT id FROM ${table} WHERE ${column} = $1`, [value]);
+    for (const r of rows) links.push({ table, column, id: r.id, value });
+  }
+  return links;
+}
+
+/** Puts back exactly what a delete took away. Parents first, so the links land on rows that exist. */
+export async function undoDelete(s: DeletedSnapshot) {
+  const db = await getDb();
+  for (const c of s.categories) await insertCategoryRow(db, c);
+  for (const c of s.clients) await insertClientRow(db, c);
+  for (const t of s.transactions) await insertTransactionRow(db, t);
+  for (const a of s.appointments) await insertAppointmentRow(db, a);
+  for (const l of s.links) {
+    await db.execute(`UPDATE ${l.table} SET ${l.column} = $1 WHERE id = $2`, [l.value, l.id]);
+  }
+  for (const u of s.unpaid) {
+    await db.execute("UPDATE appointments SET status = $1, transaction_id = $2 WHERE id = $3", [
+      u.status,
+      u.transaction_id,
+      u.id,
+    ]);
+  }
+}
+
+// Row-for-row inserts, keeping the id. Used by undo and by restoring a backup.
+
+function insertCategoryRow(db: Db, c: Category) {
+  return db.execute("INSERT INTO categories (id, name, type, colour, default_pence) VALUES ($1, $2, $3, $4, $5)", [
+    c.id,
+    c.name,
+    c.type,
+    c.colour,
+    c.default_pence ?? null,
+  ]);
+}
+
+function insertClientRow(db: Db, c: Client) {
+  return db.execute("INSERT INTO clients (id, name, phone, notes, created_at) VALUES ($1, $2, $3, $4, $5)", [
+    c.id,
+    c.name,
+    c.phone,
+    c.notes,
+    c.created_at,
+  ]);
+}
+
+function insertTransactionRow(db: Db, t: Transaction) {
+  return db.execute(
+    `INSERT INTO transactions (id, type, date, amount_pence, category_id, client_id, description, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [t.id, t.type, t.date, t.amount_pence, t.category_id, t.client_id, t.description, t.created_at],
+  );
+}
+
+function insertAppointmentRow(db: Db, a: Appointment) {
+  return db.execute(
+    `INSERT INTO appointments (id, date, start_time, duration_min, client_id, category_id, price_pence,
+       notes, status, transaction_id, series_id, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+    [
+      a.id,
+      a.date,
+      a.start_time,
+      a.duration_min,
+      a.client_id,
+      a.category_id,
+      a.price_pence,
+      a.notes,
+      a.status,
+      a.transaction_id,
+      a.series_id ?? null,
+      a.created_at,
+    ],
+  );
+}
+
 // ---------- Backup / restore ----------
 
 export interface Backup {
@@ -554,45 +699,9 @@ export async function restoreAll(b: Backup) {
   await db.execute("DELETE FROM transactions");
   await db.execute("DELETE FROM clients");
   await db.execute("DELETE FROM categories");
-  for (const c of b.categories) {
-    await db.execute(
-      "INSERT INTO categories (id, name, type, colour, default_pence) VALUES ($1, $2, $3, $4, $5)",
-      [c.id, c.name, c.type, c.colour, c.default_pence ?? null],
-    );
-  }
-  for (const c of b.clients) {
-    await db.execute(
-      "INSERT INTO clients (id, name, phone, notes, created_at) VALUES ($1, $2, $3, $4, $5)",
-      [c.id, c.name, c.phone, c.notes, c.created_at],
-    );
-  }
-  for (const t of b.transactions) {
-    await db.execute(
-      `INSERT INTO transactions (id, type, date, amount_pence, category_id, client_id, description, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [t.id, t.type, t.date, t.amount_pence, t.category_id, t.client_id, t.description, t.created_at],
-    );
-  }
+  for (const c of b.categories) await insertCategoryRow(db, c);
+  for (const c of b.clients) await insertClientRow(db, c);
+  for (const t of b.transactions) await insertTransactionRow(db, t);
   // Backups made before the schedule existed simply have no appointments.
-  for (const a of b.appointments ?? []) {
-    await db.execute(
-      `INSERT INTO appointments (id, date, start_time, duration_min, client_id, category_id, price_pence,
-         notes, status, transaction_id, series_id, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-      [
-        a.id,
-        a.date,
-        a.start_time,
-        a.duration_min,
-        a.client_id,
-        a.category_id,
-        a.price_pence,
-        a.notes,
-        a.status,
-        a.transaction_id,
-        a.series_id ?? null,
-        a.created_at,
-      ],
-    );
-  }
+  for (const a of b.appointments ?? []) await insertAppointmentRow(db, a);
 }

@@ -1,6 +1,5 @@
 import { useMemo, useState } from "react";
 import { addMonths, eachDayOfInterval, endOfMonth, format, isSameMonth, startOfMonth, subMonths } from "date-fns";
-import { toast } from "sonner";
 import { ArrowDown, ArrowUp, CalendarDays, ChevronLeft, ChevronRight, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { dailyTotals, deleteTransaction, listTransactions, type TransactionRow } from "@/lib/db";
 import { useData, useLoad } from "@/lib/data";
@@ -8,6 +7,7 @@ import { monthRange } from "@/lib/dates";
 import { isoDate, money, ukDate } from "@/lib/format";
 import { themedColour } from "@/lib/palette";
 import { useTheme } from "@/lib/theme";
+import { toastDeleted } from "@/lib/undo";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/Layout";
 import { Button, Card, CardHeader, ConfirmModal, EmptyState, Input, Segmented, Stat, Swatch } from "@/components/ui";
@@ -207,8 +207,7 @@ export function Monthly() {
         }
         onConfirm={async () => {
           if (!toDelete) return;
-          await deleteTransaction(toDelete.id);
-          toast.success("Entry deleted");
+          toastDeleted(await deleteTransaction(toDelete.id), refresh);
           refresh();
         }}
       />

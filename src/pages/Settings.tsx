@@ -28,6 +28,7 @@ import { nextColour, PALETTE, themedColour } from "@/lib/palette";
 import { useTheme, type ThemePref } from "@/lib/theme";
 import { checkForUpdate } from "@/lib/update";
 import { isTauri } from "@/lib/db";
+import { toastDeleted } from "@/lib/undo";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/Layout";
 import { Button, Card, CardHeader, ConfirmModal, Field, Input, Modal, Segmented, Select, Swatch } from "@/components/ui";
@@ -118,8 +119,7 @@ function CategoriesCard({ type }: { type: TxType }) {
         }
         onConfirm={async () => {
           if (!toDelete) return;
-          await deleteCategory(toDelete.cat.id);
-          toast.success("Category deleted");
+          toastDeleted(await deleteCategory(toDelete.cat.id), refresh);
           refresh();
         }}
       />

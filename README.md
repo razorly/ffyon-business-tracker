@@ -9,6 +9,8 @@ A small desktop app for tracking income and outgoings for a tanning business. It
 - **Clients**: shows visits, total spent and last visit for each client, plus their full history.
 - **Settings**: manage income and expense categories (each can have an optional usual price), export to Excel or CSV (with tax-year presets), save and restore backups, turn on automatic backups, check for updates, and switch between light and dark mode.
 
+Anything deleted — an entry, an appointment, a whole repeating run, a client or a category — can be put straight back with **Undo** on the message that appears in the corner. It restores everything the delete touched, so an appointment that was paid comes back paid, with its entry.
+
 All data stays on the computer in a local SQLite database. Nothing is sent anywhere.
 
 ### Usual prices

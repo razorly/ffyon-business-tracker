@@ -31,6 +31,7 @@ import {
   timeToMin,
   ukDate,
 } from "@/lib/format";
+import { toastDeleted } from "@/lib/undo";
 import { Button, Field, Input, Modal, Select, Textarea } from "./ui";
 import { ClientCombobox, type ClientChoice } from "./ClientCombobox";
 
@@ -216,13 +217,11 @@ export function AppointmentDialog() {
     if (!editing) return;
     setDeleting(null);
     try {
-      if (scope === "rest" && editing.series_id) {
-        const n = await deleteAppointmentSeries(editing.series_id, editing.date);
-        toast.success(`${n} appointments deleted`);
-      } else {
-        await deleteAppointment(editing.id);
-        toast.success(status === "paid" ? "Appointment and its entry deleted" : "Appointment deleted");
-      }
+      const removed =
+        scope === "rest" && editing.series_id
+          ? await deleteAppointmentSeries(editing.series_id, editing.date)
+          : await deleteAppointment(editing.id);
+      toastDeleted(removed, refresh);
       refresh();
       onClose();
     } catch (e) {

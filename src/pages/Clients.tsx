@@ -12,6 +12,7 @@ import {
 } from "@/lib/db";
 import { useData, useLoad } from "@/lib/data";
 import { isoDate, money, shortDate, timeLabel, ukDate } from "@/lib/format";
+import { toastDeleted } from "@/lib/undo";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/Layout";
 import { Button, Card, ConfirmModal, EmptyState, Field, Input, Modal, Textarea } from "@/components/ui";
@@ -232,8 +233,10 @@ export function Clients() {
         }
         onConfirm={async () => {
           if (!toDelete) return;
-          await deleteClient(toDelete.id);
-          toast.success("Client deleted");
+          toastDeleted(await deleteClient(toDelete.id), () => {
+            setSelectedId(toDelete.id);
+            refresh();
+          });
           setSelectedId(null);
           refresh();
         }}
