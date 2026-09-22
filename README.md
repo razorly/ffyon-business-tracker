@@ -7,7 +7,8 @@ A small desktop app for tracking income and outgoings for a tanning business. It
 - **New entry**: press **Ctrl/⌘ + N** anywhere. Enter the amount, date, category, client and a note. Typing a new client name creates the client automatically. A category with a usual price fills the amount in for you, and you can type over it.
 - **Monthly view**: step through the months. It shows the month's totals, a day-by-day chart, and a table of entries you can search, filter and sort, with edit and delete.
 - **Clients**: shows visits, total spent and last visit for each client, plus their full history.
-- **Settings**: manage income and expense categories (each can have an optional usual price), export to Excel or CSV (with tax-year presets), save and restore backups, turn on automatic backups, check for updates, and switch between light and dark mode.
+- **Tray**: while the app is running it also sits in the system tray (the menu bar on a Mac), with today's takings, the next appointment, one-click **Quick add** for your usual prices, and **Mark paid** for anything waiting. **Ctrl/⌘ + Shift + N** opens a new entry from whatever else you're in.
+- **Settings**: manage income and expense categories (each can have an optional usual price), export to Excel or CSV (with tax-year presets), save and restore backups, turn on automatic backups, choose what the tray does, check for updates, and switch between light and dark mode.
 
 Anything deleted — an entry, an appointment, a whole repeating run, a client or a category — can be put straight back with **Undo** on the message that appears in the corner. It restores everything the delete touched, so an appointment that was paid comes back paid, with its entry.
 
@@ -30,6 +31,19 @@ Marking it paid adds one income entry, dated the day of the appointment, with it
 - Marking it cancelled or a no-show does the same: the record stays in the diary, the money doesn't.
 
 Repeating bookings are just ordinary appointments that know about each other. Editing one changes only that one; deleting offers to remove the rest of the run as well.
+
+### The tray
+
+While Ffyon is running there's an icon in the system tray — the menu bar on a Mac. Clicking it brings the window back or puts it away again; the menu does the day's small jobs without it:
+
+- **Today** — what's come in, what's gone out, and what's next in the diary.
+- **Quick add** — one line for every service with a usual price (Settings → edit a category). Clicking one records an income entry for that price, dated today. The message offers **Undo**, or **Add details** to put a client and a note on it.
+- **Mark paid** — today's bookings and anything overdue. It's the same money moment as pressing Mark paid in the diary, undo included. A booking with no price yet opens instead of guessing one.
+- **Back up now** — once automatic backups have a folder.
+
+Closing the window asks, the first time, whether to leave Ffyon in the tray or close it properly, and remembers the answer. **Settings → Tray & shortcuts** changes it later. Leaving it running is what keeps the one-click entry and the shortcut available.
+
+When the window is out of sight, anything done from the tray says so with a notification from the computer instead of a message in the app.
 
 ### Backups
 
@@ -97,8 +111,11 @@ Turn on **Settings → Automatic backups** and point it at a synced folder, and 
 
 ```
 src-tauri/src/lib.rs     Tauri setup + database schema (migrations)
+src-tauri/src/tray.rs    The tray icon, its menu and the window's close button
 src/lib/db.ts            All database queries
 src/lib/export.ts        Excel/CSV export, backup/restore, automatic backups
+src/lib/tray.ts          What the tray menu says; the global shortcut
+src/components/TrayBridge.tsx  Carries out what's clicked in the tray
 src/components/          UI pieces, charts, calendar, entry and appointment dialogs
 src/pages/               Dashboard, Schedule, Monthly, Clients, Settings
 ```

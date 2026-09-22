@@ -25,6 +25,17 @@ import {
   type AutoBackup,
 } from "@/lib/export";
 import { nextColour, PALETTE, themedColour } from "@/lib/palette";
+import {
+  applyShortcut,
+  QUICK_KEYS_LABEL,
+  readCloseAction,
+  readShortcutEnabled,
+  showWindow,
+  trayName,
+  writeCloseAction,
+  writeShortcutEnabled,
+  type CloseAction,
+} from "@/lib/tray";
 import { useTheme, type ThemePref } from "@/lib/theme";
 import { checkForUpdate } from "@/lib/update";
 import { isTauri } from "@/lib/db";
@@ -36,12 +47,13 @@ import { Button, Card, CardHeader, ConfirmModal, Field, Input, Modal, Segmented,
 export function Settings() {
   return (
     <>
-      <PageHeader title="Settings" subtitle="Categories, exports, backups and appearance" />
+      <PageHeader title="Settings" subtitle="Categories, exports, backups, the tray and appearance" />
       <div className="grid gap-4 lg:grid-cols-2">
         <CategoriesCard type="income" />
         <CategoriesCard type="expense" />
         <ExportCard />
         <BackupCard />
+        <TrayCard />
         <AppearanceCard />
         <AboutCard />
       </div>
@@ -439,6 +451,80 @@ function BackupCard() {
           </Button>
         </div>
       </Modal>
+    </Card>
+  );
+}
+
+// ---------- Tray ----------
+
+function TrayCard() {
+  const { openNewEntry } = useData();
+  const [closeAction, setCloseAction] = useState<CloseAction>(() => readCloseAction());
+  const [shortcut, setShortcut] = useState(() => readShortcutEnabled());
+  const where = trayName();
+
+  const chooseClose = async (action: CloseAction) => {
+    setCloseAction(action);
+    await writeCloseAction(action);
+  };
+
+  const toggleShortcut = async (on: boolean) => {
+    setShortcut(on);
+    writeShortcutEnabled(on);
+    const ok = await applyShortcut(on, () => {
+      void showWindow();
+      openNewEntry();
+    });
+    if (ok) return;
+    // Another app owns those keys — nothing was registered, so don't pretend it was.
+    setShortcut(false);
+    writeShortcutEnabled(false);
+    toast.error(`Something else on this computer uses ${QUICK_KEYS_LABEL}`);
+  };
+
+  return (
+    <Card className="self-start">
+      <CardHeader title="Tray & shortcuts" subtitle={`Ffyon sits in the ${where} while it's running`} />
+      <div className="space-y-5 px-5 pb-5">
+        <div>
+          <div className="text-[13px] font-medium">Closing the window</div>
+          <p className="mt-0.5 mb-2 text-xs text-muted">
+            Left in the {where}, it's one click to book a tan in, and the daily backup still runs.
+          </p>
+          <Segmented<CloseAction>
+            className="w-full"
+            value={closeAction}
+            onChange={chooseClose}
+            options={[
+              { value: "tray", label: "Keep running" },
+              { value: "quit", label: "Close the app" },
+              { value: "ask", label: "Ask me" },
+            ]}
+          />
+        </div>
+
+        <div>
+          <div className="text-[13px] font-medium">New entry shortcut</div>
+          <p className="mt-0.5 mb-2 text-xs text-muted">
+            {QUICK_KEYS_LABEL} opens a new entry from whatever you're in the middle of.
+          </p>
+          <Segmented
+            className="w-full"
+            value={shortcut ? "on" : "off"}
+            onChange={(v) => toggleShortcut(v === "on")}
+            options={[
+              { value: "on", label: "On" },
+              { value: "off", label: "Off" },
+            ]}
+          />
+        </div>
+
+        <p className="text-xs text-muted">
+          The menu shows today's takings and what's next, books in any service with a usual price in one click, and
+          lists appointments still waiting to be marked paid.
+          {!isTauri() && " (Only in the desktop app.)"}
+        </p>
+      </div>
     </Card>
   );
 }

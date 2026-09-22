@@ -8,6 +8,7 @@ import { ThemeProvider, useTheme } from "@/lib/theme";
 import { Layout } from "@/components/Layout";
 import { EntryDialog } from "@/components/EntryDialog";
 import { AppointmentDialog } from "@/components/AppointmentDialog";
+import { TrayBridge } from "@/components/TrayBridge";
 import { Dashboard } from "@/pages/Dashboard";
 import { Schedule } from "@/pages/Schedule";
 import { Monthly } from "@/pages/Monthly";
@@ -42,6 +43,7 @@ function Shell() {
       </HashRouter>
       <EntryDialog />
       <AppointmentDialog />
+      <TrayBridge />
       <Toaster position="bottom-right" theme={dark ? "dark" : "light"} richColors closeButton />
     </DataProvider>
   );

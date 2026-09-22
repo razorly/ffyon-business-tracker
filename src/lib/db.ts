@@ -230,6 +230,12 @@ export async function listTransactions(opts: {
   return db.select<TransactionRow[]>(sql, params);
 }
 
+export async function getTransaction(id: number): Promise<TransactionRow | null> {
+  const db = await getDb();
+  const rows = await db.select<TransactionRow[]>(`${TX_SELECT} WHERE t.id = $1`, [id]);
+  return rows[0] ?? null;
+}
+
 export async function createTransaction(t: TransactionInput) {
   const db = await getDb();
   const res = await db.execute(

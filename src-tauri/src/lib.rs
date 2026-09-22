@@ -1,3 +1,5 @@
+mod tray;
+
 use tauri_plugin_sql::{Migration, MigrationKind};
 
 fn migrations() -> Vec<Migration> {
@@ -153,6 +155,22 @@ pub fn run() {
         .plugin(tauri_plugin_persisted_scope::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_notification::init())
+        .manage(tray::Prefs::default())
+        .setup(|app| {
+            tray::setup(app.handle())?;
+            Ok(())
+        })
+        .on_window_event(tray::on_window_event)
+        .invoke_handler(tauri::generate_handler![
+            tray::set_tray_state,
+            tray::set_close_action,
+            tray::show_main_window,
+            tray::hide_main_window,
+            tray::window_is_active,
+            tray::quit_app,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
