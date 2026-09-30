@@ -9,6 +9,7 @@ import {
   type AppointmentRow,
 } from "./db";
 import { readAutoBackup } from "./export";
+import { getAccessStatus } from "./access";
 import { isoDate, moneyNeat, shortDate, timeLabel } from "./format";
 
 /**
@@ -62,7 +63,7 @@ async function trayState(): Promise<TrayState> {
   const inToday = total("income");
   const outToday = total("expense");
 
-  const booked = todays.filter((a) => a.status === "booked");
+  const booked = todays.filter((a) => a.status === "confirmed");
   const next = booked.find((a) => a.start_time >= now);
   const takings = `Today: ${moneyNeat(inToday)} in${outToday ? ` · ${moneyNeat(outToday)} out` : ""}`;
   const diary = next
@@ -72,7 +73,7 @@ async function trayState(): Promise<TrayState> {
       : "Nothing booked today";
 
   // Today's bookings first, then the oldest debts working backwards.
-  const waiting = [...booked, ...[...overdue].reverse()].slice(0, MAX_WAITING);
+  const waiting = [...booked.filter((a) => a.transaction_id == null), ...[...overdue].reverse()].slice(0, MAX_WAITING);
 
   return {
     tooltip: [`Ffyon — ${moneyNeat(inToday)} in today`, next && `next ${timeLabel(next.start_time)}`]
@@ -100,10 +101,10 @@ function waitingLabel(a: AppointmentRow, today: string): string {
 export async function syncTray() {
   if (!isTauri()) return;
   try {
+    const access = await getAccessStatus();
+    if (access.state !== "online" && access.state !== "offline") return;
     await invoke("set_tray_state", { state: await trayState() });
-  } catch (e) {
-    console.error("Couldn't update the tray", e);
-  }
+  } catch { /* A later authorized refresh replaces the menu. */ }
 }
 
 // ---------- The window ----------
@@ -221,9 +222,11 @@ async function setShortcut(on: boolean, onFire: () => void): Promise<boolean> {
     const g = await import("@tauri-apps/plugin-global-shortcut");
     if (await g.isRegistered(QUICK_KEYS)) await g.unregister(QUICK_KEYS);
     if (!on) return true;
-    await g.register(QUICK_KEYS, (event) => {
+    await g.register(QUICK_KEYS, async (event) => {
       // Fires on the way down and the way up — once is plenty.
       if (event.state === "Released") return;
+      const access = await getAccessStatus();
+      if (access.state !== "online" && access.state !== "offline") return;
       onFire();
     });
     return true;

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { format, isSameDay, isSameMonth, isToday } from "date-fns";
-import { Check } from "lucide-react";
+import { Check, Clock } from "lucide-react";
 import type { AppointmentRow } from "@/lib/db";
+import type { CloudBlock } from "@/lib/sync";
 import { isoDate, minToTime, money, moneyNeat, timeLabel, timeToMin } from "@/lib/format";
 import { themedColour, tint } from "@/lib/palette";
 import { useTheme } from "@/lib/theme";
@@ -18,6 +19,7 @@ const FALLBACK_COLOUR = "#a88a7d";
 export interface CalendarProps {
   days: Date[];
   rows: AppointmentRow[];
+  blocks?: CloudBlock[];
   onOpen: (a: AppointmentRow) => void;
   /** Clicking an empty slot books a new appointment there. */
   onNew: (date: string, startTime: string) => void;
@@ -80,7 +82,7 @@ function place(dayRows: AppointmentRow[]) {
 }
 
 /** Day and week view: hours down the side, appointments as blocks. */
-export function TimeGrid({ days, rows, onOpen, onNew }: CalendarProps) {
+export function TimeGrid({ days, rows, blocks = [], onOpen, onNew }: CalendarProps) {
   const now = useNow();
 
   const [startHour, endHour] = useMemo(() => {
@@ -90,8 +92,12 @@ export function TimeGrid({ days, rows, onOpen, onNew }: CalendarProps) {
       from = Math.min(from, Math.floor(timeToMin(a.start_time) / 60));
       to = Math.max(to, Math.ceil(endMin(a) / 60));
     }
+    for (const b of blocks.filter((block) => days.some((day) => isoDate(day) === block.date))) {
+      from = Math.min(from, Math.floor(timeToMin(b.start_time) / 60));
+      to = Math.max(to, Math.ceil((timeToMin(b.start_time) + b.duration_min) / 60));
+    }
     return [from, Math.min(24, Math.max(to, from + 1))];
-  }, [rows]);
+  }, [rows, blocks, days]);
 
   const hours = Array.from({ length: endHour - startHour }, (_, i) => startHour + i);
   const gridStart = startHour * 60;
@@ -144,6 +150,7 @@ export function TimeGrid({ days, rows, onOpen, onNew }: CalendarProps) {
                 }}
                 role="presentation"
               >
+                {blocks.filter((b) => b.date === isoDate(d)).map((b) => <div key={b.id} onClick={(e) => e.stopPropagation()} title={`${b.label || "Time off"} · ${timeLabel(b.start_time)}`} className="absolute inset-x-0 z-[1] overflow-hidden border-y border-line bg-surface-2 px-2 py-1 text-[11px] text-muted" style={{ top: (timeToMin(b.start_time) - gridStart) * PX_PER_MIN, height: Math.max(22, b.duration_min * PX_PER_MIN - 2), backgroundImage: "repeating-linear-gradient(135deg, transparent 0, transparent 5px, var(--border) 5px, var(--border) 6px)" }}>{b.label || "Time off"}</div>)}
                 {place(dayRows).map(({ a, col, cols }) => (
                   <Block
                     key={a.id}
@@ -187,9 +194,9 @@ function Block({
 }) {
   const { dark } = useTheme();
   const colour = themedColour(a.category_colour ?? FALLBACK_COLOUR, dark);
-  const paid = a.status === "paid";
+  const paid = a.transaction_id != null;
   // Cancelled and no-shows stay in the diary as a record, faded and struck through.
-  const off = a.status === "cancelled" || a.status === "no_show";
+  const off = offStatus(a);
   // Short blocks only have room for one line; tall ones can also name the service.
   const short = a.duration_min < 40;
   const tall = a.duration_min >= 60;
@@ -201,12 +208,12 @@ function Block({
         e.stopPropagation();
         onOpen(a);
       }}
-      title={`${timeLabel(a.start_time)} · ${title(a)}${a.price_pence != null ? ` · ${money(a.price_pence)}` : ""}${statusNote(a.status)}`}
+      title={`${timeLabel(a.start_time)} · ${title(a)}${a.price_pence != null ? ` · ${money(a.price_pence)}` : ""} · ${statusNote(a.status)}${paid ? " · paid" : ""}`}
       className={cn(
         "absolute z-[1] overflow-hidden rounded-lg border-l-[3px] px-2 py-1 text-left leading-tight cursor-pointer",
         "transition-[filter] hover:brightness-[0.97] dark:hover:brightness-110",
         "border-y border-r",
-        !paid && !off && "border-dashed", // dashed and paler until it's been paid for
+        a.status === "pending" && "border-dashed",
         off && "opacity-65",
       )}
       style={{
@@ -219,6 +226,7 @@ function Block({
       <span className="flex items-center gap-1 text-[11.5px] text-ink">
         {short && <span className="tabular shrink-0 text-ink-2">{timeLabel(a.start_time)}</span>}
         <span className={cn("truncate font-medium", off && "line-through")}>{title(a)}</span>
+        {a.status === "pending" && <Clock size={11} className="ml-auto shrink-0 text-muted" />}
         {paid && <Check size={11} strokeWidth={3} className="ml-auto shrink-0 text-good" />}
       </span>
       {!short && (
@@ -227,22 +235,23 @@ function Block({
           {a.price_pence != null && <> · {moneyNeat(a.price_pence)}</>}
         </span>
       )}
-      {tall && <span className="mt-0.5 block truncate text-[11px] text-muted">{a.category_name ?? "Appointment"}</span>}
+      {tall && <span className="mt-0.5 block truncate text-[11px] text-muted">{a.service_name || a.category_name || "Appointment"}</span>}
     </button>
   );
 }
 
-const title = (a: AppointmentRow) => a.client_name ?? a.category_name ?? "Appointment";
+const title = (a: AppointmentRow) => a.client_name || a.service_name || a.category_name || "Appointment";
 
-const offStatus = (a: AppointmentRow) => a.status === "cancelled" || a.status === "no_show";
+const offStatus = (a: AppointmentRow) => a.status === "cancelled" || a.status === "no_show" || a.status === "rejected";
 
 const statusNote = (status: AppointmentRow["status"]) =>
-  status === "paid" ? " · paid" : status === "cancelled" ? " · cancelled" : status === "no_show" ? " · didn't show" : "";
+  status === "pending" ? "Awaiting approval" : status === "confirmed" ? "Confirmed" : status === "cancelled" ? "Cancelled" : status === "no_show" ? "Didn't show" : "Rejected";
 
 /** Month view: a chip per appointment, the way Outlook's month grid reads. */
 export function MonthGrid({
   days,
   rows,
+  blocks = [],
   month,
   onOpen,
   onNew,
@@ -286,12 +295,14 @@ export function MonthGrid({
                   {format(d, "d")}
                 </div>
                 <div className="space-y-0.5">
+                  {blocks.filter((b) => b.date === isoDate(d)).map((b) => <div key={b.id} className="truncate rounded-md border border-dashed border-line px-1.5 py-0.5 text-[11px] text-muted" onClick={(e) => e.stopPropagation()} title={`${b.label || "Time off"} · ${timeLabel(b.start_time)}`}>{timeLabel(b.start_time)} · {b.label || "Time off"}</div>)}
                   {shown.map((a) => {
                     const colour = themedColour(a.category_colour ?? FALLBACK_COLOUR, dark);
                     return (
                       <button
                         key={a.id}
                         type="button"
+                        title={`${title(a)} · ${statusNote(a.status)}${a.transaction_id != null ? " · paid" : ""}`}
                         onClick={(e) => {
                           e.stopPropagation();
                           onOpen(a);
@@ -303,7 +314,7 @@ export function MonthGrid({
                         <span
                           className="h-2 w-2 shrink-0 rounded-full"
                           style={
-                            a.status === "paid"
+                            a.transaction_id != null
                               ? { background: colour }
                               : { boxShadow: `inset 0 0 0 1.5px ${colour}` }
                           }
@@ -312,6 +323,7 @@ export function MonthGrid({
                         <span className={cn("truncate text-ink", offStatus(a) && "line-through opacity-65")}>
                           {title(a)}
                         </span>
+                        {a.status === "pending" && <Clock size={10} className="ml-auto shrink-0 text-muted" />}
                       </button>
                     );
                   })}

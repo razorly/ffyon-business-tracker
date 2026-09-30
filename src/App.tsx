@@ -9,6 +9,9 @@ import { Layout } from "@/components/Layout";
 import { EntryDialog } from "@/components/EntryDialog";
 import { AppointmentDialog } from "@/components/AppointmentDialog";
 import { TrayBridge } from "@/components/TrayBridge";
+import { AccessGate } from "@/components/AccessGate";
+import { SyncBridge } from "@/components/SyncBridge";
+import { Requests } from "@/pages/Requests";
 import { Dashboard } from "@/pages/Dashboard";
 import { Schedule } from "@/pages/Schedule";
 import { Monthly } from "@/pages/Monthly";
@@ -16,12 +19,9 @@ import { Clients } from "@/pages/Clients";
 import { Settings } from "@/pages/Settings";
 
 function Shell() {
-  const { dark } = useTheme();
-
   // One quiet copy a day, if she's set a folder for it.
   useEffect(() => {
-    runAutoBackup().catch((e) => {
-      console.error(e);
+    runAutoBackup().catch(() => {
       toast.error("Automatic backup failed — check the folder in Settings");
     });
     // Offline or GitHub unreachable is not worth interrupting anyone over.
@@ -31,10 +31,12 @@ function Shell() {
   return (
     <DataProvider>
       <HashRouter>
+        <SyncBridge />
         <Routes>
           <Route element={<Layout />}>
             <Route index element={<Dashboard />} />
             <Route path="schedule" element={<Schedule />} />
+            <Route path="requests" element={<Requests />} />
             <Route path="monthly" element={<Monthly />} />
             <Route path="clients" element={<Clients />} />
             <Route path="settings" element={<Settings />} />
@@ -44,7 +46,6 @@ function Shell() {
       <EntryDialog />
       <AppointmentDialog />
       <TrayBridge />
-      <Toaster position="bottom-right" theme={dark ? "dark" : "light"} richColors closeButton />
     </DataProvider>
   );
 }
@@ -52,7 +53,15 @@ function Shell() {
 export default function App() {
   return (
     <ThemeProvider>
-      <Shell />
+      <AppContent />
     </ThemeProvider>
   );
+}
+
+function AppContent() {
+  const { dark } = useTheme();
+  return <>
+    <AccessGate><Shell /></AccessGate>
+    <Toaster position="bottom-right" theme={dark ? "dark" : "light"} richColors closeButton />
+  </>;
 }

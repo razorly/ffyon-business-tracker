@@ -68,6 +68,11 @@ pub struct Prefs {
 
 fn build_menu<R: Runtime>(app: &AppHandle<R>, state: &TrayState) -> tauri::Result<Menu<R>> {
     let menu = Menu::new(app)?;
+    if app.state::<crate::access::AccessState>().require_authorized().is_err() {
+        menu.append(&MenuItem::with_id(app, "open", "Connect Ffyon", true, None::<&str>)?)?;
+        menu.append(&MenuItem::with_id(app, "quit", "Quit Ffyon", true, None::<&str>)?)?;
+        return Ok(menu);
+    }
 
     for (i, line) in state.lines.iter().enumerate() {
         menu.append(&MenuItem::with_id(
@@ -149,6 +154,10 @@ fn toggle_main<R: Runtime>(app: &AppHandle<R>) {
 }
 
 fn on_menu<R: Runtime>(app: &AppHandle<R>, id: &str) {
+    if id != "open" && id != "quit" && app.state::<crate::access::AccessState>().require_authorized().is_err() {
+        show_main(app);
+        return;
+    }
     match id {
         "open" => show_main(app),
         "new-income" => {
@@ -213,9 +222,14 @@ pub fn on_window_event<R: Runtime>(window: &Window<R>, event: &WindowEvent) {
     if window.label() != MAIN_WINDOW {
         return;
     }
+    if matches!(event, WindowEvent::Focused(true)) {
+        let _ = window.emit("app-access-changed", window.state::<crate::access::AccessState>().status());
+        refresh_locked(window.app_handle());
+    }
     let WindowEvent::CloseRequested { api, .. } = event else {
         return;
     };
+    if window.state::<crate::access::AccessState>().require_authorized().is_err() { return; }
     match window.state::<Prefs>().read() {
         CloseAction::Quit => {}
         CloseAction::Tray => {
@@ -239,6 +253,7 @@ impl Prefs {
 
 #[tauri::command]
 pub fn set_tray_state<R: Runtime>(app: AppHandle<R>, state: TrayState) -> Result<(), String> {
+    app.state::<crate::access::AccessState>().require_authorized()?;
     let tray = app.tray_by_id(TRAY_ID).ok_or("there is no tray icon")?;
     let menu = build_menu(&app, &state).map_err(|e| e.to_string())?;
     tray.set_menu(Some(menu)).map_err(|e| e.to_string())?;
@@ -248,6 +263,14 @@ pub fn set_tray_state<R: Runtime>(app: AppHandle<R>, state: TrayState) -> Result
         state.tooltip
     };
     tray.set_tooltip(Some(tooltip)).map_err(|e| e.to_string())
+}
+
+pub fn refresh_locked<R: Runtime>(app: &AppHandle<R>) {
+    if app.state::<crate::access::AccessState>().require_authorized().is_ok() { return; }
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        if let Ok(menu) = build_menu(app, &TrayState::default()) { let _ = tray.set_menu(Some(menu)); }
+        let _ = tray.set_tooltip(Some(DEFAULT_TOOLTIP));
+    }
 }
 
 #[tauri::command]

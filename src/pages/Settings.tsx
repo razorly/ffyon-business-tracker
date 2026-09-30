@@ -42,13 +42,17 @@ import { isTauri } from "@/lib/db";
 import { toastDeleted } from "@/lib/undo";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/Layout";
+import { SiteConnection } from "@/components/SiteConnection";
+import { SiteBusinessSettings } from "@/components/SiteBusinessSettings";
 import { Button, Card, CardHeader, ConfirmModal, Field, Input, Modal, Segmented, Select, Swatch } from "@/components/ui";
 
 export function Settings() {
   return (
     <>
-      <PageHeader title="Settings" subtitle="Categories, exports, backups, the tray and appearance" />
-      <div className="grid gap-4 lg:grid-cols-2">
+      <PageHeader title="Settings" subtitle="Site connection, services, availability and local records" />
+      <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
+        <SiteConnection />
+        <SiteBusinessSettings />
         <CategoriesCard type="income" />
         <CategoriesCard type="expense" />
         <ExportCard />
@@ -324,7 +328,7 @@ function BackupCard() {
 
   return (
     <Card>
-      <CardHeader title="Backup & restore" subtitle="Your data lives only on this computer — back it up regularly" />
+      <CardHeader title="Backup & restore" subtitle="Financial records and private notes are stored on this computer" />
       <div className="space-y-4 px-5 pb-5">
         <div className="flex flex-wrap gap-2">
           <Button
@@ -346,7 +350,7 @@ function BackupCard() {
         </div>
         <p className="text-xs text-muted">
           Tip: save backups to iCloud Drive, OneDrive or a USB stick. A backup can also be used to move the data to
-          another computer.
+          another approved computer. Restoring does not grant access or change website bookings.
         </p>
         <div className="border-t border-line pt-4">
           <div className="text-[13px] font-medium">Automatic backups</div>
@@ -492,7 +496,7 @@ function TrayCard() {
             Left in the {where}, it's one click to book a tan in, and the daily backup still runs.
           </p>
           <Segmented<CloseAction>
-            className="w-full"
+            className="w-full flex-col rounded-xl sm:flex-row sm:rounded-full"
             value={closeAction}
             onChange={chooseClose}
             options={[

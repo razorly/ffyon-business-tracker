@@ -12,7 +12,9 @@ A small desktop app for tracking income and outgoings for a tanning business. It
 
 Anything deleted — an entry, an appointment, a whole repeating run, a client or a category — can be put straight back with **Undo** on the message that appears in the corner. It restores everything the delete touched, so an appointment that was paid comes back paid, with its entry.
 
-All data stays on the computer in a local SQLite database. Nothing is sent anywhere.
+The official app requires an approved admin device. Customers, services and bookings synchronize with the Ffyon website; income, expenses and private notes stay in the local SQLite database on each computer. A website customer account does not unlock the desktop app.
+
+See [Admin setup](docs/admin-setup.md) for Windows/macOS pairing, device access and recovery.
 
 ### Usual prices
 
@@ -22,13 +24,13 @@ A category can store a usual price (Settings → edit a category). It only ever 
 
 The schedule is a diary, not a second set of books. An appointment that's booked, unpaid or still to come is **never** in the profit, the charts, the tax-year totals or an export — nothing is written to the money side until you open it and press **Mark paid**.
 
-Marking it paid adds one income entry, dated the day of the appointment, with its price, service, client and note. After that the two stay in step:
+Marking a confirmed appointment paid adds one income entry, dated the day of the appointment. Its recorded payment and original quoted price are separate:
 
-- Editing the appointment updates the entry it created.
+- Editing a quoted booking or its service never rewrites a recorded payment.
 - **Mark unpaid** removes the entry again, and the money leaves the totals.
-- Deleting the appointment deletes its entry too.
+- Cancelling a booking keeps its history and any recorded payment.
 - Deleting the entry from the monthly view puts the appointment back to unpaid.
-- Marking it cancelled or a no-show does the same: the record stays in the diary, the money doesn't.
+- Marking it cancelled or a no-show preserves recorded income. Use an explicit financial action to correct a payment.
 
 Repeating bookings are just ordinary appointments that know about each other. Editing one changes only that one; deleting offers to remove the rest of the run as well.
 
@@ -63,11 +65,11 @@ Put the contents of `~/.ffyon-updater.key` in the repo's `TAURI_SIGNING_PRIVATE_
 
 A release only reaches people once it's **published** on GitHub — the workflow leaves it as a draft so you can test it first.
 
-The app downloads updates from the releases page without signing in, so **the repo has to be public** for this to work. A private repo's release files need authentication, and the check will quietly find nothing every time. Nothing sensitive lives in the repo: the signing key is kept outside it, and the database never leaves the computer it's on. If you'd rather keep the code private, publish the installers to a separate public repo and point `plugins.updater.endpoints` in `src-tauri/tauri.conf.json` at that one instead.
+The app downloads updates from public GitHub releases. Downloading an installer does not grant admin access: each installation must be approved through trusted owner setup or paired from an authorized device. Private connection credentials remain in Windows Credential Manager or macOS Keychain; server secrets remain in Sites. Updater signing keys stay in GitHub Actions secrets. The public source can be modified to build independent local software, but such modifications cannot authorize access to the Ffyon server.
 
 ## Stack
 
-Tauri 2 · React 19 · TypeScript · Vite · Tailwind CSS 4 · Recharts · SQLite (`tauri-plugin-sql`) · SheetJS
+Tauri 2 · React 19 · TypeScript · Vite · Tailwind CSS 4 · Recharts · native guarded SQLite · SheetJS · Cloudflare D1
 
 ## Development (Windows or Mac)
 
@@ -85,7 +87,7 @@ Because releases are signed for the updater, a local `npm run tauri build` needs
 TAURI_SIGNING_PRIVATE_KEY=$(cat ~/.ffyon-updater.key) TAURI_SIGNING_PRIVATE_KEY_PASSWORD= npm run tauri build
 ```
 
-`npm run dev` on its own runs the UI in a normal browser. It uses a temporary in-memory database (`src/lib/devdb.ts`), which is only useful for UI work.
+`npm run dev` alone cannot authorize the production app. Development fixtures use disposable data and must not connect to the live business database. Native authorization, secure storage and filesystem checks still require the desktop runtime.
 
 ## Getting the Mac version
 

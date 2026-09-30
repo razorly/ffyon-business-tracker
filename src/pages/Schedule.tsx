@@ -15,6 +15,8 @@ import {
 import { BanknoteArrowDown, ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { isOwed, listAppointments, markAppointmentPaid, unpaidBefore, type AppointmentRow } from "@/lib/db";
 import { useData, useLoad } from "@/lib/data";
+import { listBlocks } from "@/lib/sync";
+import { useAccess } from "@/components/AccessGate";
 import { isoDate, money, shortDate, timeLabel } from "@/lib/format";
 import { PageHeader } from "@/components/Layout";
 import { Button, Card, CardHeader, Segmented, Stat } from "@/components/ui";
@@ -26,25 +28,31 @@ type View = "day" | "week" | "month";
 const WEEK = { weekStartsOn: 1 } as const; // weeks run Monday to Sunday
 
 export function Schedule() {
+  const access = useAccess();
   const { openNewAppointment, openEditAppointment, refresh } = useData();
   const [view, setView] = useState<View>("week");
   const [anchor, setAnchor] = useState(() => new Date());
 
   const period = useMemo(() => periodFor(view, anchor), [view, anchor]);
   const [rows] = useLoad(() => listAppointments({ from: period.from, to: period.to }), [period.from, period.to], []);
+  const [blocks] = useLoad(listBlocks, [], []);
 
   // In month view the grid spills into neighbouring months — the totals stay on the month itself.
   const counted = rows.filter(
-    (r) => r.date >= period.countFrom && r.date <= period.countTo && r.status !== "cancelled" && r.status !== "no_show",
+    (r) => r.date >= period.countFrom && r.date <= period.countTo && r.status === "confirmed",
   );
-  const paid = counted.filter((r) => r.status === "paid").reduce((s, r) => s + (r.price_pence ?? 0), 0);
+  const paid = rows.filter((r) => r.date >= period.countFrom && r.date <= period.countTo && r.transaction_id != null)
+    .reduce((s, r) => s + (r.paid_amount_pence ?? 0), 0);
   const owed = counted.filter(isOwed).reduce((s, r) => s + (r.price_pence ?? 0), 0);
 
   // Past bookings never marked paid. Not tied to the week on screen — it's a standing to-do list.
   const [overdue] = useLoad(() => unpaidBefore(isoDate(new Date())), [], []);
 
   const showsToday = period.days.some((d) => isToday(d));
-  const openNew = (date: string, start_time: string) => openNewAppointment({ date, start_time });
+  const openNew = (date: string, start_time: string) => {
+    if (access.state !== "online") return toast.info("Reconnect to create a shared booking");
+    openNewAppointment({ date, start_time });
+  };
 
   const step = (dir: 1 | -1) =>
     setAnchor((d) => (view === "day" ? addDays(d, dir) : view === "week" ? addWeeks(d, dir) : addMonths(d, dir)));
@@ -71,13 +79,13 @@ export function Schedule() {
             { value: "month", label: "Month" },
           ]}
         />
-        <Button variant="primary" onClick={() => openNew(isoDate(showsToday ? new Date() : period.days[0]), "09:00")}>
+        <Button variant="primary" disabled={access.state !== "online"} onClick={() => openNew(isoDate(showsToday ? new Date() : period.days[0]), "09:00")}>
           <Plus size={15} /> Book
         </Button>
       </PageHeader>
 
       <div className="grid grid-cols-3 gap-4">
-        <Stat label="Appointments" value={String(counted.length)} />
+        <Stat label="Confirmed appointments" value={String(counted.length)} />
         <Stat label="Paid" value={money(paid)} tone="good" hint="Counted in your money" />
         <Stat label="Still to collect" value={money(owed)} hint="Not in your money until you mark it paid" />
       </div>
@@ -88,6 +96,7 @@ export function Schedule() {
             month={anchor}
             days={period.days}
             rows={rows}
+            blocks={blocks}
             onOpen={openEditAppointment}
             onNew={openNew}
             onShowDay={(d) => {
@@ -97,14 +106,10 @@ export function Schedule() {
           />
         ) : (
           <div className="py-3 pr-3">
-            <TimeGrid days={period.days} rows={rows} onOpen={openEditAppointment} onNew={openNew} />
+            <TimeGrid days={period.days} rows={rows} blocks={blocks} onOpen={openEditAppointment} onNew={openNew} />
           </div>
         )}
       </Card>
-
-      <p className="mt-3 text-center text-[12.5px] text-muted">
-        Click any empty time to book · click an appointment to open it and mark it paid
-      </p>
 
       {overdue.length > 0 && <OwedCard rows={overdue} onOpen={openEditAppointment} onPaid={refresh} />}
     </>
@@ -139,7 +144,7 @@ function OwedCard({
               <span className="font-medium">{a.client_name ?? a.category_name ?? "Appointment"}</span>
               <span className="block text-[12px] text-muted">
                 {shortDate(a.date)} · {timeLabel(a.start_time)}
-                {a.client_name && a.category_name ? ` · ${a.category_name}` : ""}
+                {a.client_name && (a.service_name || a.category_name) ? ` · ${a.service_name || a.category_name}` : ""}
               </span>
             </button>
             <span className="tabular text-[13.5px] font-semibold">
@@ -149,9 +154,13 @@ function OwedCard({
               <Button
                 size="sm"
                 onClick={async () => {
-                  await markAppointmentPaid(a.id);
-                  toast.success(`${money(a.price_pence!)} added to your money`);
-                  onPaid();
+                  try {
+                    await markAppointmentPaid(a.id);
+                    toast.success(`${money(a.price_pence!)} added to your money`);
+                    onPaid();
+                  } catch (e) {
+                    toast.error(e instanceof Error ? e.message : "Couldn't record the payment");
+                  }
                 }}
               >
                 <BanknoteArrowDown size={14} /> Paid

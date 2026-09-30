@@ -6,9 +6,11 @@
 import initSqlJs from "sql.js";
 import wasmUrl from "sql.js/dist/sql-wasm.wasm?url";
 import rustSource from "../../src-tauri/src/lib.rs?raw";
-import type { Db } from "./db";
+import type { Db, DbResult, Statement } from "./db";
+import { isBrowserFixture } from "./access";
 
 export async function createDevDb(): Promise<Db> {
+  if (!isBrowserFixture()) throw new Error("Disposable browser fixtures are disabled.");
   const SQL = await initSqlJs({ locateFile: () => wasmUrl });
   const db = new SQL.Database();
   // Migrations must use a Rust raw string (r#"…"#) so they are picked up here too.
@@ -17,6 +19,11 @@ export async function createDevDb(): Promise<Db> {
   const bind = (params: unknown[] = []) =>
     Object.fromEntries(params.map((p, i) => [`$${i + 1}`, p ?? null])) as Record<string, never>;
 
+  const execute = (sql: string, params?: unknown[]): DbResult => {
+    db.run(sql, bind(params));
+    const id = db.exec("SELECT last_insert_rowid()")[0].values[0][0] as number;
+    return { rowsAffected: db.getRowsModified(), lastInsertId: id };
+  };
   return {
     async select<T>(sql: string, params?: unknown[]) {
       const stmt = db.prepare(sql);
@@ -27,9 +34,18 @@ export async function createDevDb(): Promise<Db> {
       return rows as T;
     },
     async execute(sql: string, params?: unknown[]) {
-      db.run(sql, bind(params));
-      const id = db.exec("SELECT last_insert_rowid()")[0].values[0][0] as number;
-      return { rowsAffected: db.getRowsModified(), lastInsertId: id };
+      return execute(sql, params);
+    },
+    async batch(statements: Statement[]) {
+      db.exec("BEGIN");
+      try {
+        const result = statements.map((s) => execute(s.sql, s.params));
+        db.exec("COMMIT");
+        return result;
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
     },
   };
 }

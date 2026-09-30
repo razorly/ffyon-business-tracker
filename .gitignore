@@ -25,3 +25,22 @@ dist-ssr
 
 # TypeScript build cache
 *.tsbuildinfo
+
+# Customer portal has its own Sites source repository.
+/customer-site/
+
+# Connection configuration and local customer/financial data are never public.
+.env
+.env.*
+!.env.example
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.pem
+*.key
+/backups/
+/test-results/
+/playwright-report/
+/.codex/
+/.agents/

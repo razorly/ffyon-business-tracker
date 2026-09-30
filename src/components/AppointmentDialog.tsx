@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { addDays, parseISO } from "date-fns";
 import { toast } from "sonner";
-import { BanknoteArrowDown, CalendarOff, Check, Repeat, Trash2, Undo2, UserX } from "lucide-react";
+import { BanknoteArrowDown, CalendarOff, Check, Clock, Repeat, Trash2, Undo2, UserX, X } from "lucide-react";
 import {
   createAppointment,
   createAppointmentSeries,
@@ -11,6 +11,7 @@ import {
   listCategories,
   listClients,
   markAppointmentPaid,
+  markAppointmentUnpaid,
   seriesRemaining,
   setAppointmentStatus,
   updateAppointment,
@@ -20,6 +21,8 @@ import {
   type Client,
 } from "@/lib/db";
 import { useData } from "@/lib/data";
+import { listServices, type CloudService } from "@/lib/sync";
+import { useAccess } from "./AccessGate";
 import {
   durationLabel,
   isoDate,
@@ -53,6 +56,7 @@ const REPEATS = [
  * in the diary.
  */
 export function AppointmentDialog() {
+  const access = useAccess();
   const { appointment, closeAppointment: onClose, refresh } = useData();
   const { open, editing, draft } = appointment;
 
@@ -60,9 +64,13 @@ export function AppointmentDialog() {
   const [start, setStart] = useState("09:00");
   const [duration, setDuration] = useState(DEFAULT_DURATION);
   const [categoryId, setCategoryId] = useState("");
+  const [serviceId, setServiceId] = useState("");
+  const [services, setServices] = useState<CloudService[]>([]);
   const [client, setClient] = useState<ClientChoice>({ id: null, name: "" });
   const [price, setPrice] = useState("");
+  const [received, setReceived] = useState("");
   const [notes, setNotes] = useState("");
+  const [customerNotes, setCustomerNotes] = useState("");
   const [repeatDays, setRepeatDays] = useState(0);
   const [repeatTimes, setRepeatTimes] = useState(4);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -75,45 +83,50 @@ export function AppointmentDialog() {
   const [deleting, setDeleting] = useState<number | null>(null);
   const clientRef = useRef<HTMLDivElement>(null);
 
-  const status = editing?.status ?? "booked";
+  const offline = access.state !== "online";
 
   // Reset the form each time the dialog opens
   useEffect(() => {
     if (!open) return;
-    Promise.all([listCategories("income"), listClients()]).then(([cats, cls]) => {
+    Promise.all([listCategories("income"), listClients(), listServices()]).then(([cats, cls, catalog]) => {
       setCategories(cats);
       setClients(cls);
-      const first = cats[0];
+      setServices(catalog);
+      const firstService = catalog.find((s) => s.active);
+      const first = cats.find((c) => c.service_id === firstService?.id) ?? cats[0];
+      setServiceId(editing?.service_id ?? firstService?.id ?? "");
       setDate(editing?.date ?? draft?.date ?? "");
       setStart(editing?.start_time ?? draft?.start_time ?? "09:00");
-      setDuration(editing?.duration_min ?? DEFAULT_DURATION);
+      setDuration(editing?.duration_min ?? firstService?.duration_min ?? DEFAULT_DURATION);
       setCategoryId(editing ? String(editing.category_id ?? "") : String(first?.id ?? ""));
       // A service's usual price only ever prefills a new booking.
-      const usual = editing ? null : (first?.default_pence ?? null);
+      const usual = editing ? null : (firstService?.price_pence ?? first?.default_pence ?? null);
       setPrice(
         editing?.price_pence != null ? penceToInput(editing.price_pence) : usual != null ? penceToInput(usual) : "",
       );
       setPriceIsDefault(!editing && usual != null);
+      setReceived(editing?.paid_amount_pence != null ? penceToInput(editing.paid_amount_pence) : editing?.price_pence != null ? penceToInput(editing.price_pence) : "");
       const cid = editing?.client_id ?? draft?.clientId ?? null;
       setClient({ id: cid, name: cid ? (cls.find((c) => c.id === cid)?.name ?? "") : "" });
       setNotes(editing?.notes ?? "");
+      setCustomerNotes(editing?.customer_notes ?? "");
       setRepeatDays(0);
       setRepeatTimes(4);
       setError(null);
       setDeleting(null);
       // Start a new booking in the client box; leave an existing one alone to read.
       if (!editing && !cid) setTimeout(() => clientRef.current?.querySelector("input")?.focus(), 30);
-    });
+    }).catch((e) => setError(e instanceof Error ? e.message : "Could not load the appointment"));
   }, [open, editing, draft]);
 
-  /** Choosing a service fills in its usual price, unless a price has been typed. */
-  const pickCategory = (id: string) => {
-    setCategoryId(id);
-    if (editing) return; // never rewrite the price on a booking that already exists
-    const usual = categories.find((c) => String(c.id) === id)?.default_pence ?? null;
-    if (!price.trim() || priceIsDefault) {
-      setPrice(usual != null ? penceToInput(usual) : "");
-      setPriceIsDefault(usual != null);
+  const pickService = (id: string) => {
+    setServiceId(id);
+    const service = services.find((s) => s.id === id);
+    setCategoryId(String(categories.find((c) => c.service_id === id)?.id ?? ""));
+    if (service) {
+      setDuration(service.duration_min);
+      setPrice(penceToInput(service.price_pence));
+      setPriceIsDefault(true);
     }
   };
 
@@ -134,7 +147,7 @@ export function AppointmentDialog() {
     let pence: number | null = null;
     if (price.trim()) {
       pence = parseAmount(price);
-      if (pence == null || pence <= 0) {
+      if (pence == null || !Number.isSafeInteger(pence)) {
         setError("Enter a price, e.g. 25 or 27.50");
         return null;
       }
@@ -149,9 +162,11 @@ export function AppointmentDialog() {
       category_id: categoryId ? Number(categoryId) : null,
       price_pence: pence,
       notes: notes.trim() || null,
+      service_id: serviceId || null,
+      customer_notes: customerNotes.trim(),
     };
     if (editing) {
-      await updateAppointment(editing.id, input);
+      await updateAppointment(editing.id, input, editing.cloud_revision);
       return editing.id;
     }
     if (repeatDays) {
@@ -185,24 +200,49 @@ export function AppointmentDialog() {
     run(async () => {}, editing ? "Appointment updated" : booked);
   };
 
-  const payNow = () => {
-    const pence = parseAmount(price);
-    if (pence == null || pence <= 0) return setError("Add a price before marking this paid");
-    run(async (id) => markAppointmentPaid(id), `${money(pence)} added to your money`);
+  const payNow = async () => {
+    if (!editing) return;
+    const pence = parseAmount(received);
+    if (pence == null || pence <= 0) return setError("Enter the amount received before recording payment");
+    setBusy(true);
+    try {
+      await markAppointmentPaid(editing.id, pence);
+      toast.success(`${money(pence)} added to your money`);
+      refresh();
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't record the payment");
+    } finally {
+      setBusy(false);
+    }
   };
 
-  /** Cancelled, no-show, or back to booked — none of them count as money. */
-  const changeStatus = async (next: Exclude<AppointmentStatus, "paid">, done: string) => {
+  const markUnpaid = async () => {
     if (!editing) return;
     setBusy(true);
     try {
-      await setAppointmentStatus(editing.id, next);
+      await markAppointmentUnpaid(editing.id);
+      toast.success("Payment entry removed");
+      refresh();
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't remove the payment");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const changeStatus = async (next: AppointmentStatus, done: string) => {
+    if (!editing) return;
+    setBusy(true);
+    try {
+      await setAppointmentStatus(editing.id, next, editing.cloud_revision);
       toast.success(done);
       refresh();
       onClose();
     } catch (e) {
       console.error(e);
-      setError("Couldn't change it — please try again.");
+      setError(e instanceof Error ? e.message : "Couldn't change it — please try again.");
     } finally {
       setBusy(false);
     }
@@ -217,6 +257,13 @@ export function AppointmentDialog() {
     if (!editing) return;
     setDeleting(null);
     try {
+      if (scope === "one" && editing.remote_id) {
+        await setAppointmentStatus(editing.id, "cancelled", editing.cloud_revision);
+        toast.success("Appointment cancelled");
+        refresh();
+        onClose();
+        return;
+      }
       const removed =
         scope === "rest" && editing.series_id
           ? await deleteAppointmentSeries(editing.series_id, editing.date)
@@ -226,7 +273,7 @@ export function AppointmentDialog() {
       onClose();
     } catch (e) {
       console.error(e);
-      setError("Couldn't delete it — please try again.");
+      setError(e instanceof Error ? e.message : "Couldn't cancel it — please try again.");
     }
   };
 
@@ -238,31 +285,32 @@ export function AppointmentDialog() {
       <form onSubmit={submit} className="space-y-4">
         <div ref={clientRef}>
           <Field label="Client">
-            <ClientCombobox clients={clients} value={client} onChange={setClient} />
+            <fieldset disabled={offline}><ClientCombobox clients={clients} value={client} onChange={setClient} /></fieldset>
           </Field>
         </div>
 
         <Field label="Service">
-          <Select value={categoryId} onChange={(e) => pickCategory(e.target.value)}>
-            <option value="">No service</option>
-            {categories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
+          <Select value={serviceId} onChange={(e) => pickService(e.target.value)} disabled={offline}>
+            <option value="">No service selected</option>
+            {services.filter((s) => s.active || s.id === editing?.service_id).map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}{!s.active ? " (archived)" : ""}
               </option>
             ))}
           </Select>
         </Field>
+        {editing?.service_name && editing.service_id === serviceId && services.find((s) => s.id === serviceId)?.name !== editing.service_name && <p className="text-xs text-muted">Booked service: {editing.service_name}</p>}
 
         <div className="grid grid-cols-3 gap-3">
           <Field label="Date">
-            <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+            <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} disabled={offline} />
           </Field>
           <Field label="Start">
-            <Input type="time" step={300} value={start} onChange={(e) => setStart(e.target.value)} />
+            <Input type="time" step={300} value={start} onChange={(e) => setStart(e.target.value)} disabled={offline} />
           </Field>
           <Field label="Length" hint={finish ? `Finishes ${timeLabel(finish)}` : undefined}>
-            <Select value={duration} onChange={(e) => setDuration(Number(e.target.value))}>
-              {DURATIONS.map((d) => (
+            <Select value={duration} onChange={(e) => setDuration(Number(e.target.value))} disabled={offline}>
+              {Array.from(new Set([...DURATIONS, duration])).sort((a, b) => a - b).map((d) => (
                 <option key={d} value={d}>
                   {durationLabel(d)}
                 </option>
@@ -279,6 +327,7 @@ export function AppointmentDialog() {
               placeholder="0.00"
               className="pl-7 tabular"
               value={price}
+              disabled={offline}
               onChange={(e) => {
                 setPrice(e.target.value);
                 setPriceIsDefault(false);
@@ -317,13 +366,17 @@ export function AppointmentDialog() {
           </div>
         )}
 
-        <Field label="Note">
+        <Field label="Private staff note">
           <Textarea
             placeholder="e.g. Full body, dark shade — back door"
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
           />
         </Field>
+        <Field label="Customer-visible note">
+          <Textarea value={customerNotes} onChange={(e) => setCustomerNotes(e.target.value)} disabled={offline} />
+        </Field>
+        {offline && <p className="text-xs text-muted">Reconnect to change bookings. Local payments and private staff notes remain available.</p>}
 
         {editing?.series_id && (
           <p className="flex items-center gap-2 text-[12.5px] text-muted">
@@ -333,12 +386,12 @@ export function AppointmentDialog() {
 
         {error && <p className="text-[13px] text-bad">{error}</p>}
 
-        <PaymentStrip editing={editing} busy={busy} onPay={payNow} onStatus={changeStatus} />
+        <PaymentStrip editing={editing} busy={busy} offline={offline} received={received} onReceived={setReceived} onPay={payNow} onUnpaid={markUnpaid} onStatus={changeStatus} />
 
         <div className="flex items-center justify-between pt-1">
           {editing ? (
-            <Button type="button" variant="ghost" className="text-bad" onClick={askDelete}>
-              <Trash2 size={15} /> Delete
+            <Button type="button" variant="ghost" className="text-bad" disabled={offline || busy} onClick={askDelete}>
+              <Trash2 size={15} /> Cancel booking
             </Button>
           ) : (
             <span />
@@ -347,22 +400,16 @@ export function AppointmentDialog() {
             <Button type="button" onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit" variant={editing ? "secondary" : "primary"} disabled={busy}>
+            <Button type="submit" variant={editing ? "secondary" : "primary"} disabled={busy || (offline && !editing)}>
               {editing ? "Save changes" : dates.length > 1 ? `Book ${dates.length}` : "Book appointment"}
             </Button>
           </div>
         </div>
       </form>
 
-      <Modal open={deleting != null} onClose={() => setDeleting(null)} title="Delete appointment?" width="max-w-sm">
+      <Modal open={deleting != null} onClose={() => setDeleting(null)} title="Cancel appointment?" width="max-w-sm">
         <div className="text-sm text-ink-2">
-          {status === "paid" && editing?.price_pence != null ? (
-            <>
-              This also removes the <b>{money(editing.price_pence)}</b> entry it added to your money tracking.
-            </>
-          ) : (
-            "This takes it out of the diary. Nothing in your money tracking changes."
-          )}
+          This cancels the booking on the website and frees its time. Existing payments remain in your money tracking.
           {deleting != null && deleting > 1 && (
             <p className="mt-2">
               It repeats — <b>{deleting}</b> of them are still to come, this one included.
@@ -373,11 +420,11 @@ export function AppointmentDialog() {
           <Button onClick={() => setDeleting(null)}>Cancel</Button>
           {deleting != null && deleting > 1 && (
             <Button variant="danger" onClick={() => remove("rest")}>
-              Delete all {deleting}
+              Cancel all {deleting}
             </Button>
           )}
           <Button variant="danger" onClick={() => remove("one")}>
-            {deleting != null && deleting > 1 ? "Just this one" : "Delete"}
+            {deleting != null && deleting > 1 ? "Just this one" : "Cancel booking"}
           </Button>
         </div>
       </Modal>
@@ -389,13 +436,21 @@ export function AppointmentDialog() {
 function PaymentStrip({
   editing,
   busy,
+  offline,
+  received,
+  onReceived,
   onPay,
+  onUnpaid,
   onStatus,
 }: {
   editing: AppointmentRow | null;
   busy: boolean;
+  offline: boolean;
+  received: string;
+  onReceived: (value: string) => void;
   onPay: () => void;
-  onStatus: (next: Exclude<AppointmentStatus, "paid">, done: string) => void;
+  onUnpaid: () => void;
+  onStatus: (next: AppointmentStatus, done: string) => void;
 }) {
   if (!editing) {
     return (
@@ -405,18 +460,19 @@ function PaymentStrip({
     );
   }
 
-  if (editing.status === "paid") {
+  const statusLabel = editing.status === "confirmed" ? "Confirmed" : editing.status === "pending" ? "Awaiting approval" : editing.status === "rejected" ? "Rejected" : editing.status === "cancelled" ? "Cancelled" : "Didn't show";
+  if (editing.transaction_id != null) {
     return (
       <div className="flex items-center gap-3 rounded-2xl bg-surface-2 px-4 py-3">
         <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-good/15 text-good">
           <Check size={15} strokeWidth={3} />
         </span>
-        <span className="min-w-0 flex-1 text-[13px] text-ink-2">Paid — in your money for {ukDate(editing.date)}.</span>
+        <span className="min-w-0 flex-1 text-[13px] text-ink-2">{statusLabel} · {money(editing.paid_amount_pence ?? 0)} received for {ukDate(editing.date)}.</span>
         <Button
           type="button"
           variant="ghost"
           disabled={busy}
-          onClick={() => onStatus("booked", "Marked unpaid — the entry has been removed")}
+          onClick={onUnpaid}
         >
           <Undo2 size={15} /> Mark unpaid
         </Button>
@@ -424,7 +480,16 @@ function PaymentStrip({
     );
   }
 
-  if (editing.status !== "booked") {
+  if (editing.status === "pending") {
+    return <div className="flex flex-wrap items-center gap-3 rounded-2xl bg-surface-2 px-4 py-3">
+      <Clock size={16} className="text-muted" />
+      <span className="min-w-0 flex-1 text-[13px] text-ink-2">Awaiting approval</span>
+      <Button type="button" disabled={busy || offline} onClick={() => onStatus("rejected", "Request rejected")}><X size={14} /> Reject</Button>
+      <Button type="button" variant="primary" disabled={busy || offline} onClick={() => onStatus("confirmed", "Appointment accepted")}><Check size={14} /> Accept</Button>
+    </div>;
+  }
+
+  if (editing.status !== "confirmed") {
     const cancelled = editing.status === "cancelled";
     return (
       <div className="flex items-center gap-3 rounded-2xl bg-surface-2 px-4 py-3">
@@ -432,10 +497,10 @@ function PaymentStrip({
           {cancelled ? <CalendarOff size={14} /> : <UserX size={14} />}
         </span>
         <span className="min-w-0 flex-1 text-[13px] text-ink-2">
-          {cancelled ? "Cancelled" : "Didn't show"} — never counted in your money.
+          {statusLabel} · no payment recorded.
         </span>
-        <Button type="button" variant="ghost" disabled={busy} onClick={() => onStatus("booked", "Back in the diary")}>
-          <Undo2 size={15} /> Undo
+        <Button type="button" variant="ghost" disabled={busy || offline} onClick={() => onStatus("confirmed", "Appointment confirmed")}>
+          <Undo2 size={15} /> Confirm
         </Button>
       </div>
     );
@@ -443,8 +508,8 @@ function PaymentStrip({
 
   return (
     <div>
-      <div className="flex items-center gap-3 rounded-2xl bg-surface-2 px-4 py-3">
-        <span className="min-w-0 flex-1 text-[13px] text-ink-2">Not counted in your money yet.</span>
+      <div className="flex flex-wrap items-end gap-3 rounded-2xl bg-surface-2 px-4 py-3">
+        <div className="min-w-0 flex-1"><Field label="Amount received"><Input inputMode="decimal" value={received} onChange={(e) => onReceived(e.target.value)} placeholder="0.00" /></Field></div>
         <Button type="button" variant="primary" onClick={onPay} disabled={busy}>
           <BanknoteArrowDown size={15} /> Mark paid
         </Button>
@@ -454,7 +519,7 @@ function PaymentStrip({
           type="button"
           variant="ghost"
           size="sm"
-          disabled={busy}
+          disabled={busy || offline}
           onClick={() => onStatus("cancelled", "Marked as cancelled")}
         >
           <CalendarOff size={14} /> Cancelled
@@ -463,7 +528,7 @@ function PaymentStrip({
           type="button"
           variant="ghost"
           size="sm"
-          disabled={busy}
+          disabled={busy || offline}
           onClick={() => onStatus("no_show", "Marked as a no-show")}
         >
           <UserX size={14} /> Didn't show

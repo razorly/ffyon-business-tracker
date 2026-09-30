@@ -10,6 +10,10 @@ const UNDO_MS = 12_000;
  * mis-click. `onUndone` re-reads the data once it's back.
  */
 export function toastDeleted(snap: DeletedSnapshot, onUndone: () => void) {
+  if (snap.undoable === false) {
+    toast.success(snap.message ?? `${snap.label} updated`);
+    return;
+  }
   toast.success(`${snap.label} deleted`, {
     duration: UNDO_MS,
     action: {

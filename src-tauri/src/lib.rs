@@ -1,11 +1,15 @@
 mod tray;
+mod access;
+mod database;
+mod protected_files;
 
-use tauri_plugin_sql::{Migration, MigrationKind};
+use tauri::Manager;
+
+struct Migration { version: i32, sql: &'static str }
 
 fn migrations() -> Vec<Migration> {
     vec![Migration {
         version: 1,
-        description: "create_initial_tables",
         sql: r#"
             CREATE TABLE clients (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -48,11 +52,9 @@ fn migrations() -> Vec<Migration> {
                 ('Travel', 'expense', '#e87ba4'),
                 ('Other', 'expense', '#008300');
         "#,
-        kind: MigrationKind::Up,
     },
     Migration {
         version: 2,
-        description: "brand_palette",
         sql: r#"
             UPDATE categories SET colour = '#9c4a2a' WHERE colour = '#2a78d6';
             UPDATE categories SET colour = '#e8798f' WHERE colour = '#eb6834';
@@ -63,21 +65,17 @@ fn migrations() -> Vec<Migration> {
             UPDATE categories SET colour = '#e0603a' WHERE colour = '#4a3aa7';
             UPDATE categories SET colour = '#b0305a' WHERE colour = '#e34948';
         "#,
-        kind: MigrationKind::Up,
     },
     Migration {
         version: 3,
-        description: "category_default_amount",
         // Optional usual price per category. Only ever prefills a NEW entry's amount —
         // entries already saved keep the amount they were saved with.
         sql: r#"
             ALTER TABLE categories ADD COLUMN default_pence INTEGER;
         "#,
-        kind: MigrationKind::Up,
     },
     Migration {
         version: 4,
-        description: "appointments",
         // Bookings are kept apart from the money. An appointment only reaches the
         // transactions table when it is marked paid, so nothing unpaid or upcoming
         // can show up in any of the income figures.
@@ -99,11 +97,9 @@ fn migrations() -> Vec<Migration> {
             CREATE INDEX idx_appointments_date ON appointments(date);
             CREATE INDEX idx_appointments_client ON appointments(client_id);
         "#,
-        kind: MigrationKind::Up,
     },
     Migration {
         version: 5,
-        description: "appointment_status_and_series",
         // Adds 'cancelled' and 'no_show' to the status check (SQLite can't alter a
         // CHECK in place, so the table is rebuilt), plus series_id, which ties the
         // occurrences of a repeating booking together.
@@ -138,28 +134,73 @@ fn migrations() -> Vec<Migration> {
             CREATE INDEX idx_appointments_client ON appointments(client_id);
             CREATE INDEX idx_appointments_series ON appointments(series_id);
         "#,
-        kind: MigrationKind::Up,
+    },
+    Migration {
+        version: 6,
+        sql: r#"
+            ALTER TABLE clients ADD COLUMN remote_id TEXT;
+            ALTER TABLE clients ADD COLUMN account_id TEXT;
+            ALTER TABLE clients ADD COLUMN email TEXT;
+            ALTER TABLE clients ADD COLUMN cloud_revision INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE clients ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0;
+            CREATE UNIQUE INDEX idx_clients_remote ON clients(remote_id) WHERE remote_id IS NOT NULL;
+            ALTER TABLE categories ADD COLUMN service_id TEXT;
+            CREATE UNIQUE INDEX idx_categories_service ON categories(service_id) WHERE service_id IS NOT NULL AND type='income';
+            CREATE TABLE appointments_cloud (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL,
+                start_time TEXT NOT NULL,
+                duration_min INTEGER NOT NULL DEFAULT 30,
+                client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+                category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+                price_pence INTEGER,
+                notes TEXT,
+                status TEXT NOT NULL DEFAULT 'confirmed' CHECK(status IN ('pending','confirmed','rejected','cancelled','no_show')),
+                transaction_id INTEGER REFERENCES transactions(id) ON DELETE SET NULL,
+                series_id TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                remote_id TEXT,
+                service_id TEXT,
+                customer_notes TEXT,
+                cloud_revision INTEGER NOT NULL DEFAULT 0,
+                proposed_date TEXT,
+                proposed_start_time TEXT,
+                service_name TEXT
+            );
+            INSERT INTO appointments_cloud(id,date,start_time,duration_min,client_id,category_id,price_pence,notes,status,transaction_id,series_id,created_at)
+            SELECT id,date,start_time,duration_min,client_id,category_id,price_pence,notes,
+                CASE WHEN status IN ('booked','paid') THEN 'confirmed' ELSE status END,
+                transaction_id,series_id,created_at FROM appointments;
+            DROP TABLE appointments;
+            ALTER TABLE appointments_cloud RENAME TO appointments;
+            CREATE INDEX idx_appointments_date ON appointments(date);
+            CREATE INDEX idx_appointments_client ON appointments(client_id);
+            CREATE INDEX idx_appointments_series ON appointments(series_id);
+            CREATE UNIQUE INDEX idx_appointments_remote ON appointments(remote_id) WHERE remote_id IS NOT NULL;
+            CREATE TABLE cloud_services(id TEXT PRIMARY KEY, data TEXT NOT NULL);
+            CREATE TABLE cloud_blocks(id TEXT PRIMARY KEY, data TEXT NOT NULL);
+            CREATE TABLE cloud_settings(id TEXT PRIMARY KEY, data TEXT NOT NULL);
+            CREATE TABLE sync_state(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        "#,
     }]
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    if access::handle_cli() { return; }
     tauri::Builder::default()
-        .plugin(
-            tauri_plugin_sql::Builder::default()
-                .add_migrations("sqlite:ffyon.db", migrations())
-                .build(),
-        )
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_persisted_scope::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .manage(tray::Prefs::default())
+        .manage(access::AccessState::new())
+        .manage(protected_files::FileGrants::default())
         .setup(|app| {
+            app.manage(database::initialize(app.handle()).map_err(std::io::Error::other)?);
             tray::setup(app.handle())?;
+            access::start_timer(app.handle());
             Ok(())
         })
         .on_window_event(tray::on_window_event)
@@ -170,6 +211,24 @@ pub fn run() {
             tray::hide_main_window,
             tray::window_is_active,
             tray::quit_app,
+            access::access_status,
+            access::access_prepare,
+            access::access_connect,
+            access::access_pair,
+            access::access_check,
+            access::access_disconnect,
+            access::admin_request,
+            database::db_select,
+            database::db_execute,
+            database::db_batch,
+            protected_files::protected_pick_file,
+            protected_files::protected_pick_directory,
+            protected_files::protected_save_file,
+            protected_files::protected_write_file,
+            protected_files::protected_write_text_file,
+            protected_files::protected_read_text_file,
+            protected_files::protected_read_dir,
+            protected_files::protected_remove_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

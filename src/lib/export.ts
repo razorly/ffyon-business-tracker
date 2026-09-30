@@ -1,12 +1,14 @@
 import * as XLSX from "xlsx";
-import { save, open } from "@tauri-apps/plugin-dialog";
-import { readDir, remove, writeFile, writeTextFile, readTextFile } from "@tauri-apps/plugin-fs";
+import { invoke } from "@tauri-apps/api/core";
+import { isBrowserFixture, requireLocalAccess } from "./access";
 import { exportAll, isTauri, listClients, listTransactions, monthlyTotals, restoreAll, validateBackup } from "./db";
 import { isoDate, monthLabel, ukDate } from "./format";
 
 /** Save bytes via the native dialog (or a browser download in dev preview). Returns false if cancelled. */
 async function saveBytes(defaultName: string, filterName: string, ext: string, data: Uint8Array | string) {
+  await requireLocalAccess();
   if (!isTauri()) {
+    if (!isBrowserFixture()) throw new Error("Export requires the paired desktop app.");
     const blob = new Blob([data as BlobPart]);
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -14,10 +16,10 @@ async function saveBytes(defaultName: string, filterName: string, ext: string, d
     a.click();
     return true;
   }
-  const path = await save({ defaultPath: defaultName, filters: [{ name: filterName, extensions: [ext] }] });
+  const path = await invoke<string | null>("protected_save_file", { defaultPath: defaultName, filters: [{ name: filterName, extensions: [ext] }] });
   if (!path) return false;
-  if (typeof data === "string") await writeTextFile(path, data);
-  else await writeFile(path, data);
+  if (typeof data === "string") await invoke("protected_write_text_file", { path, data });
+  else await invoke("protected_write_file", { path, data: Array.from(data) });
   return true;
 }
 
@@ -91,9 +93,9 @@ export async function saveBackup() {
 /** Returns number of transactions restored, or null if cancelled. Throws on an invalid file. */
 export async function loadBackup(): Promise<number | null> {
   if (!isTauri()) throw new Error("Restore is only available in the desktop app.");
-  const path = await open({ multiple: false, filters: [{ name: "Ffyon backup", extensions: ["json"] }] });
+  const path = await invoke<string | null>("protected_pick_file", { filters: [{ name: "Ffyon backup", extensions: ["json"] }] });
   if (!path) return null;
-  const parsed = JSON.parse(await readTextFile(path as string));
+  const parsed = JSON.parse(await invoke<string>("protected_read_text_file", { path }));
   if (!validateBackup(parsed)) throw new Error("That file isn't a Ffyon backup.");
 
   // Keep the current data so a failed restore can be rolled back.
@@ -146,7 +148,7 @@ export function writeAutoBackup(v: AutoBackup | null) {
 /** Asks for a folder and turns automatic backups on. Returns null if cancelled. */
 export async function chooseAutoBackupFolder(): Promise<AutoBackup | null> {
   if (!isTauri()) throw new Error("Automatic backups are only available in the desktop app.");
-  const dir = await open({ directory: true, multiple: false });
+  const dir = await invoke<string | null>("protected_pick_directory");
   if (!dir) return null;
   const next = { dir: dir as string, lastRun: null };
   writeAutoBackup(next);
@@ -167,7 +169,7 @@ export async function runAutoBackup(force = false): Promise<string | null> {
   if (!force && cfg.lastRun === today) return null;
 
   const path = inFolder(cfg.dir, `${FILE_PREFIX}${today}.json`);
-  await writeTextFile(path, JSON.stringify(await exportAll(), null, 2));
+  await invoke("protected_write_text_file", { path, data: JSON.stringify(await exportAll(), null, 2) });
   writeAutoBackup({ ...cfg, lastRun: today });
   await pruneBackups(cfg.dir);
   return path;
@@ -176,12 +178,12 @@ export async function runAutoBackup(force = false): Promise<string | null> {
 /** Keeps the newest few backups in the folder and removes the rest. */
 async function pruneBackups(dir: string) {
   try {
-    const names = (await readDir(dir))
+    const names = (await invoke<{ name: string; isFile: boolean }[]>("protected_read_dir", { path: dir }))
       .filter((e) => e.isFile && e.name.startsWith(FILE_PREFIX) && e.name.endsWith(".json"))
       .map((e) => e.name)
       .sort(); // the dated filenames sort oldest first
     for (const name of names.slice(0, Math.max(0, names.length - KEEP))) {
-      await remove(inFolder(dir, name));
+      await invoke("protected_remove_file", { path: inFolder(dir, name) });
     }
   } catch (e) {
     console.error("Couldn't tidy old backups", e); // the backup itself still worked
