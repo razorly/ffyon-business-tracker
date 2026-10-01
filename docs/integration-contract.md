@@ -67,6 +67,7 @@ Guest clients have no account. Account profiles remain customer-owned; associate
 
 - `lookup_postcode` requires native authorization and calls only the fixed [Postcodes.io lookup endpoint](https://postcodes.io/docs/api/lookup-postcode/) with a validated postcode, never the full address or admin credential. Responses are bounded and coordinates validated; authorization is checked again after the request.
 - Remote-only map controls load an OpenStreetMap iframe only after an explicit click and label the pin as an approximate postcode location. CSP permits only the specific map frame origin.
+- The external frame retains its OSM origin (`allow-scripts allow-same-origin`) instead of an opaque sandbox origin, and uses `strict-origin-when-cross-origin` for its initial navigation. This permits valid tile referrers as required by the [OSM tile policy](https://operations.osmfoundation.org/policies/tiles/). The frame is still cross-origin to the app, has no native remote capability, and cannot navigate the parent window. Its URL contains only postcode-area coordinates, never a full address or app credential.
 - `open_appointment_directions` opens a fixed Google Maps directions URL after an explicit click and disclosure that the full address is shared. It is not a generic URL opener and remains native-authorized.
 
 ## Desktop Mirror v7

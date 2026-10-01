@@ -80,7 +80,8 @@ async function installDesktopFixture(page, records) {
   page.on("response", async response => {
     const resource = new URL(response.url());
     if (!resource.hostname.endsWith(".openstreetmap.org") || !/\/\d+\/\d+\/\d+(?:\.(?:png|pbf|mvt))?$/.test(resource.pathname)) return;
-    const tile = { status: response.status(), complete: false, type: "vector", bytes: 0, naturalWidth: null, naturalHeight: null, error: null };
+    const headers = await response.request().allHeaders();
+    const tile = { status: response.status(), referer: headers.referer ?? null, complete: false, type: "vector", bytes: 0, naturalWidth: null, naturalHeight: null, error: null };
     mapTiles.push(tile);
     try {
       const body = await response.body();
@@ -174,7 +175,9 @@ async function installDesktopFixture(page, records) {
 
 async function desktopFeatures(browser, url, output, evidence) {
   const date = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-  for (const viewport of [{ width: 1280, height: 900 }, { width: 375, height: 812 }, { width: 320, height: 740 }]) {
+  const widths = process.env.FFYON_FEATURES_WIDTHS ? process.env.FFYON_FEATURES_WIDTHS.split(",").map(Number) : [1280, 1024, 800, 640, 375, 320];
+  assert.ok(widths.every(width => Number.isInteger(width) && width >= 320 && width <= 1920));
+  for (const viewport of widths.map(width => ({ width, height: width >= 640 ? 900 : width === 375 ? 812 : 740 }))) {
     const now = new Date().toISOString();
     const clients = ["Website Remote Customer", "Manual Sorted Customer", "Salon Customer"].map((name, index) => ({ id: `00000000-0000-4000-8000-${String(index + 101).padStart(12, "0")}`, account_id: null, merged_into: null, name, email: `customer${index}@example.invalid`, phone: "07000000000", saved_address: "1 Saved Browser Fixture Road\nLondon", saved_postcode: "SW1A 1AA", disabled: false, revision: 1, updated_at: now }));
     const services = [{ id: "browser-feature-service", name: "Express spray tan with a personalised colour consultation", description: "Browser-only fixture service", duration_min: 45, price_pence: 2750, discount_percent: 20, booking_price_pence: 2200, active: true, revision: 1 }];
@@ -199,6 +202,10 @@ async function desktopFeatures(browser, url, output, evidence) {
       await page.getByRole("button", { name: "Show map", exact: true }).click();
       const map = page.locator('iframe[title="Postcode area map for SW1A 1AA"]');
       await map.waitFor();
+      assert.equal(await map.getAttribute("sandbox"), "allow-scripts allow-same-origin");
+      assert.equal(await map.getAttribute("referrerpolicy"), "strict-origin-when-cross-origin");
+      const mapBounds = await map.boundingBox(), requestBounds = await map.locator('xpath=ancestor::li').boundingBox();
+      assert.ok(mapBounds.width >= requestBounds.width - 44, "Request actions must not squeeze the map column");
       assert.equal(fixture.commands.filter(item => item.command === "lookup_postcode").length, 1);
       assert.deepEqual(fixture.commands.find(item => item.command === "lookup_postcode").args, { postcode: "SW1A 1AA" }, "Postcode lookup must not send a full visit address");
       let mapRendered = false;
@@ -209,6 +216,8 @@ async function desktopFeatures(browser, url, output, evidence) {
           const deadline = Date.now() + 20000;
           while ((!fixture.mapTiles.length || fixture.mapTiles.some(tile => !tile.complete)) && Date.now() < deadline) await page.waitForTimeout(100);
           assert.ok(fixture.mapTiles.length > 0 && fixture.mapTiles.every(tile => tile.complete && tile.status === 200 && tile.bytes > 0 && !tile.error), "Every visible raster/vector tile must finish successfully");
+          const mapSource = await map.getAttribute("src");
+          assert.ok(fixture.mapTiles.every(tile => tile.referer === "https://www.openstreetmap.org/" || tile.referer === mapSource), "Tile requests must identify OSM, with at most the existing postcode-area coordinates");
           await page.waitForTimeout(1000); // OpenLayers fades newly loaded tiles into its canvas.
           const imageRequire = process.env.FFYON_PLAYWRIGHT_PATH ? createRequire(resolve(process.env.FFYON_PLAYWRIGHT_PATH, "index.js")) : require;
           const { PNG } = imageRequire("pngjs");
@@ -218,6 +227,7 @@ async function desktopFeatures(browser, url, output, evidence) {
           mapRendered = colours.size >= 40;
           if (!mapRendered) mapProviderIssue = `Map canvas stayed visually blank (${colours.size} colour buckets)`;
         } catch (error) { mapProviderIssue = error.message; }
+        assert.ok(mapRendered && !mapProviderIssue, `Live map must render successfully: ${mapProviderIssue}`);
       }
       await capture(page, output, `admin-postcode-map-${viewport.width}.png`);
       await page.getByRole("button", { name: "Directions", exact: true }).click();
@@ -267,6 +277,8 @@ async function desktopFeatures(browser, url, output, evidence) {
       await page.getByRole("button", { name: "Day", exact: true }).click();
       await page.getByRole("button", { name: new RegExp(clients[2].name) }).first().click();
       await page.getByRole("heading", { name: "Appointment", exact: true }).waitFor();
+      // The heading renders before the asynchronous form reset finishes.
+      await page.waitForFunction(name => document.querySelector('[placeholder="Search or add a client (optional)"]')?.value === name, clients[2].name);
       assert.equal(await page.getByRole("button", { name: "Show map", exact: true }).count(), 0, "Salon bookings must not render map controls");
       assert.equal(await page.getByLabel("Home visit", { exact: true }).isChecked(), false);
       await capture(page, output, `admin-salon-booking-${viewport.width}.png`);
@@ -306,6 +318,7 @@ async function desktopFeatures(browser, url, output, evidence) {
       await page.locator('nav a[title="Schedule"]').click();
       await page.getByRole("button", { name: new RegExp(clients[1].name) }).first().click();
       await page.getByRole("heading", { name: "Appointment", exact: true }).waitFor();
+      await page.waitForFunction(name => document.querySelector('[placeholder="Search or add a client (optional)"]')?.value === name, clients[1].name);
       await page.getByRole("button", { name: "Mark paid", exact: true }).click();
       await page.getByRole("heading", { name: "Appointment", exact: true }).waitFor({ state: "hidden" });
       await page.getByRole("button", { name: new RegExp(clients[1].name) }).first().click();
@@ -332,7 +345,7 @@ async function desktopFeatures(browser, url, output, evidence) {
       assert.deepEqual(errors, []);
       evidence.push({ target: "desktop-features", viewport, storage: "actual migrations + SQL in disposable memory", mapsExplicitOnly: true, mapRendered, mapProviderIssue, mapTiles: fixture.mapTiles, manualConfirmedUntimedNotInRequests: true, allDayCalendarAndNeedsTimeHighlight: true, discountQuoteSnapshotPreserved: true, conflictedNewGuestRetryDoesNotDuplicateCustomer: true, destructiveBookingAndClientDeletionPreservesMoney: true, pageErrors: errors });
     } catch (error) {
-      console.log(JSON.stringify({ viewport, form: await page.locator("form").allTextContents(), controls: await page.locator("input,textarea,select").evaluateAll(elements => elements.map(element => ({ type: element.type, value: element.value, label: element.closest("label")?.textContent }))) }, null, 2));
+      console.log(JSON.stringify({ viewport, mapTiles: fixture.mapTiles, form: await page.locator("form").allTextContents(), controls: await page.locator("input,textarea,select").evaluateAll(elements => elements.map(element => ({ type: element.type, value: element.value, label: element.closest("label")?.textContent }))) }, null, 2));
       await page.screenshot({ path: resolve(output, `admin-failure-${viewport.width}.png`), fullPage: true });
       throw error;
     } finally { await page.close(); fixture.close(); }

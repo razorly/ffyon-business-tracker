@@ -42,7 +42,7 @@ export function RemoteAppointmentMap({ address, postcode }: { address: string; p
     marker: `${location.latitude},${location.longitude}`,
   })}` : "";
 
-  return <div className="min-w-0 space-y-2 border-t border-line pt-3">
+  return <div className="w-full min-w-0 space-y-2 border-t border-line pt-3">
     <p className="whitespace-pre-line break-words text-[13px] text-ink-2">{address}<span className="mt-1 block font-medium">{postcode}</span></p>
     <div className="flex flex-wrap gap-2">
       <Button type="button" size="sm" disabled={busy || !postcode.trim()} onClick={location ? () => setLocation(null) : () => void show()}>
@@ -53,8 +53,10 @@ export function RemoteAppointmentMap({ address, postcode }: { address: string; p
     </div>
     <p className="text-[11px] leading-relaxed text-muted">Map: postcode area only, via Postcodes.io and OpenStreetMap. Directions sends the address to Google Maps.</p>
     {error && <p role="alert" className="break-words text-xs text-bad">{error}</p>}
-    {location && <div className="space-y-1">
-      <iframe title={`Postcode area map for ${location.postcode}`} src={source} className="h-60 w-full rounded-lg border border-line" referrerPolicy="no-referrer" sandbox="allow-scripts" loading="lazy" />
+    {location && <div className="w-full min-w-0 space-y-1">
+      {/* Keep the external frame on its own origin so tile requests identify OSM.
+          The cross-origin frame still cannot read the app or navigate its window. */}
+      <iframe title={`Postcode area map for ${location.postcode}`} src={source} className="block h-60 w-full rounded-lg border border-line" referrerPolicy="strict-origin-when-cross-origin" sandbox="allow-scripts allow-same-origin" loading="lazy" />
       <p className="text-xs text-muted">Approximate postcode location. Check the address before travelling.</p>
     </div>}
   </div>;

@@ -33,8 +33,8 @@ export function Requests() {
     {error && <p role="alert" className="mb-4 text-sm text-bad">{error}</p>}
     <Card>
       {loading && requests.length === 0 ? <div role="status" className="flex items-center gap-2 px-5 py-10 text-sm text-muted"><LoaderCircle size={16} className="animate-spin" /> Loading requests</div> : requests.length === 0 ? <EmptyState icon={<Inbox size={20} />} title="All caught up" /> : <ul className="divide-y divide-line">
-        {requests.map((row) => <li key={row.id} className="flex flex-wrap items-center gap-4 px-5 py-4">
-          <div className="min-w-0 basis-full sm:basis-0 sm:flex-1">
+        {requests.map((row) => <li key={row.id} className="flex flex-col items-stretch gap-4 px-5 py-4">
+          <div className="w-full min-w-0">
             <button onClick={() => openEditAppointment(row)} className="max-w-full break-words text-left font-medium hover:underline cursor-pointer">{row.client_name || "Client"}</button>
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-ink-2"><span>{row.service_name || row.category_name || "Appointment"}</span><span>{row.duration_min} min</span>{row.price_pence != null && <span className="tabular">{money(row.price_pence)}</span>}</div>
             {row.account_email && <p className="mt-1 break-all text-xs text-muted">{row.account_email}</p>}
@@ -44,7 +44,7 @@ export function Requests() {
             {!!row.is_remote && <div className="mt-3"><p className="mb-2 flex items-center gap-1.5 text-xs font-medium"><MapPin size={13} /> Home visit</p><RemoteAppointmentMap address={row.visit_address} postcode={row.visit_postcode} /></div>}
             {row.customer_notes && <p className="mt-2 break-words text-[13px] text-ink-2">{row.customer_notes}</p>}
           </div>
-          <div className="flex w-full flex-wrap gap-2 sm:w-auto sm:shrink-0">
+          <div className="flex w-full flex-wrap justify-end gap-2">
             <Button disabled={busy != null || access.state !== "online"} onClick={() => void decide(row, false)}><X size={14} /> Reject</Button>
             <Button variant="primary" disabled={busy != null || access.state !== "online"} onClick={() => void decide(row, true)}>{busy === row.id ? <LoaderCircle size={14} className="animate-spin" /> : <Check size={14} />} {row.proposed_date ? row.proposed_time_confirmed === 0 ? "Approve date" : "Approve time" : row.time_confirmed === 0 ? "Accept date" : "Accept"}</Button>
           </div>
