@@ -86,6 +86,27 @@ async function catalogueFlows(browser, width, output) {
     await capture(page, output, `catalogue-service-editor-${width}.png`);
     await editor.getByRole("button", { name: "Cancel", exact: true }).click();
 
+    const mutationsBeforeBooking = fixture.mutations.length;
+    await page.keyboard.press("Control+n");
+    const bookingEntry = page.getByRole("dialog", { name: "New entry", exact: true });
+    await bookingEntry.getByLabel(/^Payment for/).waitFor();
+    await bookingEntry.getByLabel(/^Service/).selectOption(services[0].id);
+    await bookingEntry.getByPlaceholder("Search or add a client (optional)").fill("Unsaved booking customer");
+    await bookingEntry.getByRole("button", { name: "Appointment", exact: true }).click();
+    await bookingEntry.waitFor({ state: "hidden" });
+    const newBooking = page.getByRole("dialog", { name: "New appointment", exact: true });
+    await newBooking.waitFor();
+    await page.waitForFunction(() => document.querySelector('[placeholder="Search or add a client (optional)"]')?.value === "Unsaved booking customer");
+    assert.equal(await newBooking.getByLabel(/^Service/).inputValue(), services[0].id, "New entry must carry the selected nondefault service to the booking form");
+    assert.equal(await newBooking.getByLabel(/^Price/).inputValue(), "22.00");
+    assert.equal(await newBooking.getByLabel(/^Length/).inputValue(), "45");
+    await capture(page, output, `catalogue-new-entry-booking-${width}.png`);
+    await newBooking.getByRole("button", { name: "Cancel", exact: true }).click();
+    await newBooking.waitFor({ state: "hidden" });
+    assert.equal(fixture.mutations.length, mutationsBeforeBooking, "Cancelling the draft must not create a booking, client or payment");
+    assert.equal(fixture.select("SELECT COUNT(*) AS n FROM transactions")[0].n, 3);
+    assert.equal(records.appointments.length, 1);
+
     await openEntry(page);
     let entry = page.getByRole("dialog", { name: "New entry", exact: true });
     await entry.getByLabel(/^Payment for/).selectOption("service");
@@ -211,6 +232,7 @@ async function catalogueFlows(browser, width, output) {
     const historicRow = page.getByRole("row").filter({ has: page.getByText("Saved bronze treatment", { exact: true }) });
     await historicRow.getByRole("button", { name: "Edit", exact: true }).click();
     const historicEntry = page.getByRole("dialog", { name: "Edit entry", exact: true });
+    assert.equal(await historicEntry.getByRole("button", { name: "Appointment", exact: true }).count(), 0, "Editing recorded money must not create a new booking");
     await historicEntry.waitFor();
     await page.waitForFunction(() => document.querySelector('[role="dialog"] input[inputmode="decimal"]')?.value === "31.00");
     assert.equal(await historicEntry.getByLabel(/^Amount/).inputValue(), "31.00", "Editing archived history must not reprice to the current catalogue");

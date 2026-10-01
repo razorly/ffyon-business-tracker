@@ -157,6 +157,8 @@ export async function installDesktopFixture(page, records) {
       return { ok: true };
     }
     if (command === "plugin:updater|check") return null;
+    if (command === "plugin:notification|is_permission_granted") return true;
+    if (command === "notify_payment_confirmation") return null;
     if (command.includes("listen") || command.includes("register") || command === "sync_tray" || command === "set_tray_state" || command === "set_close_action") return null;
     throw new Error(`Unexpected feature IPC command: ${command}`);
   });
@@ -199,7 +201,7 @@ async function desktopFeatures(browser, url, output, evidence) {
     const fixture = await installDesktopFixture(page, records);
     try {
       await page.goto(url, { waitUntil: "networkidle" });
-      await page.locator('nav a[title="Requests"]').click();
+      await page.locator('nav a[title="Inbox"]').click();
       await page.getByRole("button", { name: clients[0].name, exact: true }).waitFor();
       await page.getByRole("button", { name: "Accept date", exact: true }).waitFor();
       assert.equal(fixture.commands.filter(item => item.command === "lookup_postcode").length, 0, "Opening requests must not disclose a postcode to a map provider");
@@ -241,10 +243,26 @@ async function desktopFeatures(browser, url, output, evidence) {
       assert.equal(await page.locator("iframe").count(), 0);
 
       await page.locator('nav a[title="Schedule"]').click();
-      await page.getByRole("button", { name: "Book", exact: true }).click();
+      await page.getByRole("button", { name: "New entry", exact: true }).click();
+      const newEntry = page.getByRole("dialog", { name: "New entry", exact: true });
+      await newEntry.getByLabel(/^Payment for/).waitFor();
+      const carriedDate = new Date(`${date}T12:00:00Z`);
+      carriedDate.setUTCDate(carriedDate.getUTCDate() + 2);
+      const appointmentDate = carriedDate.toISOString().slice(0, 10);
+      await newEntry.getByLabel(/^Date/).fill(appointmentDate);
+      await newEntry.getByLabel(/^Amount/).fill("19.37");
+      await newEntry.getByPlaceholder("Search or add a client (optional)").fill(clients[1].name);
+      await newEntry.getByRole("button", { name: clients[1].name, exact: true }).click();
+      await capture(page, output, `admin-new-entry-appointment-choice-${viewport.width}.png`);
+      await newEntry.getByRole("button", { name: "Appointment", exact: true }).click();
+      await newEntry.waitFor({ state: "hidden" });
       await page.getByRole("heading", { name: "New appointment", exact: true }).waitFor();
-      await page.getByPlaceholder("Search or add a client (optional)").fill(clients[1].name);
-      await page.getByRole("button", { name: clients[1].name, exact: true }).click();
+      await page.waitForFunction(name => document.querySelector('[placeholder="Search or add a client (optional)"]')?.value === name, clients[1].name);
+      assert.equal(await page.getByRole("dialog").count(), 1, "New entry must hand off to the existing booking form without stacked dialogs");
+      assert.equal(await page.getByLabel(/^Date/).inputValue(), appointmentDate);
+      assert.equal(await page.getByLabel(/^Service/).inputValue(), services[0].id);
+      assert.equal(await page.getByLabel(/^Price/).inputValue(), "22.00", "Creating a booking must use the agreed service quote, not a payment amount");
+      await page.getByLabel(/^Date/).fill(date);
       await page.getByLabel("Time to confirm", { exact: true }).check();
       await page.getByLabel("Home visit", { exact: true }).check();
       await page.getByRole("button", { name: "Use saved address", exact: true }).click();
@@ -268,6 +286,7 @@ async function desktopFeatures(browser, url, output, evidence) {
       assert.equal(manual.is_remote, true);
       assert.equal(manual.discount_percent, 20);
       assert.equal(manual.price_pence, 2200);
+      assert.equal(fixture.select("SELECT COUNT(*) AS n FROM transactions")[0].n, 0, "Creating an appointment through New entry must not record income");
       assert.ok(records.clients[1].saved_address.includes("Manual Browser Fixture"));
       const allDay = page.locator('[aria-label="All-day appointments awaiting a time"]');
       await allDay.waitFor();
@@ -275,7 +294,7 @@ async function desktopFeatures(browser, url, output, evidence) {
       await page.locator('section[aria-label="Appointments needing a confirmed time"]').waitFor();
       await capture(page, output, `admin-all-day-calendar-${viewport.width}.png`);
 
-      await page.locator('nav a[title="Requests"]').click();
+      await page.locator('nav a[title="Inbox"]').click();
       await page.getByRole("button", { name: clients[0].name, exact: true }).waitFor();
       assert.equal(await page.getByRole("button", { name: clients[1].name, exact: true }).count(), 0, "Admin-created entries must stay out of Requests");
       await page.locator('nav a[title="Schedule"]').click();
@@ -348,7 +367,7 @@ async function desktopFeatures(browser, url, output, evidence) {
       assert.equal(records.clients.some(item => item.id === clients[1].id), false);
       assert.equal(fixture.select("SELECT amount_pence FROM transactions")[0].amount_pence, 2200);
       assert.deepEqual(errors, []);
-      evidence.push({ target: "desktop-features", viewport, storage: "actual migrations + SQL in disposable memory", mapsExplicitOnly: true, mapRendered, mapProviderIssue, mapTiles: fixture.mapTiles, manualConfirmedUntimedNotInRequests: true, allDayCalendarAndNeedsTimeHighlight: true, discountQuoteSnapshotPreserved: true, conflictedNewGuestRetryDoesNotDuplicateCustomer: true, destructiveBookingAndClientDeletionPreservesMoney: true, pageErrors: errors });
+      evidence.push({ target: "desktop-features", viewport, storage: "actual migrations + SQL in disposable memory", mapsExplicitOnly: true, mapRendered, mapProviderIssue, mapTiles: fixture.mapTiles, newEntryCreatesAppointmentWithoutIncome: true, newEntryCarriesDateClientAndService: true, manualConfirmedUntimedNotInRequests: true, allDayCalendarAndNeedsTimeHighlight: true, discountQuoteSnapshotPreserved: true, conflictedNewGuestRetryDoesNotDuplicateCustomer: true, destructiveBookingAndClientDeletionPreservesMoney: true, pageErrors: errors });
     } catch (error) {
       console.log(JSON.stringify({ viewport, mapTiles: fixture.mapTiles, form: await page.locator("form").allTextContents(), controls: await page.locator("input,textarea,select").evaluateAll(elements => elements.map(element => ({ type: element.type, value: element.value, label: element.closest("label")?.textContent }))) }, null, 2));
       await page.screenshot({ path: resolve(output, `admin-failure-${viewport.width}.png`), fullPage: true });

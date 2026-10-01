@@ -6,6 +6,8 @@ export interface AppointmentDraft {
   date: string;
   start_time: string;
   clientId?: number;
+  clientName?: string;
+  serviceId?: string;
 }
 
 interface DataCtx {

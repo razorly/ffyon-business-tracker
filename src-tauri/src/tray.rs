@@ -12,6 +12,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager, Runtime, State, WebviewWindow, Window, WindowEvent,
 };
+use tauri_plugin_notification::NotificationExt;
 
 pub const TRAY_ID: &str = "ffyon-tray";
 const MAIN_WINDOW: &str = "main";
@@ -292,6 +293,19 @@ impl Prefs {
 }
 
 // ---------- Commands ----------
+
+#[tauri::command]
+pub fn notify_payment_confirmation<R: Runtime>(app: AppHandle<R>, count: u32) -> Result<(), String> {
+    app.state::<crate::access::AccessState>().require_authorized()?;
+    if count == 0 { return Ok(()); }
+    let body = if count == 1 {
+        "1 completed appointment needs payment confirmation in Inbox.".to_string()
+    } else {
+        format!("{count} completed appointments need payment confirmation in Inbox.")
+    };
+    app.notification().builder().title("Ffyon: confirm payments").body(body)
+        .show().map_err(|error| error.to_string())
+}
 
 #[tauri::command]
 pub fn set_tray_state<R: Runtime>(app: AppHandle<R>, state: TrayState) -> Result<(), String> {

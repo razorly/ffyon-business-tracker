@@ -95,7 +95,7 @@ export function AppointmentDialog() {
       if (!alive) return;
       setClients(cls);
       setServices(catalog);
-      const firstService = catalog.find((s) => s.active);
+      const firstService = catalog.find((s) => s.active && s.id === draft?.serviceId) ?? catalog.find((s) => s.active);
       setServiceId(editing ? editing.service_id ?? "" : firstService?.id ?? "");
       setDate(editing?.date ?? draft?.date ?? "");
       setStart(editing?.start_time ?? draft?.start_time ?? "09:00");
@@ -113,7 +113,7 @@ export function AppointmentDialog() {
       setPriceIsDefault(!editing && usual != null);
       setReceived(editing?.paid_amount_pence != null ? penceToInput(editing.paid_amount_pence) : editing?.price_pence != null ? penceToInput(editing.price_pence) : "");
       const cid = editing?.client_id ?? draft?.clientId ?? null;
-      setClient({ id: cid, name: cid ? (cls.find((c) => c.id === cid)?.name ?? "") : "" });
+      setClient({ id: cid, name: cid ? (cls.find((c) => c.id === cid)?.name ?? "") : draft?.clientName ?? "" });
       setNotes(editing?.notes ?? "");
       setCustomerNotes(editing?.customer_notes ?? "");
       setRepeatDays(0);

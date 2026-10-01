@@ -705,6 +705,27 @@ export async function unpaidBefore(date: string): Promise<AppointmentRow[]> {
   )).map(appointmentRowColour);
 }
 
+/** Completed bookings awaiting payment, using the site's business clock, not the device's timezone. */
+export async function listPaymentConfirmations(now: Date = new Date()): Promise<AppointmentRow[]> {
+  if (!Number.isFinite(now.getTime())) throw new Error("Invalid payment reminder clock");
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+  }).formatToParts(now);
+  const value = (type: string) => parts.find(part => part.type === type)!.value;
+  const date = `${value("year")}-${value("month")}-${value("day")}`;
+  const clock = `${date} ${value("hour")}:${value("minute")}:${value("second")}`;
+  const db = await getDb();
+  return (await db.select<AppointmentRow[]>(
+    `${APPT_SELECT} WHERE a.status = 'confirmed' AND a.transaction_id IS NULL
+      AND (a.price_pence IS NULL OR a.price_pence > 0)
+      AND ((a.time_confirmed = 0 AND a.date < $1)
+        OR (a.time_confirmed != 0 AND datetime(a.date || ' ' || a.start_time,
+          '+' || a.duration_min || ' minutes') <= datetime($2)))
+      ORDER BY a.date, a.time_confirmed, a.start_time, a.id`, [date, clock],
+  )).map(appointmentRowColour);
+}
+
 /** A client's appointments from `from` onwards, cancellations aside. */
 export async function upcomingForClient(clientId: number, from: string): Promise<AppointmentRow[]> {
   const db = await getDb();

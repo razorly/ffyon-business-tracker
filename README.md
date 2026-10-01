@@ -4,7 +4,8 @@ A small desktop app for tracking income and outgoings for a tanning business. It
 
 - **Dashboard**: shows this month's profit, money in and money out (each compared with last month) and clients this month. It also has a 12-month income vs expenses chart, a monthly profit chart, a tax-year total, income by service, and recent entries.
 - **Schedule**: a calendar of appointments, in day, week or month view. Click any empty time to book one; click an appointment to open it. Regulars can be booked as a repeat (every week up to every 4 weeks), and an appointment can be marked cancelled or a no-show. Booking changes nothing about the money — an appointment only becomes an income entry when it's marked **paid**, and anything past that hasn't been marked paid is listed under **Money you're owed**.
-- **New entry**: press **Ctrl/⌘ + N** anywhere. Record a service payment, pay an existing appointment, or record other income. Standalone payments do not create bookings. Choose an optional client and note, and enter the actual amount received. Expenses keep their own categories and usual amounts.
+- **New entry**: press **Ctrl/⌘ + N** anywhere. Choose **Appointment** to open the full booking form with the selected date, client and service, without recording income. **Money in** records a service payment, pays an existing appointment, or records other income. Standalone payments do not create bookings. Expenses keep their own categories and usual amounts.
+- **Inbox**: customer requests and completed appointments awaiting payment confirmation, in separate sections. Timed appointments appear when their duration has finished; confirmed date-only bookings appear the following day. Confirm the amount received with **Confirm paid**. Cancelled, pending, rejected, no-show, paid and free bookings are excluded from payment reminders.
 - **Monthly view**: step through the months. It shows the month's totals, a day-by-day chart, and a table of entries you can search, filter and sort, with edit and delete.
 - **Clients**: shows visits, total spent and last visit for each client, plus their full history.
 - **Tray**: while the app is running it also sits in the system tray (the menu bar on a Mac), with today's takings, the next appointment, one-click **Quick add** for active services at their current discounted prices, and **Mark paid** for anything waiting. **Ctrl/⌘ + Shift + N** opens a new entry from whatever else you're in.
@@ -50,6 +51,8 @@ While Ffyon is running there's an icon in the system tray — the menu bar on a 
 Closing the window asks, the first time, whether to leave Ffyon in the tray or close it properly, and remembers the answer. **Settings → Tray & shortcuts** changes it later. Leaving it running is what keeps the one-click entry and the shortcut available.
 
 When the window is out of sight, anything done from the tray says so with a notification from the computer instead of a message in the app.
+
+Payment confirmations also update the Inbox badge and send a count-only desktop reminder, even when the window is open. Repeated syncs do not repeat the same reminder. **Settings > Tray & shortcuts > Desktop payment reminders** turns desktop reminders off without hiding Inbox items. Allow notifications for Ffyon in Windows or macOS notification settings. The app must be running (including in the tray/menu bar); reopening or resuming checks overdue bookings. Reminders follow the Europe/London business clock and never email customers. Payment records and reminder bookkeeping remain local to each approved computer.
 
 ### Backups
 

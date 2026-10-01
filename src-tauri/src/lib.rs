@@ -250,6 +250,7 @@ pub fn run() {
         })
         .on_window_event(tray::on_window_event)
         .invoke_handler(tauri::generate_handler![
+            tray::notify_payment_confirmation,
             tray::set_tray_state,
             tray::set_close_action,
             tray::show_main_window,

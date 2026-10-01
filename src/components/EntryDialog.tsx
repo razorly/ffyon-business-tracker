@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { ArrowDownLeft, ArrowUpRight, Trash2 } from "lucide-react";
+import { ArrowDownLeft, ArrowUpRight, CalendarPlus, Trash2 } from "lucide-react";
 import {
   createClient,
   createTransaction,
@@ -28,7 +28,7 @@ type PaymentFor = "service" | "appointment" | "other" | "legacy";
 const HISTORICAL_SERVICE = "__historical_service__";
 
 export function EntryDialog() {
-  const { entry, closeEntry, refresh } = useData();
+  const { entry, closeEntry, openNewAppointment, refresh } = useData();
   const editing = entry.editing;
 
   const [type, setType] = useState<TxType>("income");
@@ -153,6 +153,19 @@ export function EntryDialog() {
     }
   };
 
+  const switchEntryMode = (value: TxType | "appointment") => {
+    if (value !== "appointment") return switchType(value);
+    if (editing) return;
+    closeEntry();
+    openNewAppointment({
+      date: loaded ? standaloneDate : isoDate(new Date()),
+      start_time: "09:00",
+      clientId: (loaded ? client.id : entry.clientId) ?? undefined,
+      clientName: loaded ? client.name : undefined,
+      serviceId: loaded && type === "income" && paymentFor === "service" ? selectedService?.id : undefined,
+    });
+  };
+
   const pickCategory = (id: string) => {
     setCategoryId(id);
     if (type === "expense") applyDefault(expenseCategories.find((category) => String(category.id) === id)?.default_pence ?? null);
@@ -232,7 +245,8 @@ export function EntryDialog() {
             {type === "income" ? "Money in" : "Money out"}
           </p>
         ) : (
-          <Segmented className="w-full" value={type} onChange={switchType} options={[
+          <Segmented<TxType | "appointment"> className={editing ? "w-full" : "w-full flex-col rounded-xl sm:flex-row sm:rounded-full"} value={type} onChange={switchEntryMode} options={[
+            ...(!editing ? [{ value: "appointment" as const, label: <span className="inline-flex items-center gap-1.5"><CalendarPlus size={14} /> Appointment</span> }] : []),
             { value: "income", label: <span className="inline-flex items-center gap-1.5"><ArrowDownLeft size={14} /> Money in</span> },
             { value: "expense", label: <span className="inline-flex items-center gap-1.5"><ArrowUpRight size={14} /> Money out</span> },
           ]} />

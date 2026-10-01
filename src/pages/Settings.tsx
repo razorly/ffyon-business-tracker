@@ -13,6 +13,7 @@ import {
   type TxType,
 } from "@/lib/db";
 import { useData, useLoad } from "@/lib/data";
+import { useInbox } from "@/lib/inbox";
 import { taxYear } from "@/lib/dates";
 import { isoDate, money, parseAmount, penceToInput, ukDate } from "@/lib/format";
 import {
@@ -476,6 +477,7 @@ function BackupCard() {
 
 function TrayCard() {
   const { openNewEntry } = useData();
+  const { remindersEnabled, setRemindersEnabled, reminderResult } = useInbox();
   const [closeAction, setCloseAction] = useState<CloseAction>(() => readCloseAction());
   const [shortcut, setShortcut] = useState(() => readShortcutEnabled());
   const where = trayName();
@@ -534,6 +536,15 @@ function TrayCard() {
               { value: "off", label: "Off" },
             ]}
           />
+        </div>
+
+        <div>
+          <label className="flex cursor-pointer items-start gap-3 text-[13px] font-medium">
+            <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0 accent-accent" checked={remindersEnabled} onChange={event => setRemindersEnabled(event.target.checked)} />
+            Desktop payment reminders
+          </label>
+          {remindersEnabled && reminderResult === "blocked" && <p role="status" className="mt-2 text-xs text-muted">Notifications are blocked. Allow Ffyon notifications in Windows or macOS notification settings.</p>}
+          {remindersEnabled && reminderResult === "error" && <p role="status" className="mt-2 text-xs text-bad">Could not send the desktop reminder. Payment confirmations are still in Inbox.</p>}
         </div>
 
         <p className="text-xs text-muted">
