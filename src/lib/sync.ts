@@ -6,7 +6,7 @@ export interface CloudClient { id: string; account_id: string | null; name: stri
 export interface CloudService { id: string; name: string; description: string; duration_min: number; price_pence: number; discount_percent: number; booking_price_pence: number; active: boolean; revision: number }
 export interface CloudAppointment { id: string; client_id: string; service_id: string | null; service_name: string; date: string; start_time: string; time_confirmed: boolean; duration_min: number; price_pence: number; base_price_pence: number; discount_percent: number; is_remote: boolean; visit_address: string; visit_postcode: string; notes: string; status: AppointmentStatus; revision: number; proposed_date: string | null; proposed_start_time: string | null; proposed_time_confirmed: boolean | null; series_id: string | null; created_at: string; updated_at: string }
 export interface CloudBlock { id: string; date: string; start_time: string; duration_min: number; label: string; revision: number }
-export interface BusinessSettings { booking_enabled: boolean; timezone: "Europe/London"; slot_minutes: 30; horizon_days: 90; opening_hours: { weekday: number; open: string; close: string }[]; admin_notifications_enabled: boolean; admin_notification_email: string; revision: number }
+export interface BusinessSettings { home_visit_fee_pence: number; home_visit_radius_miles: number; studio_postcode: string; studio_address: string; contact_email: string; contact_email_enabled: boolean; booking_enabled: boolean; timezone: "Europe/London"; slot_minutes: 30; horizon_days: 90; opening_hours: { weekday: number; open: string; close: string }[]; admin_notifications_enabled: boolean; admin_notification_email: string; revision: number }
 export interface Device { id: string; name: string; created_at: string; last_seen_at: string | null; revoked_at: string | null }
 export interface CloudSnapshot { clients: CloudClient[]; appointments: CloudAppointment[]; services: CloudService[]; blocks: CloudBlock[]; settings: BusinessSettings; cursor: number }
 export interface CloudChange { sequence: number; entity: "client" | "appointment" | "service" | "block" | "settings"; id: string; record: CloudClient | CloudAppointment | CloudService | CloudBlock | BusinessSettings | null }
@@ -305,7 +305,7 @@ export async function listServices(): Promise<CloudService[]> {
 export const listBlocks = () => cached<CloudBlock>("cloud_blocks");
 export async function listCloudSettings() {
   const settings = (await cached<BusinessSettings>("cloud_settings"))[0];
-  return settings ? { ...settings, admin_notifications_enabled: settings.admin_notifications_enabled ?? false, admin_notification_email: settings.admin_notification_email ?? "" } : null;
+  return settings ? { ...settings, home_visit_fee_pence: settings.home_visit_fee_pence ?? 0, home_visit_radius_miles: settings.home_visit_radius_miles ?? 15, studio_postcode: settings.studio_postcode ?? "LA3 2AS", studio_address: settings.studio_address ?? "", contact_email: settings.contact_email ?? "hello@tannedbyffy.co.uk", contact_email_enabled: settings.contact_email_enabled ?? false, admin_notifications_enabled: settings.admin_notifications_enabled ?? false, admin_notification_email: settings.admin_notification_email ?? "" } : null;
 }
 
 function notificationStatus(value: unknown): NotificationStatus | null {

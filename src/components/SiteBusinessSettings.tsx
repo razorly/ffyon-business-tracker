@@ -10,6 +10,7 @@ import {
 } from "@/lib/sync";
 import { useAccess } from "@/components/AccessGate";
 import { Button, Card, CardHeader, Field, Input, Modal, Textarea } from "@/components/ui";
+import { VisitSettingsCard } from "@/components/VisitSettingsCard";
 
 type Service = Awaited<ReturnType<typeof listServices>>[number];
 type Block = Awaited<ReturnType<typeof listBlocks>>[number];
@@ -54,6 +55,7 @@ export function SiteBusinessSettings() {
       {error && <p className="col-span-full text-sm text-bad" role="alert">{error}</p>}
       <ServiceCatalogCard services={services} online={online} loaded={loaded} onSaved={refresh} />
       <OpeningHoursCard settings={settings} services={services} online={online} loaded={loaded} onSaved={refresh} />
+      <VisitSettingsCard settings={settings} online={online} onSaved={refresh} />
       <RequestNotificationsCard settings={settings} online={online} onSaved={refresh} />
       <TimeOffCard blocks={blocks} online={online} loaded={loaded} onSaved={refresh} />
       <ImportReviewCard preview={preview} appointments={appointments} blocks={blocks} online={online} loaded={loaded} onSaved={refresh} />
