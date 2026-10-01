@@ -9,7 +9,6 @@ import {
   listCategories,
   listClients,
   listOtherIncomeCategories,
-  markAppointmentPaid,
   updateTransaction,
   type AppointmentRow,
   type Category,
@@ -18,13 +17,13 @@ import {
   type TxType,
 } from "@/lib/db";
 import { useData } from "@/lib/data";
-import { isoDate, money, parseAmount, penceToInput, shortDate, timeLabel } from "@/lib/format";
-import { listServices, serviceDiscountPrice, type CloudService } from "@/lib/sync";
+import { isoDate, money, parseAmount, penceToInput } from "@/lib/format";
+import { listServices, type CloudService } from "@/lib/sync";
 import { toastDeleted } from "@/lib/undo";
 import { Button, Field, Input, Modal, Segmented, Select, Textarea } from "./ui";
 import { ClientCombobox, type ClientChoice } from "./ClientCombobox";
 
-type PaymentFor = "service" | "appointment" | "other" | "legacy";
+type IncomeSource = "service" | "other" | "legacy";
 const HISTORICAL_SERVICE = "__historical_service__";
 
 export function EntryDialog() {
@@ -32,20 +31,17 @@ export function EntryDialog() {
   const editing = entry.editing;
 
   const [type, setType] = useState<TxType>("income");
-  const [paymentFor, setPaymentFor] = useState<PaymentFor>("service");
+  const [incomeSource, setIncomeSource] = useState<IncomeSource>("other");
   const [date, setDate] = useState(isoDate(new Date()));
-  const [standaloneDate, setStandaloneDate] = useState(isoDate(new Date()));
   const [amount, setAmount] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [serviceId, setServiceId] = useState("");
-  const [appointmentId, setAppointmentId] = useState("");
   const [linkedAppointment, setLinkedAppointment] = useState<AppointmentRow | null>(null);
   const [client, setClient] = useState<ClientChoice>({ id: null, name: "" });
   const [description, setDescription] = useState("");
   const [expenseCategories, setExpenseCategories] = useState<Category[]>([]);
   const [otherCategories, setOtherCategories] = useState<Category[]>([]);
   const [services, setServices] = useState<CloudService[]>([]);
-  const [appointments, setAppointments] = useState<AppointmentRow[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [amountIsDefault, setAmountIsDefault] = useState(false);
@@ -60,29 +56,25 @@ export function EntryDialog() {
     setLoading(true);
     setLoaded(false);
     setError(null);
-    Promise.all([listCategories("expense"), listOtherIncomeCategories(), listClients(), listServices(), listAppointments()])
+    Promise.all([listCategories("expense"), listOtherIncomeCategories(), listClients(),
+      editing ? listServices() : Promise.resolve([]), editing ? listAppointments() : Promise.resolve([])])
       .then(([expenses, other, cls, catalog, bookings]) => {
         if (!alive) return;
         const active = catalog.filter((service) => service.active);
         const t = editing?.type ?? entry.type;
-        const firstService = active[0];
         const linked = editing ? bookings.find((a) => a.transaction_id === editing.id) ?? null : null;
-        const defaultAmount = editing ? null : t === "expense" ? expenses[0]?.default_pence ?? null : firstService
-          ? serviceDiscountPrice(firstService.price_pence, firstService.discount_percent ?? 0) : null;
+        const defaultAmount = !editing && t === "expense" ? expenses[0]?.default_pence ?? null : null;
         setExpenseCategories(expenses);
         setOtherCategories(other);
         setClients(cls);
         setServices(active);
-        setAppointments(bookings.filter((a) => a.status === "confirmed" && a.transaction_id == null));
         setLinkedAppointment(linked);
         setType(t);
-        setPaymentFor(editing?.type === "income" ? editing.income_kind === "other" ? "other"
-          : editing.service_id || editing.service_name ? "service" : "legacy" : "service");
+        setIncomeSource(editing?.type === "income" ? editing.income_kind === "other" ? "other"
+          : editing.service_id || editing.service_name ? "service" : "legacy" : "other");
         setServiceId(editing?.type === "income" && (editing.service_id || editing.service_name)
-          ? editing.service_id ?? HISTORICAL_SERVICE : firstService?.id ?? "");
-        setAppointmentId("");
+          ? editing.service_id ?? HISTORICAL_SERVICE : "");
         setDate(editing?.date ?? isoDate(new Date()));
-        setStandaloneDate(editing?.date ?? isoDate(new Date()));
         setAmount(editing ? penceToInput(editing.amount_pence) : defaultAmount != null ? penceToInput(defaultAmount) : "");
         setAmountIsDefault(!editing && defaultAmount != null);
         setCategoryId(editing ? String(editing.category_id ?? "") : t === "expense" ? String(expenses[0]?.id ?? "") : "");
@@ -98,13 +90,28 @@ export function EntryDialog() {
   }, [entry.open, editing, entry.type, entry.clientId]);
 
   const selectedService = services.find((s) => s.id === serviceId);
-  const selectedAppointment = appointments.find((a) => String(a.id) === appointmentId);
-  const appointmentPayment = !editing && type === "income" && paymentFor === "appointment";
-  const fixedBooking = linkedAppointment ?? (appointmentPayment ? selectedAppointment : null);
   const typeCategories = type === "expense" ? expenseCategories : otherCategories;
-  const historicalServiceSelected = !!editing && type === "income" && paymentFor === "service"
+  const historicalServiceSelected = !!editing && type === "income" && incomeSource === "service"
     && (editing.service_id || editing.service_name) && serviceId === (editing.service_id ?? HISTORICAL_SERVICE);
   const savedService = !!editing && (editing.service_id || editing.service_name);
+
+  const incomeChoices: { value: string; label: string; source: IncomeSource; id: string }[] = [
+    { value: "other:", label: "Other income", source: "other", id: "" },
+    ...otherCategories.map(category => ({ value: `other:${category.id}`, label: editing?.type === "income" && editing.category_id === category.id && editing.income_kind === "other"
+      ? editing.category_name_snapshot || category.name : category.name, source: "other" as const, id: String(category.id) })),
+  ];
+  if (editing) {
+    if (editing.type === "income" && editing.income_kind === "other" && editing.category_id != null && !otherCategories.some(category => category.id === editing.category_id)) {
+      incomeChoices.push({ value: `other:${editing.category_id}`, label: editing.category_name_snapshot || editing.category_name || "Historical category", source: "other", id: String(editing.category_id) });
+    }
+    incomeChoices.push(...services.map(service => ({ value: `service:${service.id}`, label: editing.service_id === service.id && editing.service_name ? editing.service_name : service.name, source: "service" as const, id: service.id })));
+    if (savedService && !services.some(service => service.id === editing.service_id)) {
+      incomeChoices.push({ value: `service:${editing.service_id ?? HISTORICAL_SERVICE}`, label: `${editing.service_name || editing.category_name_snapshot || "Historical service"} (archived)`, source: "service", id: editing.service_id ?? HISTORICAL_SERVICE });
+    }
+    if (editing.type === "income" && !savedService && editing.income_kind !== "other") {
+      incomeChoices.push({ value: "legacy:", label: editing.category_name_snapshot || editing.category_name || "Historical income", source: "legacy", id: "" });
+    }
+  }
 
   const applyDefault = (pence: number | null) => {
     if (editing) return;
@@ -114,43 +121,21 @@ export function EntryDialog() {
     }
   };
 
-  const pickService = (id: string) => {
-    setServiceId(id);
-    const service = services.find((s) => s.id === id);
-    applyDefault(service ? serviceDiscountPrice(service.price_pence, service.discount_percent ?? 0) : null);
-  };
-
-  const pickPaymentFor = (value: PaymentFor) => {
-    setPaymentFor(value);
-    if (value !== "appointment" && paymentFor === "appointment") setDate(standaloneDate);
-    setCategoryId(editing?.income_kind === "other" && value === "other" ? String(editing.category_id ?? "") : "");
-    if (value === "service") {
-      applyDefault(selectedService ? serviceDiscountPrice(selectedService.price_pence, selectedService.discount_percent ?? 0) : null);
-    } else if (value === "appointment") {
-      applyDefault(selectedAppointment?.price_pence ?? null);
-      if (selectedAppointment) setDate(selectedAppointment.date);
-    } else {
-      applyDefault(null);
-    }
-  };
-
-  const pickAppointment = (id: string) => {
-    setAppointmentId(id);
-    const booking = appointments.find((a) => String(a.id) === id);
-    applyDefault(booking?.price_pence ?? null);
-    if (booking) setDate(booking.date);
+  const pickIncomeType = (value: string) => {
+    const choice = incomeChoices.find(item => item.value === value);
+    if (!choice) return;
+    setIncomeSource(choice.source);
+    setCategoryId(choice.source === "other" ? choice.id : "");
+    setServiceId(choice.source === "service" ? choice.id : "");
+    applyDefault(null);
   };
 
   const switchType = (value: TxType) => {
+    if (value === type) return;
     setType(value);
-    if (paymentFor === "appointment") setDate(standaloneDate);
     setCategoryId(value === "expense" ? String(expenseCategories[0]?.id ?? "") : "");
-    setPaymentFor("service");
-    if (value === "income") {
-      applyDefault(selectedService ? serviceDiscountPrice(selectedService.price_pence, selectedService.discount_percent ?? 0) : null);
-    } else {
-      applyDefault(expenseCategories[0]?.default_pence ?? null);
-    }
+    setIncomeSource("other");
+    applyDefault(value === "expense" ? expenseCategories[0]?.default_pence ?? null : null);
   };
 
   const switchEntryMode = (value: TxType | "appointment") => {
@@ -158,11 +143,10 @@ export function EntryDialog() {
     if (editing) return;
     closeEntry();
     openNewAppointment({
-      date: loaded ? standaloneDate : isoDate(new Date()),
+      date: loaded ? date : isoDate(new Date()),
       start_time: "09:00",
       clientId: (loaded ? client.id : entry.clientId) ?? undefined,
       clientName: loaded ? client.name : undefined,
-      serviceId: loaded && type === "income" && paymentFor === "service" ? selectedService?.id : undefined,
     });
   };
 
@@ -177,41 +161,36 @@ export function EntryDialog() {
     const pence = parseAmount(amount);
     if (pence == null || !Number.isSafeInteger(pence) || pence <= 0) return setError("Enter an amount, e.g. 10 or 12.50");
     if (!date) return setError("Pick a date");
-    if (!linkedAppointment && type === "income" && paymentFor === "service" && !selectedService && !historicalServiceSelected) return setError("Choose a service");
-    if (appointmentPayment && !selectedAppointment) return setError("Choose an unpaid appointment");
+    if (!linkedAppointment && type === "income" && incomeSource === "service" && !selectedService && !historicalServiceSelected) return setError("Choose an income type");
     setSaving(true);
     setError(null);
     try {
-      if (appointmentPayment && selectedAppointment) {
-        await markAppointmentPaid(selectedAppointment.id, pence);
-      } else {
-        let clientId: number | null = linkedAppointment ? editing!.client_id : null;
-        if (!linkedAppointment && type === "income" && client.name.trim()) {
-          clientId = client.id ?? await createClient({ name: client.name });
-        }
-        const preserveAttribution = !!editing && type === editing.type && (type === "expense"
-          ? categoryId === String(editing.category_id ?? "")
-          : !!linkedAppointment || paymentFor === "legacy" || historicalServiceSelected
-            || (paymentFor === "other" && editing.income_kind === "other" && categoryId === String(editing.category_id ?? "")));
-        const incomeService = type === "income" && paymentFor === "service" && !preserveAttribution ? selectedService : null;
-        const input: TransactionInput = {
-          type,
-          date,
-          amount_pence: pence,
-          category_id: type === "income" && preserveAttribution ? editing!.category_id : incomeService ? null : categoryId ? Number(categoryId) : null,
-          client_id: clientId,
-          description: description.trim() || null,
-          service_id: preserveAttribution ? editing!.service_id : incomeService?.id ?? null,
-          service_name: preserveAttribution ? editing!.service_name : incomeService?.name ?? "",
-          category_name_snapshot: preserveAttribution ? editing!.category_name_snapshot : incomeService?.name
-            ?? typeCategories.find((c) => String(c.id) === categoryId)?.name
-            ?? (type === "income" ? "Other income" : ""),
-          ...(!preserveAttribution ? { income_kind: type === "expense" ? null : incomeService ? "service" as const : "other" as const } : {}),
-        };
-        if (editing) await updateTransaction(editing.id, input);
-        else await createTransaction(input);
+      let clientId: number | null = linkedAppointment ? editing!.client_id : null;
+      if (!linkedAppointment && type === "income" && client.name.trim()) {
+        clientId = client.id ?? await createClient({ name: client.name });
       }
-      toast.success(`${editing ? "Updated" : "Recorded"} ${type === "income" ? "payment" : "expense"} of ${money(pence)}`);
+      const preserveAttribution = !!editing && type === editing.type && (type === "expense"
+        ? categoryId === String(editing.category_id ?? "")
+        : !!linkedAppointment || incomeSource === "legacy" || historicalServiceSelected
+          || (incomeSource === "other" && editing.income_kind === "other" && categoryId === String(editing.category_id ?? "")));
+      const incomeService = type === "income" && incomeSource === "service" && !preserveAttribution ? selectedService : null;
+      const input: TransactionInput = {
+        type,
+        date,
+        amount_pence: pence,
+        category_id: type === "income" && preserveAttribution ? editing!.category_id : incomeService ? null : categoryId ? Number(categoryId) : null,
+        client_id: clientId,
+        description: description.trim() || null,
+        service_id: preserveAttribution ? editing!.service_id : incomeService?.id ?? null,
+        service_name: preserveAttribution ? editing!.service_name : incomeService?.name ?? "",
+        category_name_snapshot: preserveAttribution ? editing!.category_name_snapshot : incomeService?.name
+          ?? typeCategories.find((c) => String(c.id) === categoryId)?.name
+          ?? (type === "income" ? "Other income" : ""),
+        ...(!preserveAttribution ? { income_kind: type === "expense" ? null : incomeService ? "service" as const : "other" as const } : {}),
+      };
+      if (editing) await updateTransaction(editing.id, input);
+      else await createTransaction(input);
+      toast.success(`${editing ? "Updated" : "Recorded"} ${type === "income" ? "income" : "expense"} of ${money(pence)}`);
       refresh();
       closeEntry();
     } catch (err) {
@@ -252,48 +231,29 @@ export function EntryDialog() {
           ]} />
         )}
 
-        {!linkedAppointment && type === "income" && <Field label="Payment for">
-          <Select value={paymentFor} onChange={(event) => pickPaymentFor(event.target.value as PaymentFor)} disabled={loading}>
-            <option value="service">Service payment</option>
-            {!editing && <option value="appointment">Appointment payment</option>}
-            <option value="other">Other income</option>
-            {editing && !savedService && editing.income_kind !== "other" && <option value="legacy">Historical income</option>}
-          </Select>
-        </Field>}
-
-        {editing && type === "income" && (linkedAppointment || paymentFor === "legacy") ? (
-          <Field label={linkedAppointment ? "Appointment payment" : "Historical income"}>
+        {editing && type === "income" && linkedAppointment ? (
+          <Field label="Appointment payment">
             <Input readOnly value={editing.service_name || editing.category_name_snapshot || editing.category_name || "Other income"} />
           </Field>
-        ) : type === "income" && paymentFor === "service" ? (
-          <Field label="Service">
-            <Select value={serviceId} onChange={(event) => pickService(event.target.value)} disabled={loading}>
-              <option value="">Choose service</option>
-              {services.map((service) => <option key={service.id} value={service.id}>
-                {editing?.service_id === service.id && editing.service_name ? editing.service_name : service.name}
-              </option>)}
-              {savedService && !services.some((service) => service.id === editing.service_id)
-                && <option value={editing.service_id ?? HISTORICAL_SERVICE}>{editing.service_name || editing.category_name_snapshot || "Historical service"} (archived)</option>}
-            </Select>
-          </Field>
-        ) : appointmentPayment ? (
-          <Field label="Appointment">
-            <Select value={appointmentId} onChange={(event) => pickAppointment(event.target.value)} disabled={loading}>
-              <option value="">Choose appointment</option>
-              {appointments.map((appointment) => <option key={appointment.id} value={appointment.id}>
-                {shortDate(appointment.date)} {appointment.time_confirmed === 0 ? "Time to confirm" : timeLabel(appointment.start_time)}
-                {" · "}{appointment.client_name ?? "Client"}{" · "}{appointment.service_name || appointment.category_name || "Appointment"}
-              </option>)}
+        ) : type === "income" ? (
+          <Field label="Income type">
+            <Select value={incomeSource === "service" ? `service:${serviceId}` : incomeSource === "legacy" ? "legacy:" : `other:${categoryId}`} onChange={event => pickIncomeType(event.target.value)} disabled={loading}>
+              {editing ? (["other", "service", "legacy"] as const).map(source => {
+                const choices = incomeChoices.filter(choice => choice.source === source);
+                return choices.length > 0 && <optgroup key={source} label={source === "other" ? "Other income" : source === "service" ? "Service payments" : "Historical income"}>
+                  {choices.map(choice => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
+                </optgroup>;
+              }) : incomeChoices.map(choice => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
             </Select>
           </Field>
         ) : (
-          <Field label={type === "expense" ? "Expense category" : "Income type"}>
+          <Field label="Expense category">
             <Select value={categoryId} onChange={(event) => pickCategory(event.target.value)} disabled={loading}>
-              <option value="">{type === "expense" ? "Uncategorised" : "Other income"}</option>
+              <option value="">Uncategorised</option>
               {typeCategories.map((category) => <option key={category.id} value={category.id}>
                 {editing?.type === type && editing.category_id === category.id ? editing.category_name_snapshot || category.name : category.name}
               </option>)}
-              {editing?.category_id != null && (type === "expense" || editing.income_kind === "other")
+              {editing?.type === "expense" && editing.category_id != null
                 && !typeCategories.some((category) => category.id === editing.category_id)
                 && <option value={editing.category_id}>{editing.category_name_snapshot || editing.category_name || "Historical category"}</option>}
             </Select>
@@ -309,30 +269,24 @@ export function EntryDialog() {
             </div>
           </Field>
           <Field label="Date">
-            <Input type="date" value={date} readOnly={!!fixedBooking || appointmentPayment}
-              onChange={(event) => { setDate(event.target.value); setStandaloneDate(event.target.value); }} disabled={loading} />
+            <Input type="date" value={date} readOnly={!!linkedAppointment}
+              onChange={(event) => setDate(event.target.value)} disabled={loading} />
           </Field>
         </div>
-        {!editing && type === "income" && paymentFor === "service" && selectedService && (
-          <p className="-mt-2 flex flex-wrap items-center gap-x-2 text-xs text-muted">
-            <span>Service price {money(serviceDiscountPrice(selectedService.price_pence, selectedService.discount_percent ?? 0))}</span>
-            {selectedService.discount_percent > 0 && <><span className="line-through">{money(selectedService.price_pence)}</span><span className="text-good">{selectedService.discount_percent}% off</span></>}
-          </p>
-        )}
-        {fixedBooking && <p className="-mt-2 text-xs text-muted">
-          {fixedBooking.client_name ?? "Appointment"}{fixedBooking.price_pence != null ? ` · Agreed price ${money(fixedBooking.price_pence)}` : ""}
+        {linkedAppointment && <p className="-mt-2 text-xs text-muted">
+          {linkedAppointment.client_name ?? "Appointment"}{linkedAppointment.price_pence != null ? ` · Agreed price ${money(linkedAppointment.price_pence)}` : ""}
         </p>}
 
-        {type === "income" && !appointmentPayment && (
+        {type === "income" && (
           <Field label="Client (optional)">
             {linkedAppointment ? <Input readOnly value={client.name} /> : <ClientCombobox clients={clients} value={client} onChange={setClient} />}
           </Field>
         )}
 
-        {!appointmentPayment && <Field label="Note">
-          <Textarea placeholder={type === "income" ? "e.g. Full body, dark shade" : "e.g. 1L solution from supplier"}
+        <Field label="Note">
+          <Textarea placeholder={type === "income" ? "e.g. Product sale or tip" : "e.g. 1L solution from supplier"}
             value={description} onChange={(event) => setDescription(event.target.value)} />
-        </Field>}
+        </Field>
 
         {error && <p className="text-[13px] text-bad">{error}</p>}
 
@@ -343,7 +297,7 @@ export function EntryDialog() {
           <div className="flex gap-2">
             <Button type="button" onClick={closeEntry}>Cancel</Button>
             <Button type="submit" variant="primary" disabled={saving || loading || !loaded}>
-              {editing ? "Save changes" : type === "income" ? "Record payment" : "Add expense"}
+              {editing ? "Save changes" : type === "income" ? "Record income" : "Add expense"}
             </Button>
           </div>
         </div>

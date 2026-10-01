@@ -245,7 +245,10 @@ async function desktopFeatures(browser, url, output, evidence) {
       await page.locator('nav a[title="Schedule"]').click();
       await page.getByRole("button", { name: "New entry", exact: true }).click();
       const newEntry = page.getByRole("dialog", { name: "New entry", exact: true });
-      await newEntry.getByLabel(/^Payment for/).waitFor();
+      await newEntry.getByLabel(/^Income type/).waitFor();
+      assert.equal(await newEntry.getByLabel(/^Payment for/).count(), 0);
+      assert.equal(await newEntry.getByLabel(/^Income type/).inputValue(), "other:");
+      assert.equal(await newEntry.getByLabel(/^Service/).count(), 0);
       const carriedDate = new Date(`${date}T12:00:00Z`);
       carriedDate.setUTCDate(carriedDate.getUTCDate() + 2);
       const appointmentDate = carriedDate.toISOString().slice(0, 10);
@@ -367,7 +370,7 @@ async function desktopFeatures(browser, url, output, evidence) {
       assert.equal(records.clients.some(item => item.id === clients[1].id), false);
       assert.equal(fixture.select("SELECT amount_pence FROM transactions")[0].amount_pence, 2200);
       assert.deepEqual(errors, []);
-      evidence.push({ target: "desktop-features", viewport, storage: "actual migrations + SQL in disposable memory", mapsExplicitOnly: true, mapRendered, mapProviderIssue, mapTiles: fixture.mapTiles, newEntryCreatesAppointmentWithoutIncome: true, newEntryCarriesDateClientAndService: true, manualConfirmedUntimedNotInRequests: true, allDayCalendarAndNeedsTimeHighlight: true, discountQuoteSnapshotPreserved: true, conflictedNewGuestRetryDoesNotDuplicateCustomer: true, destructiveBookingAndClientDeletionPreservesMoney: true, pageErrors: errors });
+      evidence.push({ target: "desktop-features", viewport, storage: "actual migrations + SQL in disposable memory", mapsExplicitOnly: true, mapRendered, mapProviderIssue, mapTiles: fixture.mapTiles, newEntryCreatesAppointmentWithoutIncome: true, moneyInDefaultsToOtherIncome: true, newEntryCarriesDateAndClient: true, manualConfirmedUntimedNotInRequests: true, allDayCalendarAndNeedsTimeHighlight: true, discountQuoteSnapshotPreserved: true, conflictedNewGuestRetryDoesNotDuplicateCustomer: true, destructiveBookingAndClientDeletionPreservesMoney: true, pageErrors: errors });
     } catch (error) {
       console.log(JSON.stringify({ viewport, mapTiles: fixture.mapTiles, form: await page.locator("form").allTextContents(), controls: await page.locator("input,textarea,select").evaluateAll(elements => elements.map(element => ({ type: element.type, value: element.value, label: element.closest("label")?.textContent }))) }, null, 2));
       await page.screenshot({ path: resolve(output, `admin-failure-${viewport.width}.png`), fullPage: true });

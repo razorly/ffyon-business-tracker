@@ -223,7 +223,7 @@ export function Clients() {
               <div className="flex flex-wrap items-center justify-between gap-2 px-5 pt-5 pb-2">
                 <span className="eyebrow text-ink-2">Financial history</span>
                 <Button size="sm" onClick={() => openNewEntry("income", selected.id)}>
-                  <Plus size={14} /> Log visit
+                  <Plus size={14} /> Record income
                 </Button>
               </div>
               {history.length ? (

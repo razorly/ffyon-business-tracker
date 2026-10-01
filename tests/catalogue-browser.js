@@ -6,15 +6,17 @@ import { assertLocal, capture, installDesktopFixture } from "./features-browser.
 
 const require = createRequire(import.meta.url);
 const url = process.env.FFYON_CATALOGUE_ROOT_URL;
+const colorScheme = process.env.FFYON_CATALOGUE_COLOR_SCHEME || "light";
 
 // Opt-in, disposable browser evidence. Never opens the production database or Site.
 if (url) await run();
 
 async function run() {
   assertLocal(url);
+  assert.ok(["light", "dark"].includes(colorScheme));
   const { chromium } = require(process.env.FFYON_PLAYWRIGHT_PATH || "playwright");
   const browser = await chromium.launch({ headless: true, ...(process.env.FFYON_BROWSER_CHANNEL ? { channel: process.env.FFYON_BROWSER_CHANNEL } : {}) });
-  const output = resolve("test-results/catalogue-browser");
+  const output = resolve(`test-results/catalogue-browser${colorScheme === "dark" ? "-dark" : ""}`);
   await mkdir(output, { recursive: true });
   const widths = process.env.FFYON_CATALOGUE_WIDTHS ? process.env.FFYON_CATALOGUE_WIDTHS.split(",").map(Number) : [1280, 1024, 800, 640, 375, 320];
   assert.ok(widths.length && widths.every(width => Number.isInteger(width) && width >= 320 && width <= 1920));
@@ -39,7 +41,7 @@ async function catalogueFlows(browser, width, output) {
   const client = { id: "00000000-0000-4000-8000-000000009101", account_id: null, merged_into: null, name: "Catalogue Browser Customer", email: "catalogue.browser@example.invalid", phone: "", saved_address: "", saved_postcode: "", disabled: false, revision: 1, updated_at: now };
   const appointment = { id: "00000000-0000-4000-8000-000000009301", client_id: client.id, service_id: services[0].id, service_name: "Saved appointment treatment", date, start_time: "10:00", time_confirmed: true, duration_min: 30, price_pence: 1875, base_price_pence: 2500, discount_percent: 25, is_remote: false, visit_address: "", visit_postcode: "", notes: "Historic quote fixture", status: "confirmed", revision: 1, proposed_date: null, proposed_start_time: null, proposed_time_confirmed: null, series_id: null, created_at: now, updated_at: now };
   const records = { clients: [client], services, appointments: [appointment], blocks: [], settings: { booking_enabled: true, timezone: "Europe/London", slot_minutes: 30, horizon_days: 90, opening_hours: Array.from({ length: 7 }, (_, weekday) => ({ weekday, open: "09:00", close: "17:00" })), admin_notifications_enabled: false, admin_notification_email: "", revision: 1 } };
-  const page = await browser.newPage({ viewport, timezoneId: "Europe/London" });
+  const page = await browser.newPage({ viewport, timezoneId: "Europe/London", colorScheme });
   const pageErrors = [];
   page.on("pageerror", error => pageErrors.push(error.message));
   const fixture = await installDesktopFixture(page, records);
@@ -89,15 +91,17 @@ async function catalogueFlows(browser, width, output) {
     const mutationsBeforeBooking = fixture.mutations.length;
     await page.keyboard.press("Control+n");
     const bookingEntry = page.getByRole("dialog", { name: "New entry", exact: true });
-    await bookingEntry.getByLabel(/^Payment for/).waitFor();
-    await bookingEntry.getByLabel(/^Service/).selectOption(services[0].id);
+    await bookingEntry.getByLabel(/^Income type/).waitFor();
+    assert.equal(await bookingEntry.getByLabel(/^Payment for/).count(), 0);
+    assert.equal(await bookingEntry.getByLabel(/^Service/).count(), 0);
     await bookingEntry.getByPlaceholder("Search or add a client (optional)").fill("Unsaved booking customer");
     await bookingEntry.getByRole("button", { name: "Appointment", exact: true }).click();
     await bookingEntry.waitFor({ state: "hidden" });
     const newBooking = page.getByRole("dialog", { name: "New appointment", exact: true });
     await newBooking.waitFor();
     await page.waitForFunction(() => document.querySelector('[placeholder="Search or add a client (optional)"]')?.value === "Unsaved booking customer");
-    assert.equal(await newBooking.getByLabel(/^Service/).inputValue(), services[0].id, "New entry must carry the selected nondefault service to the booking form");
+    await newBooking.getByLabel(/^Service/).selectOption(services[0].id);
+    assert.equal(await newBooking.getByLabel(/^Service/).inputValue(), services[0].id, "Services are chosen in the appointment form");
     assert.equal(await newBooking.getByLabel(/^Price/).inputValue(), "22.00");
     assert.equal(await newBooking.getByLabel(/^Length/).inputValue(), "45");
     await capture(page, output, `catalogue-new-entry-booking-${width}.png`);
@@ -109,36 +113,50 @@ async function catalogueFlows(browser, width, output) {
 
     await openEntry(page);
     let entry = page.getByRole("dialog", { name: "New entry", exact: true });
-    await entry.getByLabel(/^Payment for/).selectOption("service");
-    await entry.getByLabel(/^Service/).selectOption(services[0].id);
-    await page.waitForFunction(() => document.querySelector('[role="dialog"] input[inputmode="decimal"]')?.value === "22.00");
-    assert.equal(await entry.getByLabel(/^Amount/).inputValue(), "22.00", "Standalone treatment payment defaults to the live discounted catalogue price");
-    assert.equal(await entry.getByLabel(/^Service/).locator(`option[value="${services[2].id}"]`).count(), 0, "Archived services must not be offered for a new payment");
+    await until(page, () => fixture.commands.some(command => command.command === "db_select"));
+    await entry.getByRole("button", { name: "Record income", exact: true }).waitFor({ state: "visible" });
+    assert.equal(await entry.getByLabel(/^Payment for/).count(), 0);
+    assert.equal(await entry.getByLabel(/^Service/).count(), 0);
+    assert.equal(await entry.getByLabel("Appointment", { exact: true }).count(), 0);
+    assert.equal(await entry.getByLabel(/^Income type/).inputValue(), "other:");
+    assert.equal(await entry.getByLabel(/^Amount/).inputValue(), "", "Other income must not inherit a service price");
+    assert.equal(await entry.getByLabel(/^Income type/).locator('option[value^="service:"]').count(), 0);
     assert.equal(await entry.getByLabel("Category", { exact: true }).count(), 0);
     await entry.getByLabel(/^Amount/).fill("19.37");
-    await capture(page, output, `catalogue-standalone-payment-${width}.png`);
-    await entry.getByRole("button", { name: "Record payment", exact: true }).click();
+    await capture(page, output, `catalogue-new-other-income-${width}.png`);
+    await entry.getByRole("button", { name: "Record income", exact: true }).click();
     await entry.waitFor({ state: "hidden" });
     const standalone = fixture.select("SELECT * FROM transactions WHERE id > 903 ORDER BY id")[0];
     assert.ok(standalone);
     assert.equal(standalone.amount_pence, 1937);
-    assert.equal(standalone.service_id, services[0].id);
-    assert.equal(standalone.service_name, services[0].name);
-    assert.equal(records.appointments.length, 1, "Standalone service payment must not create a booking or request");
+    assert.equal(standalone.service_id, null);
+    assert.equal(standalone.service_name, "");
+    assert.equal(standalone.income_kind, "other");
+    assert.equal(standalone.category_name_snapshot, "Other income");
+    assert.equal(records.appointments.length, 1, "Other income must not create a booking or request");
     assert.equal(fixture.mutations.filter(mutation => mutation.operation === "appointments").length, 0);
 
-    await openEntry(page);
-    entry = page.getByRole("dialog", { name: "New entry", exact: true });
-    await entry.getByLabel(/^Payment for/).selectOption("appointment");
-    const paymentAppointment = entry.getByLabel(/^Appointment/);
-    assert.equal(await paymentAppointment.inputValue(), "", "Payment must require an explicit appointment choice");
+    await page.locator('nav a[title="Monthly"]').click();
+    const newOtherRow = page.getByRole("row").filter({ hasText: "+\u00a319.37" });
+    await newOtherRow.getByRole("button", { name: "Edit", exact: true }).click();
+    const correctedSource = page.getByRole("dialog", { name: "Edit entry", exact: true });
+    await correctedSource.getByLabel(/^Income type/).selectOption(`service:${services[0].id}`);
+    assert.equal(await correctedSource.getByLabel(/^Amount/).inputValue(), "19.37");
+    await correctedSource.getByRole("button", { name: "Save changes", exact: true }).click();
+    await correctedSource.waitFor({ state: "hidden" });
+    assert.deepEqual(fixture.select("SELECT amount_pence,service_id,service_name,income_kind FROM transactions WHERE id=?", [standalone.id])[0], { amount_pence: 1937, service_id: services[0].id, service_name: services[0].name, income_kind: "service" });
+
+    await page.locator('nav a[title="Schedule"]').click();
+    await page.getByRole("button", { name: "Day", exact: true }).click();
+    await page.getByRole("button", { name: new RegExp(client.name) }).first().click();
+    const paymentAppointment = page.getByRole("dialog", { name: "Appointment", exact: true });
     const localAppointment = fixture.select("SELECT id FROM appointments WHERE remote_id=?", [appointment.id])[0];
-    await paymentAppointment.selectOption(String(localAppointment.id));
-    assert.equal(await entry.getByLabel(/^Amount/).inputValue(), "18.75", "Appointment payment uses its saved quote rather than today's price");
-    await entry.getByLabel(/^Amount/).fill("17.50");
+    await page.waitForFunction(() => document.querySelector('[role="dialog"] input[inputmode="decimal"]')?.value === "18.75");
+    assert.equal(await paymentAppointment.getByLabel(/^Amount received/).inputValue(), "18.75", "Appointment payment uses its saved quote rather than today's price");
+    await paymentAppointment.getByLabel(/^Amount received/).fill("17.50");
     await capture(page, output, `catalogue-appointment-payment-${width}.png`);
-    await entry.getByRole("button", { name: "Record payment", exact: true }).click();
-    await entry.waitFor({ state: "hidden" });
+    await paymentAppointment.getByRole("button", { name: "Mark paid", exact: true }).click();
+    await paymentAppointment.waitFor({ state: "hidden" });
     const paid = fixture.select("SELECT transaction_id,price_pence FROM appointments WHERE id=?", [localAppointment.id])[0];
     assert.ok(paid.transaction_id);
     assert.equal(paid.price_pence, 1875);
@@ -148,17 +166,15 @@ async function catalogueFlows(browser, width, output) {
     assert.equal(fixture.mutations.filter(mutation => mutation.operation === "appointments").length, 0, "Recording money must not rewrite the shared diary");
     await openEntry(page);
     entry = page.getByRole("dialog", { name: "New entry", exact: true });
-    await entry.getByLabel(/^Payment for/).selectOption("appointment");
-    assert.equal(await entry.getByLabel(/^Appointment/).locator(`option[value="${localAppointment.id}"]`).count(), 0, "Paid appointment must not offer a second payment");
+    assert.equal(await entry.getByLabel("Appointment", { exact: true }).count(), 0, "Money in must not offer appointment payments");
     await entry.getByRole("button", { name: "Cancel", exact: true }).click();
 
     await openEntry(page);
     entry = page.getByRole("dialog", { name: "New entry", exact: true });
-    await entry.getByLabel(/^Payment for/).selectOption("other");
-    await entry.getByLabel(/^Income type/).selectOption("903");
+    await entry.getByLabel(/^Income type/).selectOption("other:903");
     await entry.getByLabel(/^Amount/).fill("6.43");
     await capture(page, output, `catalogue-other-income-${width}.png`);
-    await entry.getByRole("button", { name: "Record payment", exact: true }).click();
+    await entry.getByRole("button", { name: "Record income", exact: true }).click();
     await entry.waitFor({ state: "hidden" });
     assert.equal(fixture.select("SELECT amount_pence FROM transactions WHERE category_id=903")[0].amount_pence, 643);
     await openEntry(page);
@@ -199,8 +215,8 @@ async function catalogueFlows(browser, width, output) {
     assert.deepEqual(fixture.select("SELECT amount_pence,service_name FROM transactions WHERE id=903")[0], { amount_pence: 3100, service_name: "Saved bronze treatment" });
     await openEntry(page);
     entry = page.getByRole("dialog", { name: "New entry", exact: true });
-    await entry.getByLabel(/^Payment for/).selectOption("service");
-    assert.equal(await entry.getByLabel(/^Service/).locator(`option[value="${services[0].id}"]`).count(), 0);
+    assert.equal(await entry.getByLabel(/^Service/).count(), 0);
+    assert.equal(await entry.getByLabel(/^Income type/).locator('option[value^="service:"]').count(), 0);
     await entry.getByRole("button", { name: "Cancel", exact: true }).click();
 
     await page.locator('nav a[title="Schedule"]').click();
@@ -236,7 +252,7 @@ async function catalogueFlows(browser, width, output) {
     await historicEntry.waitFor();
     await page.waitForFunction(() => document.querySelector('[role="dialog"] input[inputmode="decimal"]')?.value === "31.00");
     assert.equal(await historicEntry.getByLabel(/^Amount/).inputValue(), "31.00", "Editing archived history must not reprice to the current catalogue");
-    assert.ok((await historicEntry.getByLabel(/^Service/).locator(`option[value="${services[2].id}"]`).innerText()).includes("Saved bronze treatment"));
+    assert.ok((await historicEntry.getByLabel(/^Income type/).locator(`option[value="service:${services[2].id}"]`).innerText()).includes("Saved bronze treatment"));
     await capture(page, output, `catalogue-historical-payment-editor-${width}.png`);
     await historicEntry.getByRole("button", { name: "Save changes", exact: true }).click();
     await historicEntry.waitFor({ state: "hidden" });
@@ -255,7 +271,7 @@ async function catalogueFlows(browser, width, output) {
 
     await historicRow.getByRole("button", { name: "Edit", exact: true }).click();
     const toExpense = page.getByRole("dialog", { name: "Edit entry", exact: true });
-    await toExpense.getByLabel(/^Payment for/).waitFor();
+    await toExpense.getByLabel(/^Income type/).waitFor();
     await toExpense.getByRole("button", { name: "Money out", exact: true }).click();
     await toExpense.getByLabel(/^Expense category/).selectOption("904");
     assert.equal(await toExpense.getByLabel(/^Amount/).inputValue(), "31.00");
@@ -267,8 +283,7 @@ async function catalogueFlows(browser, width, output) {
     const standaloneRow = page.getByRole("row").filter({ hasText: originalName }).filter({ hasText: "+\u00a319.37" });
     await standaloneRow.getByRole("button", { name: "Edit", exact: true }).click();
     const toOther = page.getByRole("dialog", { name: "Edit entry", exact: true });
-    await toOther.getByLabel(/^Payment for/).selectOption("other");
-    await toOther.getByLabel(/^Income type/).selectOption("903");
+    await toOther.getByLabel(/^Income type/).selectOption("other:903");
     assert.equal(await toOther.getByLabel(/^Amount/).inputValue(), "19.37");
     await capture(page, output, `catalogue-service-to-other-correction-${width}.png`);
     await toOther.getByRole("button", { name: "Save changes", exact: true }).click();
@@ -281,8 +296,7 @@ async function catalogueFlows(browser, width, output) {
     const toService = page.getByRole("dialog", { name: "Edit entry", exact: true });
     await toService.getByLabel(/^Expense category/).waitFor();
     await toService.getByRole("button", { name: "Money in", exact: true }).click();
-    await toService.getByLabel(/^Payment for/).selectOption("service");
-    await toService.getByLabel(/^Service/).selectOption(services[1].id);
+    await toService.getByLabel(/^Income type/).selectOption(`service:${services[1].id}`);
     assert.equal(await toService.getByLabel(/^Amount/).inputValue(), "7.25");
     await toService.getByRole("button", { name: "Save changes", exact: true }).click();
     await toService.waitFor({ state: "hidden" });
@@ -319,7 +333,7 @@ async function catalogueFlows(browser, width, output) {
       await page.getByRole("heading", { name: heading, exact: true }).locator("xpath=../../..").screenshot({ path: resolve(output, `catalogue-chart-${name}-${width}.png`), animations: "disabled" });
     }
     assert.deepEqual(pageErrors, []);
-    return { viewport, catalogueIsSingleTreatmentSource: true, liveDiscountDefaultActualAmountEditable: true, standalonePaymentCreatesNoBooking: true, existingAppointmentPaidOnceAtSavedQuote: true, otherIncomeAndExpensesSeparate: true, legacyChoicesExplicitNoNameGuessing: true, renameArchiveRetainHistoricNamesAndMoney: true, historicalEditorsDoNotReprice: true, explicitUnlinkedSourceCorrectionsPreserveActualAmount: true, linkedPaymentSourceRemainsFixed: true, reportIncomeKinds: true, trayPayloadUsesDiscountedActiveServicesOnly: true, charts, fittedValues, resizeEvidence, mainBounds, pageErrors };
+    return { viewport, catalogueIsSingleTreatmentSource: true, moneyInDefaultsToOtherWithoutServiceOrAppointmentOptions: true, otherIncomeCreatesNoBooking: true, appointmentSectionPaysOnceAtSavedQuote: true, otherIncomeAndExpensesSeparate: true, legacyChoicesExplicitNoNameGuessing: true, renameArchiveRetainHistoricNamesAndMoney: true, historicalEditorsDoNotReprice: true, explicitUnlinkedSourceCorrectionsPreserveActualAmount: true, linkedPaymentSourceRemainsFixed: true, reportIncomeKinds: true, trayPayloadUsesDiscountedActiveServicesOnly: true, charts, fittedValues, resizeEvidence, mainBounds, pageErrors };
   } catch (error) {
     await page.screenshot({ path: resolve(output, `catalogue-failure-${width}.png`), fullPage: true });
     console.error(JSON.stringify({ viewport, dialogs: await page.getByRole("dialog").allTextContents(), controls: await page.locator("input,textarea,select").evaluateAll(elements => elements.map(element => ({ type: element.type, value: element.value, label: element.closest("label")?.textContent }))) }, null, 2));
@@ -330,7 +344,9 @@ async function catalogueFlows(browser, width, output) {
 async function openEntry(page) {
   await page.getByRole("button", { name: "New entry", exact: true }).click();
   await page.getByRole("dialog", { name: "New entry", exact: true }).waitFor();
-  await page.getByLabel(/^Payment for/).waitFor();
+  await page.getByLabel(/^Income type/).waitFor();
+  await page.getByRole("dialog", { name: "New entry", exact: true }).getByRole("button", { name: "Record income", exact: true }).waitFor();
+  await page.waitForFunction(() => ![...document.querySelectorAll('[role="dialog"] button')].find(button => button.textContent === "Record income")?.disabled);
 }
 
 async function until(page, predicate) {
