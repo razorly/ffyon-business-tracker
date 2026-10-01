@@ -95,12 +95,13 @@ function appointmentUpsert(a: CloudAppointment): Statement {
   return { sql: `INSERT INTO appointments (remote_id, client_id, category_id, service_id, service_name, date, start_time,
     duration_min, price_pence, customer_notes, status, cloud_revision, proposed_date, proposed_start_time, series_id, created_at,
     time_confirmed, proposed_time_confirmed, is_remote, visit_address, visit_postcode, base_price_pence, discount_percent)
-    SELECT $1, (SELECT id FROM clients WHERE remote_id=COALESCE((SELECT value FROM sync_state WHERE key='client-alias-' || $2), $2)), (SELECT id FROM categories WHERE service_id=$3 AND type='income'),
+    SELECT $1, (SELECT id FROM clients WHERE remote_id=COALESCE((SELECT value FROM sync_state WHERE key='client-alias-' || $2), $2)), NULL,
       $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22
     WHERE NOT EXISTS (SELECT 1 FROM sync_state WHERE key IN ('deleted-appointment-' || $1,'deleted-client-' || $2))
     ON CONFLICT(remote_id) WHERE remote_id IS NOT NULL DO UPDATE SET client_id=excluded.client_id,
-      category_id=COALESCE(appointments.category_id, excluded.category_id), service_id=excluded.service_id,
-      service_name=excluded.service_name, date=excluded.date, start_time=excluded.start_time,
+      service_id=excluded.service_id,
+      service_name=CASE WHEN appointments.service_id IS excluded.service_id AND COALESCE(appointments.service_name,'')<>''
+        THEN appointments.service_name ELSE excluded.service_name END, date=excluded.date, start_time=excluded.start_time,
       duration_min=excluded.duration_min, price_pence=excluded.price_pence, customer_notes=excluded.customer_notes,
       status=excluded.status, cloud_revision=excluded.cloud_revision, proposed_date=excluded.proposed_date,
       proposed_start_time=excluded.proposed_start_time, series_id=excluded.series_id,
@@ -117,6 +118,18 @@ function appointmentUpsert(a: CloudAppointment): Statement {
 
 function cacheStatement(table: "cloud_services" | "cloud_blocks" | "cloud_settings", id: string, data: unknown): Statement {
   return { sql: `INSERT INTO ${table} (id, data) VALUES ($1, $2) ON CONFLICT(id) DO UPDATE SET data=excluded.data`, params: [id, JSON.stringify(data)] };
+}
+
+function linkedPaymentServices(): Statement {
+  // An imported legacy payment keeps its saved label while gaining the booking's identity.
+  return { sql: `UPDATE transactions SET
+    service_id=(SELECT service_id FROM appointments WHERE transaction_id=transactions.id),
+    service_name=COALESCE(NULLIF(service_name,''),NULLIF(category_name_snapshot,''),
+      (SELECT NULLIF(service_name,'') FROM appointments WHERE transaction_id=transactions.id),''),
+    income_kind='service'
+    WHERE type='income' AND service_id IS NULL AND COALESCE(income_kind,'legacy')='legacy'
+      AND EXISTS (SELECT 1 FROM appointments WHERE transaction_id=transactions.id
+        AND (service_id IS NOT NULL OR COALESCE(service_name,'')<>''))` };
 }
 
 function removeAppointments(where: string, params: unknown[]): Statement[] {
@@ -265,7 +278,7 @@ async function applySyncResponseNow(response: SyncResponse, prefixStatements: St
     for (const change of response.changes) if (change.entity !== "client" && (change.entity !== "appointment" || change.record === null || (!deleted.deletedAppointments.has(change.id) && !deleted.deletedClients.has((change.record as CloudAppointment).client_id)))) statements.push(...changeStatements(change));
     for (const change of clients) if (change.record === null) statements.push(...changeStatements(change));
   }
-  statements.push(...deleted.statements);
+  statements.push(...deleted.statements, linkedPaymentServices());
   const notifications = notificationStatus(response.notifications);
   statements.push(notifications
     ? { sql: "INSERT INTO sync_state(key,value) VALUES ('notification-status',$1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", params: [JSON.stringify(notifications)] }
@@ -396,19 +409,6 @@ export async function decideReschedule(id: number, approve: boolean, expectedRev
 }
 export async function listPendingAppointments() { return (await listAppointments()).filter((a) => a.status === "pending" || a.proposed_date != null); }
 
-export async function setServiceCategory(serviceId: string, categoryId: number | null) {
-  const db = await getDb();
-  if (categoryId != null) {
-    const [category] = await db.select<{ type: string }[]>("SELECT type FROM categories WHERE id=$1", [categoryId]);
-    if (category?.type !== "income") throw new Error("Map a service to an income category.");
-  }
-  await db.batch([
-    { sql: "UPDATE categories SET service_id=NULL WHERE service_id=$1", params: [serviceId] },
-    ...(categoryId == null ? [] : [{ sql: "UPDATE categories SET service_id=$1 WHERE id=$2", params: [serviceId, categoryId] }]),
-    { sql: "UPDATE appointments SET category_id=$1 WHERE service_id=$2 AND category_id IS NULL", params: [categoryId, serviceId] },
-  ]);
-}
-
 export async function getImportPreview(): Promise<ImportPreview> {
   const [clients, appointments, services] = await Promise.all([listClients(), listAppointments(), listServices()]);
   return { clients: clients.filter((c) => !c.remote_id), appointments: appointments.filter((a) => !a.remote_id && a.status === "confirmed"), services };
@@ -433,7 +433,6 @@ export async function importLegacyRecords(selection: ImportSelection) {
   const selectedAppointments = preview.appointments.filter((a) => selection.appointmentIds.includes(a.id));
   if (selectedClients.length !== new Set(selection.clientIds).size || selectedAppointments.length !== new Set(selection.appointmentIds).size) throw new Error("The import selection changed. Review it again.");
   const allClients = await listClients();
-  const mappings = await db.select<{ id: number; service_id: string | null }[]>("SELECT id, service_id FROM categories WHERE type='income'");
   const remoteClientIds = new Map(allClients.filter((c) => c.remote_id).map((c) => [c.id, c.remote_id!]));
   const statements: Statement[] = [];
   for (const c of selectedClients) {
@@ -443,9 +442,9 @@ export async function importLegacyRecords(selection: ImportSelection) {
   const clients = selectedClients.map((c) => ({ id: remoteClientIds.get(c.id)!, name: c.name, email: c.email ?? "", phone: c.phone ?? "", saved_address: c.saved_address ?? "", saved_postcode: c.saved_postcode ?? "" }));
   const appointments = selectedAppointments.map((a) => {
     const clientId = a.client_id == null ? null : remoteClientIds.get(a.client_id);
-    const serviceId = a.service_id ?? mappings.find((m) => m.id === a.category_id)?.service_id;
+    const serviceId = a.service_id;
     if (!clientId) throw new Error("Select the legacy client for each appointment, or link it explicitly first.");
-    if (!serviceId || !preview.services.some((s) => s.id === serviceId && s.active)) throw new Error("Map each legacy appointment to an active website service before importing.");
+    if (!serviceId || !preview.services.some((s) => s.id === serviceId && s.active)) throw new Error("Choose an active service for each legacy appointment before importing. Review legacy income or edit the appointment first.");
     if (a.price_pence == null) throw new Error("Add an agreed price before importing an appointment.");
     const id = crypto.randomUUID();
     statements.push({ sql: "INSERT INTO sync_state(key,value) VALUES ($1,$2) ON CONFLICT(key) DO UPDATE SET value=excluded.value", params: [`import-target-appointment-${id}`, String(a.id)] });

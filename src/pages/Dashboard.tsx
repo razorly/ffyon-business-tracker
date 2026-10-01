@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import { format, subMonths } from "date-fns";
 import { BanknoteArrowDown, ChevronRight, PoundSterling, Receipt, Sparkles, Users, Wallet } from "lucide-react";
-import { categoryTotals, distinctClients, listTransactions, monthlyTotals, unpaidBefore, type MonthTotal } from "@/lib/db";
+import { distinctClients, incomeTotals, listTransactions, monthlyTotals, unpaidBefore, type MonthTotal } from "@/lib/db";
 import { useData, useLoad } from "@/lib/data";
 import { lastMonths, monthRange, taxYear } from "@/lib/dates";
 import { isoDate, money, monthLabel, percentChange } from "@/lib/format";
@@ -10,6 +10,7 @@ import { themedColour } from "@/lib/palette";
 import { useTheme } from "@/lib/theme";
 import { PageHeader } from "@/components/Layout";
 import { KpiCard } from "@/components/KpiCard";
+import { FittedValue } from "@/components/FittedValue";
 import { Button, Card, CardHeader, EmptyState } from "@/components/ui";
 import { CategoryDonut, IncomeExpenseChart, Legend, ProfitBars } from "@/components/charts";
 import { TransactionList } from "@/components/TransactionList";
@@ -24,7 +25,7 @@ export function Dashboard() {
 
   const [monthly] = useLoad<MonthTotal[]>(() => monthlyTotals(months[0] + "-01", thisMonth.to), [], []);
   const [taxMonthly] = useLoad<MonthTotal[]>(() => monthlyTotals(tax.from, tax.to), [], []);
-  const [cats] = useLoad(() => categoryTotals("income", tax.from, tax.to), [], []);
+  const [incomeSources] = useLoad(() => incomeTotals(tax.from, tax.to), [], []);
   const [clientsThisMonth] = useLoad(() => distinctClients(thisMonth.from, thisMonth.to), [], 0);
   const [recent, loadingRecent] = useLoad(() => listTransactions({ limit: 6 }), [], []);
   const [overdue] = useLoad(() => unpaidBefore(isoDate(now)), [], []);
@@ -47,7 +48,7 @@ export function Dashboard() {
     <>
       <PageHeader title={greeting()} subtitle={`Here's how ${format(now, "MMMM")} is going`} />
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <KpiCard
           hero
           label={`Profit in ${format(now, "MMMM")}`}
@@ -106,7 +107,7 @@ export function Dashboard() {
         </Card>
       ) : (
         <>
-          <div className="mt-4 grid gap-4 lg:grid-cols-3">
+          <div className="mt-4 grid min-w-0 gap-4 lg:grid-cols-3">
             <Card className="lg:col-span-2">
               <CardHeader
                 title="Income vs expenses"
@@ -127,24 +128,28 @@ export function Dashboard() {
 
             <Card>
               <CardHeader title="Tax year so far" subtitle={`${tax.label} · from 6 April`} />
-              <div className="grid grid-cols-2 gap-3 px-5 pb-4">
+              <div className="grid grid-cols-1 gap-3 px-5 pb-4 sm:grid-cols-2">
                 <div className="rounded-2xl bg-surface-2 p-3.5">
                   <div className="eyebrow text-[10px] text-ink-2">Income</div>
-                  <div className="mt-1.5 font-display text-[22px] leading-none">{money(taxIncome)}</div>
+                  <FittedValue className="mt-1.5 min-w-0 font-display text-[22px] leading-none" value={money(taxIncome)} />
                 </div>
                 <div className="rounded-2xl bg-surface-2 p-3.5">
                   <div className="eyebrow text-[10px] text-ink-2">Profit</div>
-                  <div className={`mt-1.5 font-display text-[22px] leading-none ${taxProfit < 0 ? "text-bad" : ""}`}>
-                    {money(taxProfit)}
-                  </div>
+                  <FittedValue className={`mt-1.5 min-w-0 font-display text-[22px] leading-none ${taxProfit < 0 ? "text-bad" : ""}`} value={money(taxProfit)} />
                 </div>
               </div>
               <div className="px-5 pb-5">
                 <div className="eyebrow mb-3 text-ink-2">Income by service</div>
-                {cats.length ? (
+                {incomeSources.length ? (
                   <CategoryDonut
                     centreLabel="Income"
-                    data={cats.map((c) => ({ name: c.name, value: c.total, colour: themedColour(c.colour, dark) }))}
+                    data={incomeSources.map((source) => ({
+                      key: source.service_id ? `service:${source.service_id}` : `${source.kind}:${source.id ?? "removed"}:${source.name}`,
+                      name: source.kind === "other" ? `${source.name} (other income)` :
+                        source.kind === "legacy" ? `${source.name} (legacy)` : source.name,
+                      value: source.total,
+                      colour: themedColour(source.colour, dark),
+                    }))}
                   />
                 ) : (
                   <p className="text-[13px] text-muted">No income this tax year yet.</p>
@@ -153,7 +158,7 @@ export function Dashboard() {
             </Card>
           </div>
 
-          <div className="mt-4 grid gap-4 lg:grid-cols-3">
+          <div className="mt-4 grid min-w-0 gap-4 lg:grid-cols-3">
             <Card className="lg:col-span-2">
               <CardHeader title="Profit per month" subtitle="Income minus expenses" />
               <div className="px-2 pb-4">

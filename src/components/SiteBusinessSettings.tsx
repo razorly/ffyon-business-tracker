@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Archive, Bell, CalendarOff, Check, Pencil, Plus, RotateCcw, Save, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
-import { listAppointments, listCategories, type AppointmentRow, type Category } from "@/lib/db";
+import { listAppointments, type AppointmentRow } from "@/lib/db";
 import { useData } from "@/lib/data";
 import { durationLabel, isoDate, money, parseAmount, penceToInput, timeLabel, timeToMin, ukDate } from "@/lib/format";
 import {
   createBlock, deleteBlock, getImportPreview, getSyncState, importLegacyRecords, listBlocks, listCloudSettings, listNotificationStatus,
-  listServices, saveService, serviceDiscountPrice, setServiceCategory, subscribeSync, updateCloudSettings,
+  listServices, saveService, serviceDiscountPrice, subscribeSync, updateCloudSettings,
 } from "@/lib/sync";
 import { useAccess } from "@/components/AccessGate";
-import { Button, Card, CardHeader, Field, Input, Modal, Select, Textarea } from "@/components/ui";
+import { Button, Card, CardHeader, Field, Input, Modal, Textarea } from "@/components/ui";
 
 type Service = Awaited<ReturnType<typeof listServices>>[number];
 type Block = Awaited<ReturnType<typeof listBlocks>>[number];
@@ -26,7 +26,6 @@ export function SiteBusinessSettings() {
   const [services, setServices] = useState<Service[]>([]);
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [settings, setSettings] = useState<BusinessSettings | null>(null);
-  const [categories, setCategories] = useState<Category[]>([]);
   const [preview, setPreview] = useState<ImportPreview>(emptyPreview);
   const [appointments, setAppointments] = useState<AppointmentRow[]>([]);
   const [error, setError] = useState("");
@@ -35,13 +34,12 @@ export function SiteBusinessSettings() {
 
   useEffect(() => {
     let alive = true;
-    Promise.all([listServices(), listBlocks(), listCloudSettings(), listCategories("income"), getImportPreview(), listAppointments()])
-      .then(([nextServices, nextBlocks, nextSettings, nextCategories, nextPreview, nextAppointments]) => {
+    Promise.all([listServices(), listBlocks(), listCloudSettings(), getImportPreview(), listAppointments()])
+      .then(([nextServices, nextBlocks, nextSettings, nextPreview, nextAppointments]) => {
         if (!alive) return;
         setServices(nextServices);
         setBlocks(nextBlocks);
         setSettings(nextSettings);
-        setCategories(nextCategories);
         setPreview(nextPreview);
         setAppointments(nextAppointments);
         setError("");
@@ -54,7 +52,7 @@ export function SiteBusinessSettings() {
   return (
     <>
       {error && <p className="col-span-full text-sm text-bad" role="alert">{error}</p>}
-      <ServiceCatalogCard services={services} categories={categories} online={online} loaded={loaded} onSaved={refresh} />
+      <ServiceCatalogCard services={services} online={online} loaded={loaded} onSaved={refresh} />
       <OpeningHoursCard settings={settings} services={services} online={online} loaded={loaded} onSaved={refresh} />
       <RequestNotificationsCard settings={settings} online={online} onSaved={refresh} />
       <TimeOffCard blocks={blocks} online={online} loaded={loaded} onSaved={refresh} />
@@ -67,8 +65,8 @@ function OnlineNotice({ online }: { online: boolean }) {
   return online ? null : <p className="mb-3 text-xs text-muted">Reconnect to change shared booking settings.</p>;
 }
 
-function ServiceCatalogCard({ services, categories, online, loaded, onSaved }: {
-  services: Service[]; categories: Category[]; online: boolean; loaded: boolean; onSaved: () => void;
+function ServiceCatalogCard({ services, online, loaded, onSaved }: {
+  services: Service[]; online: boolean; loaded: boolean; onSaved: () => void;
 }) {
   const [editing, setEditing] = useState<Service | "new" | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -95,33 +93,29 @@ function ServiceCatalogCard({ services, categories, online, loaded, onSaved }: {
         {!loaded && <p className="py-3 text-sm text-muted">Loading services...</p>}
         {loaded && !visible.length && <p className="py-3 text-sm text-muted">No {showArchived ? "" : "active "}services.</p>}
         <ul className="divide-y divide-line">
-          {visible.map((service) => {
-            const category = categories.find((item) => item.service_id === service.id);
-            return (
+          {visible.map((service) => (
               <li key={service.id} className="flex items-start justify-between gap-3 py-3">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2 text-sm font-medium"><span className="break-words">{service.name}</span>{!service.active && <span className="text-xs font-normal text-muted">Archived</span>}</div>
                   <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-2">{service.discount_percent > 0 ? <><span className="text-muted line-through">{money(service.price_pence)}</span><span className="font-semibold text-good">{money(serviceDiscountPrice(service.price_pence, service.discount_percent))}</span><span className="text-good">{service.discount_percent}% off</span></> : <span>{money(service.price_pence)}</span>}<span>· {durationLabel(service.duration_min)}</span></p>
                   {service.description && <p className="mt-1 break-words text-xs text-muted">{service.description}</p>}
-                  <p className="mt-1 text-xs text-muted">Income category: {category?.name ?? "Uncategorised"}</p>
                 </div>
                 <div className="flex shrink-0 gap-1">
                   <Button size="icon" variant="ghost" disabled={!online || busyId !== null} title={`Edit ${service.name}`} aria-label={`Edit ${service.name}`} onClick={() => setEditing(service)}><Pencil size={14} /></Button>
                   <Button size="icon" variant="ghost" disabled={!online || busyId !== null} title={`${service.active ? "Archive" : "Restore"} ${service.name}`} aria-label={`${service.active ? "Archive" : "Restore"} ${service.name}`} onClick={() => void toggleArchive(service)}>{service.active ? <Archive size={14} /> : <RotateCcw size={14} />}</Button>
                 </div>
               </li>
-            );
-          })}
+          ))}
         </ul>
         {archivedCount > 0 && <label className="mt-3 flex items-center gap-2 text-xs text-ink-2"><input type="checkbox" checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} className="accent-accent" /> Show archived ({archivedCount})</label>}
       </div>
-      {editing !== null && <ServiceForm service={editing === "new" ? null : editing} categories={categories} online={online} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); onSaved(); }} />}
+      {editing !== null && <ServiceForm service={editing === "new" ? null : editing} online={online} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); onSaved(); }} />}
     </Card>
   );
 }
 
-function ServiceForm({ service, categories, online, onClose, onSaved }: {
-  service: Service | null; categories: Category[]; online: boolean; onClose: () => void; onSaved: () => void;
+function ServiceForm({ service, online, onClose, onSaved }: {
+  service: Service | null; online: boolean; onClose: () => void; onSaved: () => void;
 }) {
   const [name, setName] = useState(service?.name ?? "");
   const [description, setDescription] = useState(service?.description ?? "");
@@ -129,7 +123,6 @@ function ServiceForm({ service, categories, online, onClose, onSaved }: {
   const [price, setPrice] = useState(penceToInput(service?.price_pence ?? 0));
   const [discountEnabled, setDiscountEnabled] = useState((service?.discount_percent ?? 0) > 0);
   const [discount, setDiscount] = useState(String(service?.discount_percent || 20));
-  const [categoryId, setCategoryId] = useState(String(categories.find((category) => category.service_id === service?.id)?.id ?? ""));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const durationMin = Number(duration);
@@ -144,13 +137,6 @@ function ServiceForm({ service, categories, online, onClose, onSaved }: {
     const id = service?.id ?? crypto.randomUUID();
     try {
       await saveService({ id, name: name.trim(), description: description.trim(), duration_min: durationMin, price_pence: pricePence, discount_percent: discountPercent, active: service?.active ?? true, ...(service ? { revision: service.revision } : {}) });
-      try {
-        await setServiceCategory(id, categoryId ? Number(categoryId) : null);
-      } catch (mappingError) {
-        toast.error(`Service saved. Income category could not be linked: ${failureMessage(mappingError)}`);
-        onSaved();
-        return;
-      }
       toast.success(service ? "Service updated" : "Service added");
       onSaved();
     } catch (cause) { setError(failureMessage(cause)); }
@@ -170,7 +156,6 @@ function ServiceForm({ service, categories, online, onClose, onSaved }: {
         <Field label="Discount (%)"><Input type="number" min={1} max={100} step={1} disabled={!discountEnabled} value={discount} onChange={(event) => setDiscount(event.target.value)} /></Field>
         {pricePence !== null && valid && <p className="text-sm text-ink-2">Booking price: <strong className={discountPercent > 0 ? "text-good" : ""}>{money(serviceDiscountPrice(pricePence, discountPercent))}</strong>{discountPercent > 0 ? ` (${discountPercent}% off ${money(pricePence)})` : ""}</p>}
         <p className="text-xs text-muted">Existing bookings keep their original quoted price.</p>
-        <Field label="Income category"><Select value={categoryId} onChange={(event) => setCategoryId(event.target.value)}><option value="">Uncategorised</option>{categories.filter((category) => !category.service_id || category.service_id === service?.id).map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</Select></Field>
         {error && <p className="text-sm text-bad" role="alert">{error}</p>}
         <div className="flex justify-end gap-2"><Button type="button" disabled={busy} onClick={onClose}>Cancel</Button><Button variant="primary" type="submit" disabled={!online || !valid || busy}><Save size={14} /> {busy ? "Saving..." : "Save"}</Button></div>
       </form>

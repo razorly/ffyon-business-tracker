@@ -37,7 +37,7 @@ export function Layout() {
           <div className="mx-auto mt-3 h-px w-3/4 bg-rose" />
         </div>
 
-        <Button variant="primary" className="mb-5 w-full" onClick={() => openNewEntry()}>
+        <Button variant="primary" className="mb-5 w-full" aria-label="New entry" title="New entry" onClick={() => openNewEntry()}>
           <Plus size={16} /><span className="hidden sm:inline">New entry</span>
         </Button>
 

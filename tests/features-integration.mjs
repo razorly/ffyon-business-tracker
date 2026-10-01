@@ -414,7 +414,6 @@ test("interrupted deletion mirror rolls back anonymization and row deletion toge
 async function lostImportFixture(fixture) {
   const { service } = sharedRecords();
   fixture.execute("INSERT INTO clients(id,name,phone,notes) VALUES (101,'Legacy privacy customer','07000000000','Private customer instruction')");
-  fixture.execute("UPDATE categories SET service_id=? WHERE id=1", [service.id]);
   fixture.execute("INSERT INTO cloud_services(id,data) VALUES (?,?)", [service.id, JSON.stringify(service)]);
   fixture.execute("INSERT INTO transactions(id,type,date,amount_pence,client_id,category_id,description) VALUES (201,'income','2026-10-10',2100,101,1,'Private generated legacy visit')");
   fixture.execute("INSERT INTO appointments(id,date,start_time,duration_min,client_id,category_id,price_pence,notes,status,transaction_id,series_id) VALUES (301,'2026-10-10','10:00',45,101,1,2200,'Private legacy visit','confirmed',201,'legacy-privacy-series')");
@@ -451,6 +450,8 @@ async function lostImportFixture(fixture) {
     throw new Error(`Unexpected legacy deletion request: ${operation} ${method}`);
   };
   const sync = await application(fixture, "src/lib/sync.ts");
+  const app = await application(fixture);
+  await app.resolveLegacyIncomeCategory(1, service.id);
   await assert.rejects(sync.importLegacyRecords({ clientIds: [101], appointmentIds: [301] }), /Fixture lost committed import response/);
   return { sync, imports, deletions, records, failReplay: (message = "Fixture import reconciliation unavailable") => { failReplay = message; } };
 }
@@ -541,5 +542,98 @@ test("ambiguous import conflict retains stable reconciliation identities instead
     assert.deepEqual(fixture.select("SELECT key,value FROM sync_state WHERE key='import-pending' OR key LIKE 'import-target-%' ORDER BY key"), before);
     assert.equal(fixture.select("SELECT COUNT(*) AS n FROM clients")[0].n, 1);
     assert.equal(fixture.select("SELECT COUNT(*) AS n FROM appointments")[0].n, 1);
+  } finally { fixture.close(); }
+});
+
+test("shared service bookings and payments need no income category and preserve snapshots after catalogue edits", async () => {
+  const fixture = fixtureDatabase();
+  try {
+    const sync = await application(fixture, "src/lib/sync.ts");
+    const app = await application(fixture);
+    const { client, service, appointment } = sharedRecords();
+    await sync.applySyncResponse(snapshot({ clients: [client], appointments: [appointment], services: [service] }));
+    const [booked] = await app.listAppointments();
+    assert.equal(booked.category_id, null);
+    await app.markAppointmentPaid(booked.id, 2100);
+    const [payment] = await app.listTransactions();
+    assert.equal(payment.category_id, null);
+    assert.equal(payment.service_id, service.id);
+    assert.equal(payment.service_name, appointment.service_name);
+    assert.equal(payment.income_kind, "service");
+    assert.equal(payment.amount_pence, 2100);
+    const renamed = { ...service, name: "Renamed catalogue treatment", price_pence: 4000, discount_percent: 30, revision: 2 };
+    await sync.applySyncResponse(snapshot({ clients: [client], appointments: [appointment], services: [renamed], cursor: 2 }));
+    await app.createTransaction({ type: "income", date: appointment.date, amount_pence: 2700, client_id: null, category_id: null, description: null, service_id: service.id, income_kind: "service" });
+    const totals = await app.incomeTotals("2026-10-01", "2026-10-31");
+    assert.equal(totals.length, 1, "Renaming a service must not split its report total");
+    assert.equal(totals[0].total, 4800);
+    const original = await app.getTransaction(payment.id);
+    assert.equal(original.service_name, appointment.service_name);
+    assert.equal(original.amount_pence, 2100);
+    await sync.applySyncResponse(snapshot({ clients: [client], appointments: [appointment], services: [{ ...renamed, active: false, revision: 3 }], cursor: 3 }));
+    assert.equal((await app.getTransaction(payment.id)).service_name, appointment.service_name);
+    assert.equal((await app.getAppointment(booked.id)).price_pence, 2200);
+    await sync.applySyncResponse({ snapshot: null, changes: [{ sequence: 4, entity: "client", id: client.id, record: null }], cursor: 4, has_more: false });
+    const anonymized = await app.getTransaction(payment.id);
+    assert.equal(anonymized.client_id, null);
+    assert.equal(anonymized.description, null);
+    assert.equal(anonymized.service_id, service.id);
+    assert.equal(anonymized.service_name, appointment.service_name);
+    assert.equal(anonymized.amount_pence, 2100);
+  } finally { fixture.close(); }
+});
+
+test("legacy import reconciliation adds service identity without rewriting saved appointment or payment labels", async () => {
+  const fixture = fixtureDatabase();
+  try {
+    const sync = await application(fixture, "src/lib/sync.ts");
+    const { client, service, appointment } = sharedRecords();
+    fixture.execute("INSERT INTO clients(id,name,remote_id) VALUES (101,'Legacy customer',?)", [client.id]);
+    fixture.execute("INSERT INTO transactions(id,type,date,amount_pence,category_id,category_name_snapshot,income_kind) VALUES (201,'income','2026-10-10',2100,1,'Original legacy treatment','legacy')");
+    fixture.execute("INSERT INTO appointments(id,date,start_time,price_pence,status,transaction_id,client_id,remote_id,service_id,service_name) VALUES (301,'2026-10-10','00:00',2200,'confirmed',201,101,?,?,'Original legacy treatment')", [appointment.id, service.id]);
+    await sync.applySyncResponse(snapshot({ clients: [client], appointments: [appointment], services: [service] }));
+    assert.equal(fixture.select("SELECT service_name FROM appointments WHERE id=301")[0].service_name, "Original legacy treatment");
+    assert.deepEqual(fixture.select("SELECT service_id,service_name,income_kind,amount_pence FROM transactions WHERE id=201")[0], {
+      service_id: service.id, service_name: "Original legacy treatment", income_kind: "service", amount_pence: 2100,
+    });
+    const before = fixture.select("SELECT * FROM transactions");
+    fixture.setFailure(sql => { if (sql.includes("INSERT INTO sync_state (key,value) VALUES ('cursor'")) throw new Error("Fixture cursor failure"); });
+    await assert.rejects(sync.applySyncResponse(snapshot({ clients: [client], appointments: [{ ...appointment, service_id: "changed-service", service_name: "Changed booking", revision: 2 }], services: [service], cursor: 2 })), /Fixture cursor failure/);
+    assert.deepEqual(fixture.select("SELECT * FROM transactions"), before);
+    assert.equal(fixture.select("SELECT service_name FROM appointments WHERE id=301")[0].service_name, "Original legacy treatment");
+  } finally { fixture.close(); }
+});
+
+test("sync preserves a name-only booked source instead of inheriting an unrelated category service", async () => {
+  const fixture = fixtureDatabase();
+  try {
+    const sync = await application(fixture, "src/lib/sync.ts");
+    const { client, service, appointment } = sharedRecords();
+    fixture.execute("UPDATE categories SET service_id='unrelated-service',income_kind='service' WHERE id=1");
+    fixture.execute("INSERT INTO clients(id,name,remote_id) VALUES (101,'Historical customer',?)", [client.id]);
+    fixture.execute("INSERT INTO transactions(id,type,date,amount_pence,category_id,category_name_snapshot,income_kind) VALUES (201,'income','2026-10-10',1537,1,'Saved payment label','legacy')");
+    fixture.execute("INSERT INTO appointments(id,date,start_time,status,transaction_id,client_id,remote_id,service_name) VALUES (301,'2026-10-10','00:00','confirmed',201,101,?,'Name-only booked treatment')", [appointment.id]);
+    await sync.applySyncResponse(snapshot({ clients: [client], appointments: [{ ...appointment, service_id: null, service_name: "Name-only booked treatment" }], services: [service] }));
+    assert.deepEqual(fixture.select("SELECT service_id,service_name,income_kind,amount_pence FROM transactions WHERE id=201")[0], {
+      service_id: null, service_name: "Saved payment label", income_kind: "service", amount_pence: 1537,
+    });
+    assert.equal(fixture.select("SELECT service_id FROM appointments WHERE id=301")[0].service_id, null);
+  } finally { fixture.close(); }
+});
+
+test("payment display distinguishes services other income legacy and expenses without consulting current prices", async () => {
+  const fixture = fixtureDatabase();
+  try {
+    const display = await application(fixture, "src/lib/income-display.ts");
+    const examples = [
+      [{ type: "income", service_id: "stable-service", service_name: "Booked treatment", category_name: "Wrong category" }, "Booked treatment", "service"],
+      [{ type: "income", income_kind: "other", category_name_snapshot: "Tips", category_name: "Renamed" }, "Tips", "other"],
+      [{ type: "income", income_kind: "legacy", category_name_snapshot: "Old treatment" }, "Old treatment", "legacy"],
+      [{ type: "expense", category_name_snapshot: "Supplies", service_name: "Ignored service" }, "Supplies", "expense"],
+    ];
+    for (const [entry, label, kind] of examples) {
+      assert.equal(display.transactionLabel(entry), label);
+      assert.equal(display.transactionKind(entry), kind);
+    }
   } finally { fixture.close(); }
 });

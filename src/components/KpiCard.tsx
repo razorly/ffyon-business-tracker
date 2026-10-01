@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { TrendingDown, TrendingUp } from "lucide-react";
 import { Card } from "./ui";
+import { FittedValue } from "./FittedValue";
 import { cn } from "@/lib/utils";
 
 export function KpiCard({
@@ -29,7 +30,7 @@ export function KpiCard({
         <span className={cn("eyebrow", hero ? "text-accent-ink/80" : "text-ink-2")}>{label}</span>
         {icon && <span className={hero ? "text-accent-ink/70" : "text-rose"}>{icon}</span>}
       </div>
-      <div className={cn("mt-2 font-display leading-none", hero ? "text-[40px]" : "text-[32px]")}>{value}</div>
+      <FittedValue className={cn("mt-2 min-w-0 font-display leading-none", hero ? "text-[40px]" : "text-[32px]")} value={value} />
       {showDelta && (
         <div className="mt-2.5 flex items-center gap-1.5 text-[12px]">
           {delta == null ? (

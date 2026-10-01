@@ -1,4 +1,4 @@
-# Ffyon Integration Contract v2
+# Ffyon Integration Contract v3
 
 This file is public. It contains no private credential or signing key.
 
@@ -74,6 +74,16 @@ Guest clients have no account. Account profiles remain customer-owned; associate
 
 The additive v7 migration supplies time-confirmation, remote address and quote-discount snapshots plus optional saved client address fields. Existing appointments default to timed, nonremote and undiscounted; existing quotes are copied to `base_price_pence`. Legacy databases receive a safety backup before migration. Backup v3 remains readable using optional-field defaults; authoritative cloud records replace stale booking details on the next sync.
 
+## Desktop Mirror v8
+
+- `cloud_services` is the single shared treatment catalogue; no hosted DTO or credential changes are needed. New cloud bookings and service payments do not require an income category. Cached active services remain usable for local payments during a valid offline lease.
+- Local income categories gain `income_kind: 'legacy' | 'service' | 'other'`. Unmapped old labels remain legacy until explicitly reviewed; new non-treatment labels are other income. Existing explicit service links are reused, never guessed by name. Multiple old labels may resolve to the same stable service ID.
+- Transactions gain nullable `service_id`, saved `service_name`, `category_name_snapshot`, and nullable `income_kind`. Snapshot names and actual amounts survive catalogue renames/archives, payment edits, deletion, undo and backup. Expenses cannot retain service attribution. Explicit corrections to unlinked payments may change attribution; linked appointment payments retain their booked service.
+- Legacy review updates classification and missing source identity atomically, without changing labels, amounts, quotes or durations. A booking with a saved service name but no ID remains a name-only historical snapshot, not an inferred category service.
+- Payment creation copies the booked service snapshot and links in one SQLite batch exactly once. Approval never creates income. Standalone service payments use the current discounted default but accept the actual amount received and create no appointment.
+- Income totals group by stable service ID, with separate other/legacy groups. Saved period labels are used for presentation, never current catalogue prices. New tray quick-add IDs are bounded strings; appointment-payment IDs remain integers. Native authorization is unchanged.
+- Backup format 4 includes local classifications and saved transaction attribution. Formats 1-3 are normalized conservatively; format 4 preserves explicit-null historical identities. Shared restore still requires an authoritative online snapshot and rolls back the whole restore/reconciliation on failure. Native upgrade makes a local safety copy before migration 8.
+
 ## Native IPC
 
 - `access_status` -> `{ state: 'locked'|'checking'|'online'|'offline', device_id: string|null, device_name: string|null, expires_at: number|null, error: string|null }`.
@@ -92,13 +102,13 @@ The additive v7 migration supplies time-confirmation, remote address and quote-d
 - Clients retain integer IDs/private `notes`; add `remote_id`, `account_id`, `email`, `cloud_revision`, `disabled`.
 - Appointments retain integer IDs/private `notes`, links and series; rebuild status CHECK to canonical BookingStatus. Legacy booked/paid -> confirmed, retaining transaction_id. Add `remote_id`, `service_id`, `customer_notes`, `cloud_revision`, `proposed_date`, `proposed_start_time`, `service_name`.
 - Unique nullable remote IDs. Cloud upserts preserve integer IDs, private notes and transaction links. Local paid amount comes from linked transaction, not quote.
-- Add cloud_services, cloud_blocks and cloud_settings JSON cache and sync_state cursor. Keep service/category mapping in categories `service_id` (nullable, unique for income categories).
+- Add cloud_services, cloud_blocks and cloud_settings JSON cache and sync_state cursor. The original v6 service/category mapping in categories `service_id` is superseded by v8's catalogue-first model.
 - Apply mirror records and cursor in one db_batch. Backup v3 excludes credentials, leases/codes and sync_state; restore old versions safely, then rebuild authoritative cloud mirror without uploading old decisions.
 
 ## Accounting and Availability
 
 - Only confirmed/unpaid appointments count as owed. Payment creation/linking is atomic, idempotent, local. Cancel/no-show never delete income. Unpay does not change booking status.
-- Updating a ledger amount never edits a shared quote. Customer notes never receive old staff notes.
+- Updating a ledger amount never edits a shared quote. Changing a service price never changes an existing payment or booking. Customer notes never receive old staff notes.
 - Opening hours default to draft 09:00-17:00 daily, booking disabled until reviewed. All service intervals must fit opening hours; capacity one, zero buffer, adjacent bookings allowed.
 - Pending requests do not reserve. Confirmed and time-off intervals conflict atomically. Proposed reschedule holds original interval; only approval changes it.
 - Local mutation methods for shared records always call server before mirror update. Offline shared edits are disabled. Local-only finance remains available while lease valid.

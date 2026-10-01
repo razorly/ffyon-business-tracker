@@ -47,6 +47,11 @@ fn legacy_version(conn: &Connection) -> rusqlite::Result<i64> {
     if !has_table(conn, "clients")? {
         return Ok(0);
     }
+    if has_column(conn, "transactions", "category_name_snapshot")?
+        && has_column(conn, "categories", "income_kind")?
+    {
+        return Ok(8);
+    }
     if has_column(conn, "appointments", "time_confirmed")? {
         return Ok(7);
     }
@@ -92,12 +97,14 @@ fn open(path: &Path) -> Result<DatabaseState, String> {
         legacy_version(&conn)
     }
     .map_err(|e| e.to_string())?;
-    if legacy && version < 7 {
+    if legacy && version < 8 {
         let stamp = crate::access::now_seconds();
         let upgrade = if version < 6 {
             "cloud"
-        } else {
+        } else if version < 7 {
             "booking-features"
+        } else {
+            "catalogue"
         };
         let backup = path.with_file_name(format!(
             "ffyon-pre-{upgrade}-{stamp}-{}.db",
@@ -536,7 +543,7 @@ mod tests {
     #[test]
     fn metadata_less_v7_is_detected_without_repeating_migration_or_backup() {
         let conn = Connection::open_in_memory().unwrap();
-        for migration in crate::migrations() {
+        for migration in crate::migrations().into_iter().take(7) {
             conn.execute_batch(migration.sql).unwrap();
         }
         assert_eq!(legacy_version(&conn).unwrap(), 7);
@@ -544,6 +551,54 @@ mod tests {
             .prepare("SELECT saved_address,saved_postcode FROM clients")
             .is_ok());
         assert!(!has_table(&conn, "_ffyon_migrations").unwrap());
+    }
+
+    #[test]
+    fn v7_catalogue_upgrade_keeps_history_and_is_backed_up_once() {
+        let dir = std::env::temp_dir().join(format!("ffyon-catalogue-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ffyon.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            for migration in crate::migrations().into_iter().take(7) {
+                conn.execute_batch(migration.sql).unwrap();
+            }
+            conn.execute_batch("UPDATE categories SET name='Original treatment',service_id='mapped-service' WHERE id=1;
+                INSERT INTO transactions(type,date,amount_pence,category_id) VALUES ('income','2026-10-01',2315,1);
+                INSERT INTO appointments(date,start_time,category_id,service_id,service_name,status,transaction_id)
+                VALUES ('2026-10-01','09:00',1,'booked-service','Agreed treatment','confirmed',1);").unwrap();
+        }
+        for _ in 0..2 {
+            let state = open(&path).unwrap();
+            let conn = state.0.lock().unwrap();
+            let payment: (i64, String, String, String, String) = conn.query_row(
+                "SELECT amount_pence,service_id,service_name,category_name_snapshot,income_kind FROM transactions WHERE id=1",
+                [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?)),
+            ).unwrap();
+            assert_eq!(payment, (2315,"booked-service".into(),"Agreed treatment".into(),"Original treatment".into(),"service".into()));
+        }
+        let backups: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten()
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with("ffyon-pre-catalogue-")).collect();
+        assert_eq!(backups.len(), 1);
+        assert_eq!(legacy_version(&Connection::open(backups[0].path()).unwrap()).unwrap(), 7);
+        assert!(dir.starts_with(std::env::temp_dir()));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn metadata_less_v8_is_detected_and_does_not_replay_schema() {
+        let dir = std::env::temp_dir().join(format!("ffyon-catalogue-detection-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ffyon.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            for migration in crate::migrations() { conn.execute_batch(migration.sql).unwrap(); }
+            assert_eq!(legacy_version(&conn).unwrap(), 8);
+        }
+        for _ in 0..2 { drop(open(&path).unwrap()); }
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        assert!(dir.starts_with(std::env::temp_dir()));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

@@ -25,10 +25,16 @@ const EVT_BACKUP: &str = "tray://backup";
 const EVT_ASK_CLOSE: &str = "tray://ask-close";
 
 /// One clickable line the front end has asked for. `id` is whatever it wants
-/// handed back — a category or an appointment.
+/// handed back — an appointment.
 #[derive(Debug, Clone, Deserialize)]
 pub struct TrayItem {
     pub id: i64,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TrayServiceItem {
+    pub id: String,
     pub label: String,
 }
 
@@ -39,8 +45,8 @@ pub struct TrayState {
     pub tooltip: String,
     /// Today at a glance, greyed out at the top of the menu.
     pub lines: Vec<String>,
-    /// Services with a usual price: one click books the money in.
-    pub quick_add: Vec<TrayItem>,
+    /// Active shared services: one click records a standalone payment.
+    pub quick_add: Vec<TrayServiceItem>,
     /// Appointments that have happened and are still waiting to be marked paid.
     pub mark_paid: Vec<TrayItem>,
     /// Only offered once a backup folder has been chosen.
@@ -92,9 +98,12 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>, state: &TrayState) -> tauri::Resul
     if !state.quick_add.is_empty() {
         let sub = Submenu::with_id(app, "quick-add", "Quick add", true)?;
         for item in &state.quick_add {
+            if !valid_service_id(&item.id) {
+                continue;
+            }
             sub.append(&MenuItem::with_id(
                 app,
-                format!("quick:{}", item.id),
+                format!("service:{}", item.id),
                 &item.label,
                 true,
                 None::<&str>,
@@ -174,7 +183,7 @@ fn on_menu<R: Runtime>(app: &AppHandle<R>, id: &str) {
         "quit" => app.exit(0),
         other => {
             // The window stays where it is: these are the one-click actions.
-            if let Some(id) = parse_id(other, "quick:") {
+            if let Some(id) = parse_service_id(other) {
                 let _ = app.emit(EVT_QUICK_ADD, id);
             } else if let Some(id) = parse_id(other, "paid:") {
                 let _ = app.emit(EVT_MARK_PAID, id);
@@ -185,6 +194,39 @@ fn on_menu<R: Runtime>(app: &AppHandle<R>, id: &str) {
 
 fn parse_id(menu_id: &str, prefix: &str) -> Option<i64> {
     menu_id.strip_prefix(prefix)?.parse().ok()
+}
+
+fn valid_service_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+}
+
+fn parse_service_id(menu_id: &str) -> Option<&str> {
+    let id = menu_id.strip_prefix("service:")?;
+    valid_service_id(id).then_some(id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_id, parse_service_id};
+
+    #[test]
+    fn service_menu_ids_keep_string_identifiers_separate_from_appointments() {
+        let id = "00000000-0000-4000-8000-000000000501";
+        assert_eq!(parse_service_id(&format!("service:{id}")), Some(id));
+        assert_eq!(parse_service_id("paid:42"), None);
+        assert_eq!(parse_id("paid:42", "paid:"), Some(42));
+        assert_eq!(parse_id(&format!("service:{id}"), "paid:"), None);
+    }
+
+    #[test]
+    fn malformed_service_menu_ids_are_rejected() {
+        for id in ["service:", "service:../42", "service:42:paid", "quick:42", "service:a b"] {
+            assert_eq!(parse_service_id(id), None);
+        }
+        assert_eq!(parse_service_id(&format!("service:{}", "a".repeat(129))), None);
+    }
 }
 
 fn on_tray_event<R: Runtime>(tray: &TrayIcon<R>, event: TrayIconEvent) {

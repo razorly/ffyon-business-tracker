@@ -376,7 +376,6 @@ test("lost import responses retry the same operation and retain paid local ident
   const fixture = fixtureDatabase();
   try {
     seedAppointment(fixture, { paid: true });
-    fixture.execute("UPDATE categories SET service_id = 'fixture-service' WHERE id = 1");
     fixture.execute("INSERT INTO cloud_services(id, data) VALUES ('fixture-service', ?)", [JSON.stringify({ id: "fixture-service", name: "Booked treatment", description: "Fixture", duration_min: 30, price_pence: 2500, active: true, revision: 1 })]);
     const imports = [];
     let lost = true;
@@ -400,6 +399,8 @@ test("lost import responses retry the same operation and retain paid local ident
       throw new Error(`Unexpected fixture admin operation: ${operation}`);
     };
     const sync = await application(fixture, "src/lib/sync.ts");
+    const app = await application(fixture);
+    await app.resolveLegacyIncomeCategory(1, "fixture-service");
     const selection = { clientIds: [101], appointmentIds: [301] };
     await assert.rejects(sync.importLegacyRecords(selection), /Fixture lost the committed import response/);
     assert.equal(fixture.select("SELECT transaction_id FROM appointments WHERE id = 301")[0].transaction_id, 201);
@@ -481,7 +482,7 @@ test("backups export only business data and accept legacy payment linkage safely
     seedAppointment(fixture, { paid: true });
     const app = await application(fixture);
     const backup = normalize(await app.exportAll());
-    assert.equal(backup.version, 3);
+    assert.equal(backup.version, 4);
     assert.deepEqual(Object.keys(backup).sort(), ["app", "appointments", "categories", "clients", "exported_at", "transactions", "version"]);
     assert.equal(app.validateBackup(backup), true, "The app's own exported data must be restorable");
     const legacy = { ...backup, version: 2, appointments: backup.appointments.map((row) => ({ ...row, status: "paid" })) };

@@ -2,6 +2,7 @@ import { ArrowDownLeft, ArrowUpRight } from "lucide-react";
 import type { TransactionRow } from "@/lib/db";
 import { useData } from "@/lib/data";
 import { money, shortDate } from "@/lib/format";
+import { transactionKindLabel, transactionLabel } from "@/lib/income-display";
 import { cn } from "@/lib/utils";
 
 /** Compact list of entries (dashboard recent, client history). Click to edit. */
@@ -27,10 +28,10 @@ export function TransactionList({ rows, showDate = true }: { rows: TransactionRo
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[13.5px] font-medium">
-                  {t.client_name ?? t.category_name ?? (income ? "Income" : "Expense")}
+                  {t.client_name ?? transactionLabel(t)}
                 </span>
                 <span className="block truncate text-[12px] text-muted">
-                  {[showDate && shortDate(t.date), t.client_name ? t.category_name : null, t.description]
+                  {[showDate && shortDate(t.date), t.client_name ? transactionLabel(t) : transactionKindLabel(t), t.description]
                     .filter(Boolean)
                     .join(" · ")}
                 </span>

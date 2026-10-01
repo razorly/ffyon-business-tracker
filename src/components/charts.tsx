@@ -230,6 +230,7 @@ export function DailyBars({ data }: { data: DayPoint[] }) {
 // ---------- Category donut ----------
 
 export interface Slice {
+  key?: string;
   name: string;
   value: number;
   colour: string;
@@ -264,8 +265,8 @@ export function CategoryDonut({ data, centreLabel }: { data: Slice[]; centreLabe
               startAngle={90}
               endAngle={-270}
             >
-              {data.map((d) => (
-                <Cell key={d.name} fill={d.colour} />
+              {data.map((d, index) => (
+                <Cell key={d.key ?? `${index}:${d.name}`} fill={d.colour} />
               ))}
             </Pie>
             <Tooltip
@@ -280,8 +281,8 @@ export function CategoryDonut({ data, centreLabel }: { data: Slice[]; centreLabe
         </ResponsiveContainer>
       </div>
       <ul className="w-full space-y-2">
-        {data.map((d) => (
-          <li key={d.name} className="flex items-center justify-between gap-3 text-[13px]">
+        {data.map((d, index) => (
+          <li key={d.key ?? `${index}:${d.name}`} className="flex items-center justify-between gap-3 text-[13px]">
             <span className="flex min-w-0 items-center gap-2 text-ink-2">
               <Swatch colour={d.colour} />
               <span className="truncate">{d.name}</span>

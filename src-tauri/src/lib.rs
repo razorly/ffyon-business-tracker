@@ -198,6 +198,35 @@ fn migrations() -> Vec<Migration> {
             ALTER TABLE appointments ADD COLUMN discount_percent INTEGER NOT NULL DEFAULT 0 CHECK(discount_percent BETWEEN 0 AND 100);
             UPDATE appointments SET base_price_pence=price_pence;
         "#,
+    },
+    Migration {
+        version: 8,
+        sql: r#"
+            ALTER TABLE categories ADD COLUMN income_kind TEXT NOT NULL DEFAULT 'legacy' CHECK(income_kind IN ('legacy','service','other'));
+            ALTER TABLE transactions ADD COLUMN service_id TEXT;
+            ALTER TABLE transactions ADD COLUMN service_name TEXT NOT NULL DEFAULT '';
+            ALTER TABLE transactions ADD COLUMN category_name_snapshot TEXT NOT NULL DEFAULT '';
+            ALTER TABLE transactions ADD COLUMN income_kind TEXT CHECK(income_kind IS NULL OR income_kind IN ('legacy','service','other'));
+            DROP INDEX IF EXISTS idx_categories_service;
+            CREATE INDEX idx_categories_service ON categories(service_id) WHERE service_id IS NOT NULL AND type='income';
+            UPDATE categories SET income_kind='service' WHERE type='income' AND service_id IS NOT NULL;
+            UPDATE transactions SET category_name_snapshot=COALESCE((SELECT name FROM categories WHERE id=transactions.category_id),'');
+            UPDATE transactions SET
+                service_id=CASE WHEN EXISTS(SELECT 1 FROM appointments WHERE transaction_id=transactions.id AND (service_id IS NOT NULL OR COALESCE(service_name,'')!=''))
+                    THEN (SELECT service_id FROM appointments WHERE transaction_id=transactions.id AND (service_id IS NOT NULL OR COALESCE(service_name,'')!='') ORDER BY id LIMIT 1)
+                    ELSE (SELECT service_id FROM categories WHERE id=transactions.category_id AND type='income') END,
+                service_name=COALESCE((SELECT NULLIF(service_name,'') FROM appointments WHERE transaction_id=transactions.id AND (service_id IS NOT NULL OR COALESCE(service_name,'')!='') ORDER BY id LIMIT 1),
+                    NULLIF(category_name_snapshot,''),'')
+                WHERE type='income' AND (EXISTS(SELECT 1 FROM appointments WHERE transaction_id=transactions.id AND (service_id IS NOT NULL OR COALESCE(service_name,'')!=''))
+                    OR EXISTS(SELECT 1 FROM categories WHERE id=transactions.category_id AND type='income' AND service_id IS NOT NULL));
+            UPDATE appointments SET
+                service_id=(SELECT service_id FROM categories WHERE id=appointments.category_id AND type='income'),
+                service_name=COALESCE(NULLIF(service_name,''),(SELECT name FROM categories WHERE id=appointments.category_id),'')
+                WHERE remote_id IS NULL AND service_id IS NULL AND COALESCE(service_name,'')='' AND EXISTS(SELECT 1 FROM categories WHERE id=appointments.category_id AND type='income' AND service_id IS NOT NULL);
+            UPDATE transactions SET income_kind=CASE WHEN service_id IS NOT NULL OR service_name!='' THEN 'service'
+                ELSE (SELECT income_kind FROM categories WHERE id=transactions.category_id AND type='income') END WHERE type='income';
+            CREATE INDEX idx_transactions_service ON transactions(service_id) WHERE service_id IS NOT NULL AND type='income';
+        "#,
     }]
 }
 

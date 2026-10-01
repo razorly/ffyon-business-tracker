@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const rootUrl = process.env.FFYON_FEATURES_ROOT_URL;
@@ -9,7 +10,7 @@ const siteUrl = process.env.FFYON_FEATURES_SITE_URL;
 
 // Opt-in browser QA: loopback servers, disposable IPC/HTTP fixtures, no live writes.
 // Set FFYON_PLAYWRIGHT_PATH for a bundled runtime and optional FFYON_BROWSER_CHANNEL.
-if (rootUrl || siteUrl) await run();
+if ((rootUrl || siteUrl) && process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await run();
 
 async function run() {
   for (const url of [rootUrl, siteUrl].filter(Boolean)) assertLocal(url);
@@ -26,11 +27,11 @@ async function run() {
   } finally { await browser.close(); }
 }
 
-function assertLocal(url) {
+export function assertLocal(url) {
   assert.ok(["127.0.0.1", "localhost", "[::1]"].includes(new URL(url).hostname), "Feature QA forbids production servers");
 }
 
-async function assertFits(page) {
+export async function assertFits(page) {
   const size = await page.evaluate(() => ({ width: innerWidth, content: document.documentElement.scrollWidth }));
   assert.ok(size.content <= size.width + 1, `Page overflow: ${JSON.stringify(size)}`);
   const overflows = await page.evaluate(() => [...document.querySelectorAll("form, [role=dialog]")].map(element => ({
@@ -44,12 +45,12 @@ async function assertFits(page) {
   assert.deepEqual(outside, [], "Form controls must remain within the viewport");
 }
 
-async function capture(page, output, name) {
+export async function capture(page, output, name) {
   await assertFits(page);
   await page.screenshot({ path: resolve(output, name), fullPage: true, animations: "disabled" });
 }
 
-async function installDesktopFixture(page, records) {
+export async function installDesktopFixture(page, records) {
   const { default: initSqlJs } = await import("sql.js");
   const SQL = await initSqlJs();
   const sqlite = new SQL.Database();
@@ -140,7 +141,11 @@ async function installDesktopFixture(page, records) {
         }
       } else if (args.operation === "services") {
         const service = records.services.find(item => item.id === value.id);
-        Object.assign(service, value, { revision: service.revision + 1 });
+        if (service) Object.assign(service, value, { revision: service.revision + 1 });
+        else if (args.method === "POST") records.services.push({ ...value, revision: 1 });
+        else throw new Error("Expected a fixture service");
+        const saved = records.services.find(item => item.id === value.id);
+        saved.booking_price_pence = Math.round(saved.price_pence * (100 - (saved.discount_percent ?? 0)) / 100);
       } else if (args.operation === "clients") {
         if (args.method === "POST") records.clients.push({ ...value, account_id: null, merged_into: null, disabled: false, revision: 1, updated_at: now });
         else if (args.method === "DELETE") {
@@ -152,7 +157,7 @@ async function installDesktopFixture(page, records) {
       return { ok: true };
     }
     if (command === "plugin:updater|check") return null;
-    if (command.includes("listen") || command.includes("register") || command === "sync_tray" || command === "set_close_action") return null;
+    if (command.includes("listen") || command.includes("register") || command === "sync_tray" || command === "set_tray_state" || command === "set_close_action") return null;
     throw new Error(`Unexpected feature IPC command: ${command}`);
   });
   await page.addInitScript(() => {

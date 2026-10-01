@@ -4,11 +4,11 @@ A small desktop app for tracking income and outgoings for a tanning business. It
 
 - **Dashboard**: shows this month's profit, money in and money out (each compared with last month) and clients this month. It also has a 12-month income vs expenses chart, a monthly profit chart, a tax-year total, income by service, and recent entries.
 - **Schedule**: a calendar of appointments, in day, week or month view. Click any empty time to book one; click an appointment to open it. Regulars can be booked as a repeat (every week up to every 4 weeks), and an appointment can be marked cancelled or a no-show. Booking changes nothing about the money — an appointment only becomes an income entry when it's marked **paid**, and anything past that hasn't been marked paid is listed under **Money you're owed**.
-- **New entry**: press **Ctrl/⌘ + N** anywhere. Enter the amount, date, category, client and a note. Typing a new client name creates the client automatically. A category with a usual price fills the amount in for you, and you can type over it.
+- **New entry**: press **Ctrl/⌘ + N** anywhere. Record a service payment, pay an existing appointment, or record other income. Standalone payments do not create bookings. Choose an optional client and note, and enter the actual amount received. Expenses keep their own categories and usual amounts.
 - **Monthly view**: step through the months. It shows the month's totals, a day-by-day chart, and a table of entries you can search, filter and sort, with edit and delete.
 - **Clients**: shows visits, total spent and last visit for each client, plus their full history.
-- **Tray**: while the app is running it also sits in the system tray (the menu bar on a Mac), with today's takings, the next appointment, one-click **Quick add** for your usual prices, and **Mark paid** for anything waiting. **Ctrl/⌘ + Shift + N** opens a new entry from whatever else you're in.
-- **Settings**: manage income and expense categories (each can have an optional usual price), export to Excel or CSV (with tax-year presets), save and restore backups, turn on automatic backups, choose what the tray does, check for updates, and switch between light and dark mode.
+- **Tray**: while the app is running it also sits in the system tray (the menu bar on a Mac), with today's takings, the next appointment, one-click **Quick add** for active services at their current discounted prices, and **Mark paid** for anything waiting. **Ctrl/⌘ + Shift + N** opens a new entry from whatever else you're in.
+- **Settings**: manage the shared Services catalogue, other-income labels, expense categories and explicit legacy income review. Export to Excel or CSV (with tax-year presets), save and restore backups, turn on automatic backups, choose what the tray does, check for updates, and switch between light and dark mode.
 
 Local financial entry and category deletion offers **Undo**. Shared appointment/account deletion is permanent privacy cleanup with no undo: it removes personal booking details while retaining anonymized recorded payments. Cancellation and disabling an account remain separate actions.
 
@@ -18,9 +18,11 @@ See [Admin setup](docs/admin-setup.md) for Windows/macOS pairing, device access 
 
 Customer requests need admin approval; manual entries are confirmed directly. Date-only bookings show **Time to confirm** all day without blocking slots. Home visits require an address and postcode, with optional saved addresses and an on-demand postcode map. Service discounts synchronize to the website without changing existing quotes. Shared settings configure admin request emails; the website sends customer status updates through its private hosted Resend configuration. Deletion sends no email.
 
-### Usual prices
+### Services and payment defaults
 
-A category can store a usual price (Settings → edit a category). It only ever prefills the amount box on a **new** entry, and only while you haven't typed an amount yourself. Entries store their own amount, so raising the price later changes what the next entry suggests and never rewrites anything already saved.
+Services are the single treatment catalogue for the website, bookings, service payments, tray shortcuts and reports. Set the name, duration, base price and optional discount once in **Settings > Services**. New payments suggest the current discounted price, but the actual amount received remains editable. Existing bookings and payments keep their saved names, quotes and amounts when a service is renamed or archived.
+
+Use **Other income** for tips, product sales and other non-treatment receipts. Expense categories can still store a usual amount to prefill new expenses. Neither list duplicates service prices. After upgrading, **Legacy income review** reuses existing explicit links and asks you to classify unmatched old labels without guessing by name. Review local financial records separately on each computer.
 
 ### Appointments and money
 
@@ -41,7 +43,7 @@ Repeating bookings are just ordinary appointments that know about each other. Ed
 While Ffyon is running there's an icon in the system tray — the menu bar on a Mac. Clicking it brings the window back or puts it away again; the menu does the day's small jobs without it:
 
 - **Today** — what's come in, what's gone out, and what's next in the diary.
-- **Quick add** — one line for every service with a usual price (Settings → edit a category). Clicking one records an income entry for that price, dated today. The message offers **Undo**, or **Add details** to put a client and a note on it.
+- **Quick add** — one line for each active service with a positive discounted price. Clicking one records a standalone payment at its current cached price, dated today, without creating an appointment. The message offers **Undo**, or **Add details** to put a client and a note on it. Archived services are not offered for new payments.
 - **Mark paid** — today's bookings and anything overdue. It's the same money moment as pressing Mark paid in the diary, undo included. A booking with no price yet opens instead of guessing one.
 - **Back up now** — once automatic backups have a folder.
 
@@ -52,6 +54,8 @@ When the window is out of sight, anything done from the tray says so with a noti
 ### Backups
 
 **Settings → Save backup** writes a file wherever you choose. **Automatic backups** does it on its own: pick a folder once — ideally one that syncs, like OneDrive or iCloud Drive — and the app writes a dated copy there the first time it's opened each day, keeping the last 10. Restoring is the same either way.
+
+Backup format 4 retains saved service/payment attribution and legacy classifications; formats 1-3 remain readable. Credentials are never included. The catalogue upgrade makes a local database safety copy before migration.
 
 ### Updates
 

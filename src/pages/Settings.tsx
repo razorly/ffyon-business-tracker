@@ -6,6 +6,7 @@ import {
   createCategory,
   deleteCategory,
   listCategories,
+  listOtherIncomeCategories,
   updateCategory,
   wipeAll,
   type Category,
@@ -44,6 +45,7 @@ import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/Layout";
 import { SiteConnection } from "@/components/SiteConnection";
 import { SiteBusinessSettings } from "@/components/SiteBusinessSettings";
+import { LegacyIncomeReview } from "@/components/LegacyIncomeReview";
 import { Button, Card, CardHeader, ConfirmModal, Field, Input, Modal, Segmented, Select, Swatch } from "@/components/ui";
 
 export function Settings() {
@@ -53,6 +55,7 @@ export function Settings() {
       <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
         <SiteConnection />
         <SiteBusinessSettings />
+        <LegacyIncomeReview />
         <CategoriesCard type="income" />
         <CategoriesCard type="expense" />
         <ExportCard />
@@ -70,18 +73,18 @@ export function Settings() {
 function CategoriesCard({ type }: { type: TxType }) {
   const { refresh } = useData();
   const { dark } = useTheme();
-  const [cats] = useLoad(() => listCategories(type), [type], []);
+  const [cats] = useLoad(() => type === "income" ? listOtherIncomeCategories() : listCategories(type), [type], []);
   const [editing, setEditing] = useState<Partial<Category> | null>(null);
   const [toDelete, setToDelete] = useState<{ cat: Category; uses: number } | null>(null);
 
   return (
     <Card>
       <CardHeader
-        title={type === "income" ? "Income categories" : "Expense categories"}
-        subtitle={type === "income" ? "The services and products you sell" : "What you spend money on"}
+        title={type === "income" ? "Other income" : "Expense categories"}
+        subtitle={type === "income" ? "Tips and product sales" : "What you spend money on"}
         action={
-          <Button size="sm" onClick={() =>
-              setEditing({ name: "", type, colour: nextColour(cats.map((c) => c.colour)), default_pence: null })
+          <Button size="sm" aria-label={type === "income" ? "Add other income" : "Add expense category"} onClick={() =>
+              setEditing({ name: "", type, colour: nextColour(cats.map((c) => c.colour)), default_pence: null, income_kind: type === "income" ? "other" : undefined })
             }>
             <Plus size={14} /> Add
           </Button>
@@ -89,23 +92,24 @@ function CategoriesCard({ type }: { type: TxType }) {
       />
       <ul className="divide-y divide-line px-2 pb-2">
         {cats.map((c) => (
-          <li key={c.id} className="group flex items-center justify-between rounded-lg px-3 py-2">
-            <span className="flex items-center gap-2.5 text-sm">
+          <li key={c.id} className="group flex items-center justify-between gap-2 rounded-lg px-3 py-2">
+            <span className="flex min-w-0 flex-wrap items-center gap-2.5 break-words text-sm">
               <Swatch colour={themedColour(c.colour, dark)} className="h-3 w-3" /> {c.name}
-              {c.default_pence != null && (
+              {type === "expense" && c.default_pence != null && (
                 <span className="tabular rounded-full bg-surface-2 px-2 py-0.5 text-[12px] text-ink-2">
                   {money(c.default_pence)}
                 </span>
               )}
             </span>
-            <span className="flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-              <Button variant="ghost" size="icon" onClick={() => setEditing(c)} aria-label={`Edit ${c.name}`}>
+            <span className="flex shrink-0 gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+              <Button variant="ghost" size="icon" onClick={() => setEditing(c)} title={`Edit ${c.name}`} aria-label={`Edit ${c.name}`}>
                 <Pencil size={14} />
               </Button>
               <Button
                 variant="ghost"
                 size="icon"
                 aria-label={`Delete ${c.name}`}
+                title={`Delete ${c.name}`}
                 onClick={async () => setToDelete({ cat: c, uses: await categoryUsage(c.id) })}
               >
                 <Trash2 size={14} />
@@ -126,11 +130,11 @@ function CategoriesCard({ type }: { type: TxType }) {
       <ConfirmModal
         open={!!toDelete}
         onClose={() => setToDelete(null)}
-        title="Delete category?"
+        title={type === "income" ? "Delete other income item?" : "Delete category?"}
         message={
           <>
             <b>{toDelete?.cat.name}</b> will be removed.
-            {toDelete?.uses ? ` ${toDelete.uses} existing entries will become “Uncategorised”.` : " It isn't used by any entries."}
+            {toDelete?.uses ? ` ${toDelete.uses} recorded entries keep their amounts and saved labels.` : " It isn't used by any entries."}
           </>
         }
         onConfirm={async () => {
@@ -156,55 +160,63 @@ function CategoryForm({
   const [name, setName] = useState("");
   const [colour, setColour] = useState(PALETTE[0].light);
   const [usual, setUsual] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   const [last, setLast] = useState<typeof category>(null);
   if (category !== last) {
     setLast(category);
     setName(category?.name ?? "");
     setColour(category?.colour ?? PALETTE[0].light);
     setUsual(category?.default_pence != null ? penceToInput(category.default_pence) : "");
+    setError("");
   }
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!category || !name.trim()) return;
-    const defaultPence = usual.trim() ? parseAmount(usual) : null;
-    if (usual.trim() && defaultPence == null) return;
-    if (category.id) {
-      await updateCategory({ ...(category as Category), name: name.trim(), colour, default_pence: defaultPence });
-    } else {
-      await createCategory({ name: name.trim(), type: category.type!, colour, default_pence: defaultPence });
-    }
-    toast.success(category.id ? "Category updated" : "Category added");
-    onSaved();
+    if (!category || !name.trim() || busy) return;
+    const defaultPence = category.type === "expense" && usual.trim() ? parseAmount(usual) : null;
+    if (category.type === "expense" && usual.trim() && defaultPence == null) return;
+    setBusy(true);
+    setError("");
+    try {
+      if (category.id) {
+        await updateCategory({ ...(category as Category), name: name.trim(), colour, default_pence: defaultPence });
+      } else {
+        await createCategory({ name: name.trim(), type: category.type!, colour, default_pence: defaultPence, ...(category.type === "income" ? { income_kind: "other" as const } : {}) });
+      }
+      toast.success(category.type === "income" ? category.id ? "Other income updated" : "Other income added" : category.id ? "Category updated" : "Category added");
+      onSaved();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "The item could not be saved.");
+    } finally { setBusy(false); }
   };
 
   return (
-    <Modal open={!!category} onClose={onClose} title={category?.id ? "Edit category" : "New category"} width="max-w-sm">
+    <Modal open={!!category} onClose={() => { if (!busy) onClose(); }} title={category?.type === "income" ? category?.id ? "Edit other income" : "Add other income" : category?.id ? "Edit expense category" : "Add expense category"} width="max-w-sm">
       <form onSubmit={submit} className="space-y-4">
         <Field label="Name">
-          <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Rapid Tan" />
+          <Input autoFocus required maxLength={100} disabled={busy} value={name} onChange={(e) => setName(e.target.value)} placeholder={category?.type === "income" ? "e.g. Tips" : "e.g. Supplies"} />
         </Field>
-        <Field
-          label="Usual price (optional)"
-          hint="Fills in the amount when you pick this category on a new entry. Change it any time — entries you've already saved keep their own amount."
-        >
+        {category?.type === "expense" && <Field label="Usual amount (optional)">
           <div className="relative">
             <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted">£</span>
             <Input
               inputMode="decimal"
+              disabled={busy}
               placeholder="Leave blank for none"
               className="pl-7 tabular"
               value={usual}
               onChange={(e) => setUsual(e.target.value)}
             />
           </div>
-        </Field>
+        </Field>}
         <Field label="Colour">
           <div className="flex flex-wrap gap-2">
             {PALETTE.map((p) => (
               <button
                 key={p.light}
                 type="button"
+                disabled={busy}
                 title={p.name}
                 onClick={() => setColour(p.light)}
                 className={cn(
@@ -218,12 +230,13 @@ function CategoryForm({
             ))}
           </div>
         </Field>
+        {error && <p className="text-sm text-bad" role="alert">{error}</p>}
         <div className="flex justify-end gap-2">
-          <Button type="button" onClick={onClose}>
+          <Button type="button" disabled={busy} onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" variant="primary" disabled={!name.trim()}>
-            Save
+          <Button type="submit" variant="primary" disabled={!name.trim() || busy}>
+            {busy ? "Saving..." : "Save"}
           </Button>
         </div>
       </form>
@@ -406,7 +419,7 @@ function BackupCard() {
 
         <div className="border-t border-line pt-4">
           <div className="text-[13px] font-medium">Start fresh</div>
-          <p className="mt-0.5 text-xs text-muted">Delete all entries, appointments and clients (categories are kept).</p>
+          <p className="mt-0.5 text-xs text-muted">Delete all entries, appointments and clients. Services, other income and expense categories are kept.</p>
           <Button variant="ghost" className="mt-2 -ml-2 text-bad" onClick={() => setConfirmWipe(true)}>
             <Trash2 size={15} /> Delete all data…
           </Button>
@@ -493,7 +506,7 @@ function TrayCard() {
         <div>
           <div className="text-[13px] font-medium">Closing the window</div>
           <p className="mt-0.5 mb-2 text-xs text-muted">
-            Left in the {where}, it's one click to book a tan in, and the daily backup still runs.
+            Left in the {where}, it's one click to record a service payment, and the daily backup still runs.
           </p>
           <Segmented<CloseAction>
             className="w-full flex-col rounded-xl sm:flex-row sm:rounded-full"
@@ -524,8 +537,7 @@ function TrayCard() {
         </div>
 
         <p className="text-xs text-muted">
-          The menu shows today's takings and what's next, books in any service with a usual price in one click, and
-          lists appointments still waiting to be marked paid.
+          Today's takings, active services at their current prices, and appointments awaiting payment.
           {!isTauri() && " (Only in the desktop app.)"}
         </p>
       </div>

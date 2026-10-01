@@ -9,7 +9,6 @@ import {
   deleteAppointment,
   deleteAppointmentSeries,
   getAppointment,
-  listCategories,
   listClients,
   markAppointmentPaid,
   markAppointmentUnpaid,
@@ -18,7 +17,6 @@ import {
   updateAppointment,
   type AppointmentRow,
   type AppointmentStatus,
-  type Category,
   type Client,
 } from "@/lib/db";
 import { useData } from "@/lib/data";
@@ -69,7 +67,6 @@ export function AppointmentDialog() {
   const [postcode, setPostcode] = useState("");
   const [saveAddress, setSaveAddress] = useState(false);
   const [duration, setDuration] = useState(DEFAULT_DURATION);
-  const [categoryId, setCategoryId] = useState("");
   const [serviceId, setServiceId] = useState("");
   const [services, setServices] = useState<CloudService[]>([]);
   const [client, setClient] = useState<ClientChoice>({ id: null, name: "" });
@@ -79,7 +76,6 @@ export function AppointmentDialog() {
   const [customerNotes, setCustomerNotes] = useState("");
   const [repeatDays, setRepeatDays] = useState(0);
   const [repeatTimes, setRepeatTimes] = useState(4);
-  const [categories, setCategories] = useState<Category[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [error, setError] = useState<string | null>(null);
   // true while the price box still holds a service's usual price the user hasn't touched
@@ -95,13 +91,11 @@ export function AppointmentDialog() {
   useEffect(() => {
     if (!open) return;
     let alive = true;
-    Promise.all([listCategories("income"), listClients(), listServices()]).then(([cats, cls, catalog]) => {
+    Promise.all([listClients(), listServices()]).then(([cls, catalog]) => {
       if (!alive) return;
-      setCategories(cats);
       setClients(cls);
       setServices(catalog);
       const firstService = catalog.find((s) => s.active);
-      const first = cats.find((c) => c.service_id === firstService?.id) ?? cats[0];
       setServiceId(editing ? editing.service_id ?? "" : firstService?.id ?? "");
       setDate(editing?.date ?? draft?.date ?? "");
       setStart(editing?.start_time ?? draft?.start_time ?? "09:00");
@@ -111,9 +105,8 @@ export function AppointmentDialog() {
       setPostcode(editing?.visit_postcode ?? "");
       setSaveAddress(false);
       setDuration(editing?.duration_min ?? firstService?.duration_min ?? DEFAULT_DURATION);
-      setCategoryId(editing ? String(editing.category_id ?? "") : String(first?.id ?? ""));
       // A service's usual price only ever prefills a new booking.
-      const usual = editing ? null : (firstService ? serviceDiscountPrice(firstService.price_pence, firstService.discount_percent ?? 0) : first?.default_pence ?? null);
+      const usual = !editing && firstService ? serviceDiscountPrice(firstService.price_pence, firstService.discount_percent ?? 0) : null;
       setPrice(
         editing?.price_pence != null ? penceToInput(editing.price_pence) : usual != null ? penceToInput(usual) : "",
       );
@@ -134,9 +127,15 @@ export function AppointmentDialog() {
   }, [open, editing, draft]);
 
   const pickService = (id: string) => {
+    if (id === serviceId) return;
     setServiceId(id);
+    if (editing && id === (editing.service_id ?? "")) {
+      setDuration(editing.duration_min);
+      setPrice(editing.price_pence != null ? penceToInput(editing.price_pence) : "");
+      setPriceIsDefault(false);
+      return;
+    }
     const service = services.find((s) => s.id === id);
-    setCategoryId(String(categories.find((c) => c.service_id === id)?.id ?? ""));
     if (service) {
       setDuration(service.duration_min);
       setPrice(penceToInput(serviceDiscountPrice(service.price_pence, service.discount_percent ?? 0)));
@@ -150,6 +149,12 @@ export function AppointmentDialog() {
 
   /** Validates and saves. Returns the appointment id, or null if something's missing. */
   const save = async (): Promise<number | null> => {
+    const selectedService = services.find((service) => service.id === serviceId);
+    const preservesBookedService = Boolean(editing && (editing.service_id ?? "") === serviceId);
+    if (!preservesBookedService && (!selectedService || !selectedService.active)) {
+      setError("Choose an active service before booking");
+      return null;
+    }
     if (!date) {
       setError("Pick a date");
       return null;
@@ -175,7 +180,6 @@ export function AppointmentDialog() {
       clientId = await createClient({ name: client.name });
       setClient({ id: clientId, name: client.name.trim() });
     }
-    const selectedService = services.find((service) => service.id === serviceId);
     const sameQuote = editing && editing.service_id === (serviceId || null) && editing.price_pence === pence;
     const input = {
       date,
@@ -183,7 +187,7 @@ export function AppointmentDialog() {
       time_confirmed: timeConfirmed,
       duration_min: duration,
       client_id: clientId,
-      category_id: categoryId ? Number(categoryId) : null,
+      category_id: editing?.category_id ?? null,
       price_pence: pence,
       base_price_pence: sameQuote ? editing.base_price_pence : priceIsDefault && selectedService ? selectedService.price_pence : pence,
       discount_percent: sameQuote ? editing.discount_percent : priceIsDefault ? selectedService?.discount_percent ?? 0 : 0,
@@ -310,6 +314,9 @@ export function AppointmentDialog() {
   const dates = date && repeatDays ? repeatDates() : [];
   const savedClient = clients.find((item) => item.id === client.id);
   const selectedService = services.find((service) => service.id === serviceId);
+  const bookedServiceId = editing?.service_id ?? "";
+  const bookedService = services.find((service) => service.id === bookedServiceId);
+  const bookedServiceName = editing?.service_name || editing?.category_name || bookedService?.name || "Saved appointment";
   const quoteDiscount = editing && editing.service_id === (serviceId || null) && editing.price_pence === parseAmount(price)
     ? editing.discount_percent : priceIsDefault ? selectedService?.discount_percent ?? 0 : 0;
 
@@ -324,15 +331,19 @@ export function AppointmentDialog() {
 
         <Field label="Service">
           <Select value={serviceId} onChange={(e) => pickService(e.target.value)} disabled={offline}>
-            <option value="">No service selected</option>
-            {services.filter((s) => s.active || s.id === editing?.service_id).map((s) => (
+            {editing ? (
+              <option value={bookedServiceId}>
+                {bookedServiceName}{bookedServiceId && !bookedService?.active ? " (archived)" : !bookedServiceId ? " (saved booking)" : ""}
+              </option>
+            ) : <option value="" disabled>{services.some((service) => service.active) ? "Choose a service" : "No active services"}</option>}
+            {services.filter((s) => s.active && (!editing || s.id !== bookedServiceId)).map((s) => (
               <option key={s.id} value={s.id}>
-                {s.name}{!s.active ? " (archived)" : ""}
+                {s.name}
               </option>
             ))}
           </Select>
         </Field>
-        {editing?.service_name && editing.service_id === serviceId && services.find((s) => s.id === serviceId)?.name !== editing.service_name && <p className="text-xs text-muted">Booked service: {editing.service_name}</p>}
+        {editing && bookedServiceId === serviceId && bookedService?.name && bookedService.name !== bookedServiceName && <p className="text-xs text-muted">Now listed as {bookedService.name}. This booking keeps its agreed details.</p>}
 
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!timeConfirmed} disabled={offline} className="accent-accent" onChange={(event) => { setTimeConfirmed(!event.target.checked); if (!event.target.checked && start === "00:00") setStart("09:00"); }} /><Clock size={14} className="text-muted" /> Time to confirm</label>
         {!timeConfirmed && <p className="text-xs text-muted">Shown all day until a time is agreed. Other booking slots stay available.</p>}

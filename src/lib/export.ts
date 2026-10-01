@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { isBrowserFixture, requireLocalAccess } from "./access";
 import { exportAll, isTauri, listClients, listTransactions, monthlyTotals, restoreAll, validateBackup } from "./db";
 import { isoDate, monthLabel, ukDate } from "./format";
+import { transactionKind, transactionKindLabel, transactionLabel } from "./income-display";
 
 /** Save bytes via the native dialog (or a browser download in dev preview). Returns false if cancelled. */
 async function saveBytes(defaultName: string, filterName: string, ext: string, data: Uint8Array | string) {
@@ -28,7 +29,10 @@ export async function exportSpreadsheet(from: string, to: string, bookType: "xls
   const rows = txs.map((t) => ({
     Date: ukDate(t.date),
     Type: t.type === "income" ? "Income" : "Expense",
-    Category: t.category_name ?? "",
+    "Income type": t.type === "income" ? transactionKindLabel(t) : "",
+    Service: transactionKind(t) === "service" ? transactionLabel(t) : "",
+    "Other / legacy income": t.type === "income" && transactionKind(t) !== "service" ? transactionLabel(t) : "",
+    "Expense category": t.type === "expense" ? transactionLabel(t) : "",
     Client: t.client_name ?? "",
     Description: t.description ?? "",
     "Amount (£)": (t.type === "income" ? 1 : -1) * (t.amount_pence / 100),
@@ -45,7 +49,7 @@ export async function exportSpreadsheet(from: string, to: string, bookType: "xls
 
   const wb = XLSX.utils.book_new();
   const txSheet = XLSX.utils.json_to_sheet(rows);
-  txSheet["!cols"] = [{ wch: 12 }, { wch: 10 }, { wch: 18 }, { wch: 20 }, { wch: 30 }, { wch: 12 }];
+  txSheet["!cols"] = [{ wch: 12 }, { wch: 10 }, { wch: 18 }, { wch: 22 }, { wch: 22 }, { wch: 20 }, { wch: 20 }, { wch: 30 }, { wch: 12 }];
   XLSX.utils.book_append_sheet(wb, txSheet, "Transactions");
 
   const months = await monthlyTotals(from, to);

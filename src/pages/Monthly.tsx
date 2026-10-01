@@ -5,12 +5,13 @@ import { dailyTotals, deleteTransaction, listTransactions, type TransactionRow }
 import { useData, useLoad } from "@/lib/data";
 import { monthRange } from "@/lib/dates";
 import { isoDate, money, ukDate } from "@/lib/format";
+import { transactionKind, transactionKindLabel, transactionLabel, type TransactionKind } from "@/lib/income-display";
 import { themedColour } from "@/lib/palette";
 import { useTheme } from "@/lib/theme";
 import { toastDeleted } from "@/lib/undo";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/Layout";
-import { Button, Card, CardHeader, ConfirmModal, EmptyState, Input, Segmented, Stat, Swatch } from "@/components/ui";
+import { Button, Card, CardHeader, ConfirmModal, EmptyState, Input, Segmented, Select, Stat, Swatch } from "@/components/ui";
 import { DailyBars, Legend } from "@/components/charts";
 
 type Filter = "all" | "income" | "expense";
@@ -21,6 +22,7 @@ export function Monthly() {
   const { dark } = useTheme();
   const [month, setMonth] = useState(() => startOfMonth(new Date()));
   const [filter, setFilter] = useState<Filter>("all");
+  const [incomeKind, setIncomeKind] = useState<"all" | Exclude<TransactionKind, "expense">>("all");
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: "date", desc: true });
   const [toDelete, setToDelete] = useState<TransactionRow | null>(null);
@@ -48,10 +50,11 @@ export function Monthly() {
     const q = search.trim().toLowerCase();
     return rows
       .filter((r) => filter === "all" || r.type === filter)
+      .filter((r) => filter !== "income" || incomeKind === "all" || transactionKind(r) === incomeKind)
       .filter(
         (r) =>
           !q ||
-          [r.client_name, r.category_name, r.description].some((f) => f?.toLowerCase().includes(q)),
+          [r.client_name, transactionLabel(r), transactionKindLabel(r), r.description].some((f) => f?.toLowerCase().includes(q)),
       )
       .sort((a, b) => {
         const d =
@@ -60,7 +63,7 @@ export function Monthly() {
             : a.amount_pence - b.amount_pence;
         return sort.desc ? -d : d;
       });
-  }, [rows, filter, search, sort]);
+  }, [rows, filter, incomeKind, search, sort]);
 
   const toggleSort = (key: SortKey) =>
     setSort((s) => (s.key === key ? { key, desc: !s.desc } : { key, desc: true }));
@@ -90,7 +93,7 @@ export function Monthly() {
         <Stat label="Money in" value={money(income)} tone="good" />
         <Stat label="Money out" value={money(expense)} />
         <Stat label="Profit" value={money(income - expense)} tone={income - expense < 0 ? "bad" : undefined} strong />
-        <Stat label="Client appointments" value={String(clientVisits)} />
+        <Stat label="Client payments" value={String(clientVisits)} />
       </div>
 
       <Card className="mt-4">
@@ -121,12 +124,25 @@ export function Monthly() {
               { value: "expense", label: "Money out" },
             ]}
           />
-          <div className="flex items-center gap-2">
-            <div className="relative">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            {filter === "income" && <Select
+              aria-label="Income type"
+              className="w-44"
+              value={incomeKind}
+              onChange={(e) => setIncomeKind(e.target.value as typeof incomeKind)}
+            >
+              <option value="all">All income</option>
+              <option value="service">Service payments</option>
+              <option value="other">Other income</option>
+              {(incomeKind === "legacy" || rows.some((r) => transactionKind(r) === "legacy")) && <option value="legacy">Legacy income</option>}
+              {(incomeKind === "unassigned" || rows.some((r) => transactionKind(r) === "unassigned")) && <option value="unassigned">Unassigned income</option>}
+            </Select>}
+            <div className="relative min-w-0">
               <Search size={15} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
               <Input
-                className="w-60 rounded-full pl-8"
-                placeholder="Search client, category, note"
+                className="w-60 max-w-full rounded-full pl-8"
+                placeholder="Search client, service, note"
+                aria-label="Search entries"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -147,7 +163,7 @@ export function Monthly() {
               <thead>
                 <tr className="eyebrow border-y border-line bg-surface-2/60 text-left text-ink-2">
                   <SortTh label="Date" active={sort.key === "date"} desc={sort.desc} onClick={() => toggleSort("date")} className="pl-5" />
-                  <th className="px-3 py-2 font-medium">Category</th>
+                  <th className="px-3 py-2 font-medium">Service / category</th>
                   <th className="px-3 py-2 font-medium">Client</th>
                   <th className="px-3 py-2 font-medium">Note</th>
                   <SortTh label="Amount" active={sort.key === "amount"} desc={sort.desc} onClick={() => toggleSort("amount")} className="text-right" />
@@ -161,8 +177,9 @@ export function Monthly() {
                     <td className="px-3 py-2.5">
                       <span className="inline-flex items-center gap-2">
                         {r.category_colour && <Swatch colour={themedColour(r.category_colour, dark)} />}
-                        {r.category_name ?? <span className="text-muted">Uncategorised</span>}
+                        {transactionLabel(r)}
                       </span>
+                      <span className="mt-0.5 block text-[11px] text-muted">{transactionKindLabel(r)}</span>
                     </td>
                     <td className="px-3 py-2.5">{r.client_name ?? <span className="text-muted">—</span>}</td>
                     <td className="max-w-[240px] truncate px-3 py-2.5 text-ink-2">{r.description}</td>

@@ -1,7 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import { isBrowserFixture, isDesktop, requireOnlineAccess } from "./access";
+import { serviceColour } from "./palette";
 
 export type TxType = "income" | "expense";
+export type IncomeKind = "legacy" | "service" | "other";
 
 export interface Category {
   id: number;
@@ -11,6 +13,7 @@ export interface Category {
   /** Usual price, in pence. Prefills the amount on a new entry only — saved entries keep their own amount. */
   default_pence: number | null;
   service_id: string | null;
+  income_kind: IncomeKind;
 }
 
 export interface Client {
@@ -43,6 +46,10 @@ export interface Transaction {
   client_id: number | null;
   description: string | null;
   created_at: string;
+  service_id: string | null;
+  service_name: string;
+  category_name_snapshot: string;
+  income_kind: IncomeKind | null;
 }
 
 export interface TransactionRow extends Transaction {
@@ -51,7 +58,8 @@ export interface TransactionRow extends Transaction {
   client_name: string | null;
 }
 
-export type TransactionInput = Omit<Transaction, "id" | "created_at">;
+export type TransactionInput = Omit<Transaction, "id" | "created_at" | "service_id" | "service_name" | "category_name_snapshot" | "income_kind"> &
+  Partial<Pick<Transaction, "service_id" | "service_name" | "category_name_snapshot" | "income_kind">>;
 
 /** The shared booking lifecycle. Local payment is represented by transaction_id. */
 export type AppointmentStatus = "pending" | "confirmed" | "rejected" | "cancelled" | "no_show";
@@ -148,24 +156,77 @@ export async function listCategories(type?: TxType): Promise<Category[]> {
     : db.select<Category[]>("SELECT * FROM categories ORDER BY type DESC, id");
 }
 
-export async function createCategory(c: Omit<Category, "id" | "service_id"> & { service_id?: string | null }) {
+export async function listOtherIncomeCategories(): Promise<Category[]> {
   const db = await getDb();
-  await db.execute("INSERT INTO categories (name, type, colour, default_pence, service_id) VALUES ($1, $2, $3, $4, $5)", [
+  return db.select<Category[]>("SELECT * FROM categories WHERE type='income' AND income_kind='other' ORDER BY name COLLATE NOCASE, id");
+}
+
+export interface LegacyIncomeCategory extends Category {
+  transaction_count: number;
+  appointment_count: number;
+  total_pence: number;
+}
+
+export async function listLegacyIncomeCategories(): Promise<LegacyIncomeCategory[]> {
+  const db = await getDb();
+  return db.select<LegacyIncomeCategory[]>(`SELECT c.*,
+    (SELECT COUNT(*) FROM transactions t WHERE t.category_id=c.id AND t.type='income') AS transaction_count,
+    (SELECT COUNT(*) FROM appointments a WHERE a.category_id=c.id) AS appointment_count,
+    COALESCE((SELECT SUM(t.amount_pence) FROM transactions t WHERE t.category_id=c.id AND t.type='income'),0) AS total_pence
+    FROM categories c WHERE c.type='income' AND c.income_kind='legacy' ORDER BY c.name COLLATE NOCASE, c.id`);
+}
+
+export async function resolveLegacyIncomeCategory(id: number, serviceId: string | null) {
+  const db = await getDb();
+  const [category] = await db.select<Category[]>("SELECT * FROM categories WHERE id=$1 AND type='income' AND income_kind='legacy'", [id]);
+  if (!category) throw new Error("That income label has already been reviewed. Refresh the list before continuing.");
+  if (serviceId !== null) {
+    const [service] = await db.select<{ id: string }[]>("SELECT id FROM cloud_services WHERE id=$1", [serviceId]);
+    if (!service) throw new Error("Choose an existing service from the shared catalogue.");
+  }
+  await db.batch([
+    { sql: "UPDATE transactions SET category_name_snapshot=$1 WHERE category_id=$2 AND category_name_snapshot=''", params: [category.name, id] },
+    { sql: `UPDATE transactions SET service_id=(SELECT service_id FROM appointments WHERE transaction_id=transactions.id AND (service_id IS NOT NULL OR COALESCE(service_name,'')!='') ORDER BY id LIMIT 1),
+        service_name=COALESCE(NULLIF(service_name,''),NULLIF(category_name_snapshot,''),
+          (SELECT NULLIF(service_name,'') FROM appointments WHERE transaction_id=transactions.id AND (service_id IS NOT NULL OR COALESCE(service_name,'')!='') ORDER BY id LIMIT 1),''), income_kind='service'
+      WHERE category_id=$1 AND type='income' AND service_id IS NULL
+        AND EXISTS(SELECT 1 FROM appointments a WHERE a.transaction_id=transactions.id AND (a.service_id IS NOT NULL OR COALESCE(a.service_name,'')!=''))`, params: [id] },
+    ...(serviceId === null ? [] : [
+      { sql: `UPDATE transactions SET service_id=$1, income_kind='service',
+          service_name=COALESCE(NULLIF(service_name,''),NULLIF(category_name_snapshot,''),$2)
+        WHERE category_id=$3 AND type='income' AND service_id IS NULL AND service_name=''
+          AND NOT EXISTS(SELECT 1 FROM appointments a WHERE a.transaction_id=transactions.id AND (a.service_id IS NOT NULL OR COALESCE(a.service_name,'')!=''))`, params: [serviceId, category.name, id] },
+      { sql: "UPDATE appointments SET service_id=$1, service_name=$2 WHERE category_id=$3 AND remote_id IS NULL AND service_id IS NULL AND COALESCE(service_name,'')=''", params: [serviceId, category.name, id] },
+    ]),
+    { sql: `UPDATE transactions SET
+        service_id=(SELECT service_id FROM appointments WHERE transaction_id=transactions.id AND category_id=$1 AND (service_id IS NOT NULL OR COALESCE(service_name,'')!='') ORDER BY id LIMIT 1),
+        service_name=COALESCE(NULLIF(service_name,''),NULLIF(category_name_snapshot,''),
+          (SELECT NULLIF(service_name,'') FROM appointments WHERE transaction_id=transactions.id AND category_id=$1 ORDER BY id LIMIT 1),$2), income_kind='service'
+      WHERE type='income' AND service_id IS NULL AND COALESCE(income_kind,'legacy')='legacy'
+        AND EXISTS(SELECT 1 FROM appointments WHERE transaction_id=transactions.id AND category_id=$1 AND (service_id IS NOT NULL OR COALESCE(service_name,'')!=''))`, params: [id, category.name] },
+    { sql: "UPDATE transactions SET income_kind=$1 WHERE category_id=$2 AND type='income' AND service_id IS NULL AND service_name=''", params: [serviceId === null ? "other" : "service", id] },
+    { sql: "UPDATE categories SET income_kind=$1, service_id=$2 WHERE id=$3 AND income_kind='legacy'", params: [serviceId === null ? "other" : "service", serviceId, id] },
+  ]);
+}
+
+export async function createCategory(c: Omit<Category, "id" | "service_id" | "income_kind"> & { service_id?: string | null; income_kind?: IncomeKind }) {
+  const db = await getDb();
+  await db.execute("INSERT INTO categories (name, type, colour, default_pence, service_id, income_kind) VALUES ($1, $2, $3, $4, $5, $6)", [
     c.name,
     c.type,
     c.colour,
     c.default_pence,
-    c.service_id ?? null,
+    c.type === "income" ? c.service_id ?? null : null,
+    c.type === "income" ? c.service_id ? "service" : c.income_kind ?? "other" : "other",
   ]);
 }
 
 export async function updateCategory(c: Category) {
   const db = await getDb();
-  await db.execute("UPDATE categories SET name = $1, colour = $2, default_pence = $3, service_id = $4 WHERE id = $5", [
+  await db.execute("UPDATE categories SET name = $1, colour = $2, default_pence = $3 WHERE id = $4", [
     c.name,
     c.colour,
     c.default_pence,
-    c.service_id ?? null,
     c.id,
   ]);
 }
@@ -175,6 +236,7 @@ export async function deleteCategory(id: number): Promise<DeletedSnapshot> {
   const [cat] = await db.select<Category[]>("SELECT * FROM categories WHERE id = $1", [id]);
   const links = await clearedLinks(db, "category_id", id);
   await db.batch([
+    { sql: "UPDATE transactions SET category_name_snapshot=$1 WHERE category_id=$2 AND category_name_snapshot=''", params: [cat?.name ?? "", id] },
     { sql: "UPDATE transactions SET category_id = NULL WHERE category_id = $1", params: [id] },
     { sql: "UPDATE appointments SET category_id = NULL WHERE category_id = $1", params: [id] },
     { sql: "DELETE FROM categories WHERE id = $1", params: [id] },
@@ -254,11 +316,17 @@ export async function deleteClient(id: number): Promise<DeletedSnapshot> {
 // ---------- Transactions ----------
 
 const TX_SELECT = `
-  SELECT t.*, cat.name AS category_name, cat.colour AS category_colour, cl.name AS client_name
+  SELECT t.*, COALESCE(NULLIF(t.service_name,''),NULLIF(t.category_name_snapshot,''),cat.name) AS category_name,
+    COALESCE(cat.colour,CASE WHEN t.income_kind='service' THEN '#e8798f' ELSE '#a88a7d' END) AS category_colour, cl.name AS client_name
   FROM transactions t
   LEFT JOIN categories cat ON cat.id = t.category_id
   LEFT JOIN clients cl ON cl.id = t.client_id
 `;
+
+function transactionRowColour(row: TransactionRow): TransactionRow {
+  return row.type === "income" && (row.service_id || row.service_name)
+    ? { ...row, category_colour: serviceColour(row.service_id || row.service_name) } : row;
+}
 
 export async function listTransactions(opts: {
   from?: string;
@@ -285,36 +353,73 @@ export async function listTransactions(opts: {
   if (where.length) sql += ` WHERE ${where.join(" AND ")}`;
   sql += " ORDER BY t.date DESC, t.id DESC";
   if (opts.limit) sql += ` LIMIT ${Math.floor(opts.limit)}`;
-  return db.select<TransactionRow[]>(sql, params);
+  return (await db.select<TransactionRow[]>(sql, params)).map(transactionRowColour);
 }
 
 export async function getTransaction(id: number): Promise<TransactionRow | null> {
   const db = await getDb();
   const rows = await db.select<TransactionRow[]>(`${TX_SELECT} WHERE t.id = $1`, [id]);
-  return rows[0] ?? null;
+  return rows[0] ? transactionRowColour(rows[0]) : null;
 }
 
 export async function createTransaction(t: TransactionInput) {
   const db = await getDb();
+  const attribution = await transactionAttribution(db, t);
   const res = await db.execute(
-    `INSERT INTO transactions (type, date, amount_pence, category_id, client_id, description)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [t.type, t.date, t.amount_pence, t.category_id, t.client_id, t.description || null],
+    `INSERT INTO transactions (type, date, amount_pence, category_id, client_id, description, service_id, service_name, category_name_snapshot, income_kind)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    [t.type, t.date, t.amount_pence, attribution.category_id, t.client_id, t.description || null,
+      attribution.service_id, attribution.service_name, attribution.category_name_snapshot, attribution.income_kind],
   );
   return res.lastInsertId as number;
 }
 
 export async function updateTransaction(id: number, t: TransactionInput) {
   const db = await getDb();
-  if (t.type !== "income") {
-    const linked = await db.select<{ id: number }[]>("SELECT id FROM appointments WHERE transaction_id=$1", [id]);
-    if (linked.length) throw new Error("A recorded appointment payment must remain an income entry. Mark it unpaid before changing its type.");
+  const [before] = await db.select<Transaction[]>("SELECT * FROM transactions WHERE id=$1", [id]);
+  if (!before) throw new Error("Recorded payment not found.");
+  const linked = await db.select<{ id: number }[]>("SELECT id FROM appointments WHERE transaction_id=$1", [id]);
+  if (linked.length && t.type !== "income") throw new Error("A recorded appointment payment must remain an income entry. Mark it unpaid before changing its type.");
+  const attribution = await transactionAttribution(db, t, before);
+  if (linked.length && (attribution.category_id !== before.category_id || attribution.service_id !== before.service_id || attribution.income_kind !== before.income_kind)) {
+    throw new Error("A recorded appointment payment keeps its booked service. Mark it unpaid before changing its source.");
   }
   await db.execute(
     `UPDATE transactions SET type = $1, date = $2, amount_pence = $3, category_id = $4,
-       client_id = $5, description = $6 WHERE id = $7`,
-    [t.type, t.date, t.amount_pence, t.category_id, t.client_id, t.description || null, id],
+       client_id = $5, description = $6, service_id=$7, service_name=$8, category_name_snapshot=$9, income_kind=$10 WHERE id = $11`,
+    [t.type, t.date, t.amount_pence, attribution.category_id, t.client_id, t.description || null,
+      attribution.service_id, attribution.service_name, attribution.category_name_snapshot, attribution.income_kind, id],
   );
+}
+
+async function transactionAttribution(db: Db, t: TransactionInput, before?: Transaction) {
+  if (!Number.isSafeInteger(t.amount_pence) || t.amount_pence < 0) throw new Error("Enter a valid amount received or spent.");
+  if (t.income_kind != null && !["legacy", "service", "other"].includes(t.income_kind)) throw new Error("Invalid income source.");
+  if (t.type === "expense" && (t.service_id || t.service_name?.trim() || t.income_kind != null)) throw new Error("Expense entries cannot use an income service.");
+  const serviceId = t.type === "income" ? t.service_id === undefined ? before?.service_id ?? null : t.service_id : null;
+  const unchanged = before && t.type === before.type && t.category_id === before.category_id && serviceId === before.service_id
+    && (t.income_kind === undefined || t.income_kind === before.income_kind);
+  if (unchanged) return { category_id: before.category_id, service_id: before.service_id,
+    service_name: before.service_name, category_name_snapshot: before.category_name_snapshot, income_kind: before.income_kind };
+  const [category] = t.category_id == null ? [] : await db.select<Category[]>("SELECT * FROM categories WHERE id=$1", [t.category_id]);
+  if (t.category_id != null && (!category || category.type !== t.type)) throw new Error("Choose a valid category for this entry.");
+  if (serviceId) {
+    if (t.income_kind != null && t.income_kind !== "service") throw new Error("A service payment must keep its service attribution.");
+    if (t.category_id != null) throw new Error("Service payments do not need an income category.");
+    const [row] = await db.select<{ data: string }[]>("SELECT data FROM cloud_services WHERE id=$1", [serviceId]);
+    if (!row) throw new Error("Choose a service from the shared catalogue.");
+    const service = JSON.parse(row.data) as { name: string; active: boolean };
+    if (!service.active) throw new Error("That service is archived. Choose an active service for a new payment.");
+    return { category_id: null, service_id: serviceId, service_name: service.name,
+      category_name_snapshot: "", income_kind: "service" as const };
+  }
+  if (t.type === "income" && t.service_name?.trim()) throw new Error("Choose the service for this new payment.");
+  if (t.type === "income" && category?.income_kind === "service") throw new Error("Choose the treatment from Services instead of its old income label.");
+  if (t.type === "income" && category && t.income_kind != null && t.income_kind !== category.income_kind) throw new Error("The selected income label has a different source. Refresh before continuing.");
+  if (t.type === "income" && !category && t.income_kind === "service") throw new Error("Choose a service for this payment.");
+  const category_name_snapshot = category?.name ?? (t.type === "income" && t.income_kind === "other" ? t.category_name_snapshot?.trim() || "Other income" : "");
+  return { category_id: t.category_id, service_id: null, service_name: "", category_name_snapshot,
+    income_kind: t.type === "expense" ? null : category?.income_kind ?? t.income_kind ?? null };
 }
 
 export async function deleteTransaction(id: number): Promise<DeletedSnapshot> {
@@ -354,6 +459,11 @@ const APPT_SELECT = `
   LEFT JOIN transactions paid ON paid.id = a.transaction_id
 `;
 
+function appointmentRowColour(row: AppointmentRow): AppointmentRow {
+  return row.service_id || row.service_name
+    ? { ...row, category_colour: serviceColour(row.service_id || row.service_name) } : row;
+}
+
 export async function listAppointments(opts: { from?: string; to?: string; clientId?: number } = {}) {
   const db = await getDb();
   const where: string[] = [];
@@ -373,13 +483,13 @@ export async function listAppointments(opts: { from?: string; to?: string; clien
   let sql = APPT_SELECT;
   if (where.length) sql += ` WHERE ${where.join(" AND ")}`;
   sql += " ORDER BY a.date, a.time_confirmed, a.start_time, a.id";
-  return db.select<AppointmentRow[]>(sql, params);
+  return (await db.select<AppointmentRow[]>(sql, params)).map(appointmentRowColour);
 }
 
 export async function getAppointment(id: number): Promise<AppointmentRow | null> {
   const db = await getDb();
   const rows = await db.select<AppointmentRow[]>(`${APPT_SELECT} WHERE a.id = $1`, [id]);
-  return rows[0] ?? null;
+  return rows[0] ? appointmentRowColour(rows[0]) : null;
 }
 
 export async function createAppointment(a: AppointmentInput, seriesId: string | null = null) {
@@ -458,11 +568,20 @@ export async function updateAppointment(id: number, a: AppointmentInput, expecte
     }
     await sharedMutation("appointments", "PATCH", patch);
   } else if (!before.remote_id && changed) {
+    const serviceId = a.service_id === undefined ? before.service_id : a.service_id;
+    let serviceName = before.service_name;
+    if (serviceId !== before.service_id) {
+      const [service] = serviceId ? await db.select<{ data: string }[]>("SELECT data FROM cloud_services WHERE id=$1", [serviceId]) : [];
+      if (serviceId && !service) throw new Error("Choose a service from the shared catalogue.");
+      const saved = service ? JSON.parse(service.data) as { name: string; active: boolean } : null;
+      if (saved && !saved.active) throw new Error("Choose an active service for this appointment.");
+      serviceName = saved?.name ?? "";
+    }
     await db.execute(`UPDATE appointments SET date=$1, start_time=$2, duration_min=$3, client_id=$4, price_pence=$5,
       service_id=$6, customer_notes=$7, time_confirmed=$8, is_remote=$9, visit_address=$10, visit_postcode=$11,
-      base_price_pence=$12, discount_percent=$13 WHERE id=$14`, [a.date, details.time_confirmed ? a.start_time : "00:00", a.duration_min, a.client_id,
-      a.price_pence, a.service_id ?? before.service_id, a.customer_notes ?? before.customer_notes ?? "", details.time_confirmed ? 1 : 0,
-      details.is_remote ? 1 : 0, details.visit_address, details.visit_postcode, details.base_price_pence, details.discount_percent, id]);
+      base_price_pence=$12, discount_percent=$13, service_name=$14 WHERE id=$15`, [a.date, details.time_confirmed ? a.start_time : "00:00", a.duration_min, a.client_id,
+      a.price_pence, serviceId, a.customer_notes ?? before.customer_notes ?? "", details.time_confirmed ? 1 : 0,
+      details.is_remote ? 1 : 0, details.visit_address, details.visit_postcode, details.base_price_pence, details.discount_percent, serviceName, id]);
     if (a.save_visit_address && details.is_remote && a.client_id != null) {
       const [client] = await db.select<Client[]>("SELECT * FROM clients WHERE id=$1", [a.client_id]);
       if (client) await updateClient({ ...client, saved_address: details.visit_address, saved_postcode: details.visit_postcode });
@@ -538,9 +657,16 @@ export async function markAppointmentPaid(id: number, amountPence?: number) {
   const amount = amountPence ?? a.price_pence;
   if (amount == null || !Number.isSafeInteger(amount) || amount <= 0) throw new Error("Add the amount received before marking this paid");
   await db.batch([
-    { sql: `INSERT INTO transactions (type, date, amount_pence, category_id, client_id, description)
-      SELECT 'income', date, $1, category_id, client_id, notes FROM appointments
-      WHERE id = $2 AND transaction_id IS NULL AND status = 'confirmed'`, params: [amount, id] },
+    { sql: `INSERT INTO transactions (type, date, amount_pence, category_id, client_id, description,
+        service_id, service_name, category_name_snapshot, income_kind)
+      SELECT 'income', a.date, $1,
+        CASE WHEN COALESCE(a.service_id,cat.service_id) IS NOT NULL OR COALESCE(a.service_name,'')!='' THEN NULL ELSE a.category_id END,
+        a.client_id, a.notes, CASE WHEN COALESCE(a.service_name,'')!='' THEN a.service_id ELSE COALESCE(a.service_id,cat.service_id) END,
+        COALESCE(NULLIF(a.service_name,''),CASE WHEN COALESCE(a.service_id,cat.service_id) IS NOT NULL THEN cat.name END,''),
+        COALESCE(cat.name,''),
+        CASE WHEN COALESCE(a.service_id,cat.service_id) IS NOT NULL OR COALESCE(a.service_name,'')!='' THEN 'service' ELSE cat.income_kind END
+      FROM appointments a LEFT JOIN categories cat ON cat.id=a.category_id
+      WHERE a.id = $2 AND a.transaction_id IS NULL AND a.status = 'confirmed'`, params: [amount, id] },
     { sql: "UPDATE appointments SET transaction_id = last_insert_rowid() WHERE id = $1 AND transaction_id IS NULL AND changes() > 0", params: [id] },
   ]);
 }
@@ -573,20 +699,20 @@ export async function markAppointmentUnpaid(id: number) {
 /** Past appointments still waiting to be marked paid — money she hasn't collected. */
 export async function unpaidBefore(date: string): Promise<AppointmentRow[]> {
   const db = await getDb();
-  return db.select<AppointmentRow[]>(
+  return (await db.select<AppointmentRow[]>(
     `${APPT_SELECT} WHERE a.status = 'confirmed' AND a.transaction_id IS NULL AND (a.price_pence IS NULL OR a.price_pence>0) AND a.date < $1 ORDER BY a.date, a.time_confirmed, a.start_time`,
     [date],
-  );
+  )).map(appointmentRowColour);
 }
 
 /** A client's appointments from `from` onwards, cancellations aside. */
 export async function upcomingForClient(clientId: number, from: string): Promise<AppointmentRow[]> {
   const db = await getDb();
-  return db.select<AppointmentRow[]>(
+  return (await db.select<AppointmentRow[]>(
     `${APPT_SELECT} WHERE a.client_id = $1 AND a.date >= $2 AND a.status IN ('pending', 'confirmed')
      ORDER BY a.date, a.start_time`,
     [clientId, from],
-  );
+  )).map(appointmentRowColour);
 }
 
 async function sharedMutation(operation: string, method: string, body: Record<string, unknown>) {
@@ -669,16 +795,41 @@ export interface CategoryTotal {
   name: string;
   colour: string;
   total: number;
+  service_id?: string | null;
+  kind?: IncomeKind | "unassigned";
+}
+
+export async function incomeTotals(from: string, to: string): Promise<CategoryTotal[]> {
+  const db = await getDb();
+  const totals = await db.select<CategoryTotal[]>(`WITH classified AS (
+    SELECT t.*, COALESCE(NULLIF(t.service_name,''),NULLIF(t.category_name_snapshot,''),cat.name,'Unassigned income') AS saved_name,
+      CASE WHEN t.service_id IS NOT NULL OR t.service_name!='' THEN 'service' ELSE COALESCE(t.income_kind,cat.income_kind,'unassigned') END AS kind,
+      COALESCE(cat.colour,'#a88a7d') AS saved_colour,
+      CASE WHEN t.service_id IS NOT NULL THEN 'service:' || t.service_id
+        WHEN t.service_name!='' THEN 'service-name:' || t.service_name
+        WHEN t.category_id IS NOT NULL THEN COALESCE(t.income_kind,cat.income_kind,'unassigned') || ':category:' || CAST(t.category_id AS TEXT)
+        ELSE COALESCE(t.income_kind,cat.income_kind,'unassigned') || ':removed:' || COALESCE(NULLIF(t.category_name_snapshot,''),cat.name,'') END AS group_key
+    FROM transactions t LEFT JOIN categories cat ON cat.id=t.category_id
+    WHERE t.type='income' AND t.date >= $1 AND t.date <= $2
+  ), ranked AS (
+    SELECT *, ROW_NUMBER() OVER(PARTITION BY group_key ORDER BY date DESC,id DESC) AS label_rank FROM classified
+  ) SELECT CASE WHEN kind='service' THEN NULL ELSE category_id END AS id, service_id, kind,
+    MAX(CASE WHEN label_rank=1 THEN saved_name END) AS name,
+    CASE WHEN kind='service' THEN '#e8798f' ELSE MAX(CASE WHEN label_rank=1 THEN saved_colour END) END AS colour,
+    SUM(amount_pence) AS total FROM ranked GROUP BY group_key ORDER BY total DESC, name`, [from, to]);
+  return totals.map((total) => total.kind === "service"
+    ? { ...total, colour: serviceColour(total.service_id || total.name) } : total);
 }
 
 export async function categoryTotals(type: TxType, from: string, to: string): Promise<CategoryTotal[]> {
+  if (type === "income") return incomeTotals(from, to);
   const db = await getDb();
   return db.select<CategoryTotal[]>(
-    `SELECT cat.id AS id, COALESCE(cat.name, 'Uncategorised') AS name,
+    `SELECT cat.id AS id, COALESCE(NULLIF(t.category_name_snapshot,''),cat.name, 'Uncategorised') AS name,
        COALESCE(cat.colour, '#a88a7d') AS colour, SUM(t.amount_pence) AS total
      FROM transactions t LEFT JOIN categories cat ON cat.id = t.category_id
      WHERE t.type = $1 AND t.date >= $2 AND t.date <= $3
-     GROUP BY cat.id ORDER BY total DESC`,
+     GROUP BY cat.id, COALESCE(NULLIF(t.category_name_snapshot,''),cat.name,'Uncategorised') ORDER BY total DESC`,
     [type, from, to],
   );
 }
@@ -759,13 +910,14 @@ export async function undoDelete(s: DeletedSnapshot) {
 // Row-for-row inserts, keeping the id. Used by undo and by restoring a backup.
 
 function categoryStatement(c: Category): Statement {
-  return { sql: "INSERT INTO categories (id, name, type, colour, default_pence, service_id) VALUES ($1, $2, $3, $4, $5, $6)", params: [
+  return { sql: "INSERT INTO categories (id, name, type, colour, default_pence, service_id, income_kind) VALUES ($1, $2, $3, $4, $5, $6, $7)", params: [
     c.id,
     c.name,
     c.type,
     c.colour,
     c.default_pence ?? null,
     c.service_id ?? null,
+    c.income_kind ?? (c.type === "income" ? c.service_id ? "service" : "legacy" : "other"),
   ] };
 }
 
@@ -782,9 +934,11 @@ function clientStatement(c: Client): Statement {
 }
 
 function transactionStatement(t: Transaction): Statement {
-  return { sql: `INSERT INTO transactions (id, type, date, amount_pence, category_id, client_id, description, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-    params: [t.id, t.type, t.date, t.amount_pence, t.category_id, t.client_id, t.description, t.created_at] };
+  return { sql: `INSERT INTO transactions (id, type, date, amount_pence, category_id, client_id, description, created_at,
+      service_id, service_name, category_name_snapshot, income_kind)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+    params: [t.id, t.type, t.date, t.amount_pence, t.category_id, t.client_id, t.description, t.created_at,
+      t.service_id ?? null, t.service_name ?? "", t.category_name_snapshot ?? "", t.income_kind ?? null] };
 }
 
 function appointmentStatement(a: Appointment): Statement {
@@ -837,7 +991,7 @@ export async function exportAll(): Promise<Backup> {
   ]);
   return {
     app: "ffyon-business-tracker",
-    version: 3,
+    version: 4,
     exported_at: new Date().toISOString(),
     categories,
     clients,
@@ -852,7 +1006,7 @@ export function validateBackup(data: unknown): data is Backup {
 
 export function normalizeBackup(data: unknown): Backup {
   const b = data as Backup;
-  if (!b || b.app !== "ffyon-business-tracker" || ![1, 2, 3].includes(b.version) || !Array.isArray(b.categories) || !Array.isArray(b.clients) || !Array.isArray(b.transactions) || (b.appointments !== undefined && !Array.isArray(b.appointments))) throw new Error("That file isn't a supported Ffyon backup.");
+  if (!b || b.app !== "ffyon-business-tracker" || ![1, 2, 3, 4].includes(b.version) || !Array.isArray(b.categories) || !Array.isArray(b.clients) || !Array.isArray(b.transactions) || (b.appointments !== undefined && !Array.isArray(b.appointments))) throw new Error("That file isn't a supported Ffyon backup.");
   const positiveId = (n: unknown) => Number.isSafeInteger(n) && Number(n) > 0;
   const nullableId = (n: unknown) => n === null || positiveId(n);
   const str = (v: unknown) => typeof v === "string";
@@ -860,20 +1014,30 @@ export function normalizeBackup(data: unknown): Backup {
   const pence = (v: unknown) => Number.isSafeInteger(v) && Number(v) >= 0;
   const flag = (v: unknown) => v === undefined || v === true || v === false || v === 0 || v === 1;
   const unique = (rows: { id: number }[]) => new Set(rows.map((r) => r.id)).size === rows.length;
-  const categories = b.categories.map((c) => {
-    if (!positiveId(c.id) || !str(c.name) || !["income", "expense"].includes(c.type) || !str(c.colour) || (c.default_pence != null && !pence(c.default_pence)) || !optionalText(c.service_id)) throw new Error("Invalid category in backup.");
-    return { id: c.id, name: c.name, type: c.type, colour: c.colour, default_pence: c.default_pence ?? null, service_id: c.type === "income" ? c.service_id ?? null : null };
+  const categories: Category[] = b.categories.map((c) => {
+    if (!positiveId(c.id) || !str(c.name) || !["income", "expense"].includes(c.type) || !str(c.colour) || (c.default_pence != null && !pence(c.default_pence)) || !optionalText(c.service_id) || (c.income_kind !== undefined && !["legacy", "service", "other"].includes(c.income_kind))) throw new Error("Invalid category in backup.");
+    const service_id = c.type === "income" ? c.service_id ?? null : null;
+    const income_kind = c.type === "expense" ? "other" : c.income_kind ?? (service_id ? "service" : "legacy");
+    if (service_id && income_kind !== "service") throw new Error("Invalid service mapping in backup.");
+    return { id: c.id, name: c.name, type: c.type, colour: c.colour, default_pence: c.default_pence ?? null, service_id, income_kind };
   });
+  const categoryById = new Map(categories.map((c) => [c.id, c]));
   const clients = b.clients.map((c) => {
     if (!positiveId(c.id) || !str(c.name) || !optionalText(c.phone) || !optionalText(c.notes) || !str(c.created_at) || !optionalText(c.remote_id) || !optionalText(c.account_id) || !optionalText(c.email) || !optionalText(c.saved_address) || !optionalText(c.saved_postcode) || (c.saved_address?.length ?? 0) > 500 || (c.saved_postcode?.length ?? 0) > 20 || (c.cloud_revision !== undefined && !pence(c.cloud_revision)) || (c.disabled !== undefined && ![0, 1].includes(c.disabled))) throw new Error("Invalid client in backup.");
     return { id: c.id, name: c.name, phone: c.phone ?? null, notes: c.notes ?? null, created_at: c.created_at,
-      remote_id: b.version === 3 ? c.remote_id ?? null : null, account_id: b.version === 3 ? c.account_id ?? null : null,
+      remote_id: b.version >= 3 ? c.remote_id ?? null : null, account_id: b.version >= 3 ? c.account_id ?? null : null,
       email: c.email ?? "", cloud_revision: 0, disabled: c.disabled ?? 0,
       saved_address: c.saved_address ?? "", saved_postcode: c.saved_postcode ?? "" };
   });
-  const transactions = b.transactions.map((t) => {
-    if (!positiveId(t.id) || !["income", "expense"].includes(t.type) || !str(t.date) || !/^\d{4}-\d{2}-\d{2}$/.test(t.date) || !pence(t.amount_pence) || !nullableId(t.category_id) || !nullableId(t.client_id) || !optionalText(t.description) || !str(t.created_at)) throw new Error("Invalid entry in backup.");
-    return { id: t.id, type: t.type, date: t.date, amount_pence: t.amount_pence, category_id: t.category_id, client_id: t.client_id, description: t.description ?? null, created_at: t.created_at };
+  const transactions: Transaction[] = b.transactions.map((t) => {
+    if (!positiveId(t.id) || !["income", "expense"].includes(t.type) || !str(t.date) || !/^\d{4}-\d{2}-\d{2}$/.test(t.date) || !pence(t.amount_pence) || !nullableId(t.category_id) || !nullableId(t.client_id) || !optionalText(t.description) || !str(t.created_at) || !optionalText(t.service_id) || !optionalText(t.service_name) || !optionalText(t.category_name_snapshot) || (t.income_kind != null && !["legacy", "service", "other"].includes(t.income_kind))) throw new Error("Invalid entry in backup.");
+    const category = t.category_id == null ? undefined : categoryById.get(t.category_id);
+    const service_id = t.type === "income" ? t.service_id === undefined ? b.version < 4 && !t.service_name ? category?.service_id ?? null : null : t.service_id : null;
+    const service_name = t.type === "income" ? t.service_name ?? (service_id ? category?.name ?? "" : "") : "";
+    const income_kind = t.type === "expense" ? null : t.income_kind ?? (service_id || service_name ? "service" : category?.income_kind ?? null);
+    if (t.type === "expense" && (t.service_id || t.service_name || t.income_kind != null) || ((service_id || service_name) && income_kind !== "service")) throw new Error("Invalid payment attribution in backup.");
+    return { id: t.id, type: t.type, date: t.date, amount_pence: t.amount_pence, category_id: t.category_id, client_id: t.client_id, description: t.description ?? null, created_at: t.created_at,
+      service_id, service_name, category_name_snapshot: t.category_name_snapshot ?? category?.name ?? "", income_kind };
   });
   const appointments = (b.appointments ?? []).map((a) => {
     const originalStatus = String(a.status);
@@ -883,10 +1047,14 @@ export function normalizeBackup(data: unknown): Backup {
     const time_confirmed = a.time_confirmed === undefined ? 1 : Number(Boolean(a.time_confirmed));
     const is_remote = Number(Boolean(a.is_remote));
     if (is_remote && (!a.visit_address?.trim() || !a.visit_postcode?.trim())) throw new Error("A travelling booking in the backup needs its address and postcode.");
+    const remote_id = b.version >= 3 ? a.remote_id ?? null : null;
+    const category = a.category_id == null ? undefined : categoryById.get(a.category_id);
+    const service_id = a.service_id ?? (b.version < 4 && !remote_id && !a.service_name ? category?.service_id ?? null : null);
+    const service_name = a.service_name || (!a.service_id && service_id ? category?.name ?? "" : "");
     return { id: a.id, date: a.date, start_time: time_confirmed ? a.start_time : "00:00", duration_min: a.duration_min, client_id: a.client_id, category_id: a.category_id,
       price_pence: a.price_pence ?? null, notes: a.notes ?? null, status, transaction_id: a.transaction_id, series_id: a.series_id ?? null,
-      created_at: a.created_at, remote_id: b.version === 3 ? a.remote_id ?? null : null, service_id: a.service_id ?? null,
-      service_name: a.service_name ?? "", customer_notes: b.version === 3 ? a.customer_notes ?? "" : "", cloud_revision: 0,
+      created_at: a.created_at, remote_id, service_id,
+      service_name, customer_notes: b.version >= 3 ? a.customer_notes ?? "" : "", cloud_revision: 0,
       proposed_date: null, proposed_start_time: null, proposed_time_confirmed: null,
       time_confirmed, is_remote, visit_address: is_remote ? a.visit_address ?? "" : "", visit_postcode: is_remote ? a.visit_postcode ?? "" : "",
       base_price_pence: a.base_price_pence === undefined ? a.price_pence ?? null : a.base_price_pence,
@@ -896,17 +1064,24 @@ export function normalizeBackup(data: unknown): Backup {
   const categoryIds = new Set(categories.map((r) => r.id));
   const clientIds = new Set(clients.map((r) => r.id));
   const txById = new Map(transactions.map((r) => [r.id, r]));
+  const originalTxById = new Map(b.transactions.map((r) => [r.id, r]));
   const paymentIds = new Set<number>();
   for (const row of [...transactions, ...appointments]) if ((row.category_id != null && !categoryIds.has(row.category_id)) || (row.client_id != null && !clientIds.has(row.client_id))) throw new Error("Broken record link in backup.");
   for (const row of appointments) if (row.transaction_id != null) {
     if (txById.get(row.transaction_id)?.type !== "income" || paymentIds.has(row.transaction_id)) throw new Error("Invalid or duplicate appointment payment in backup.");
     paymentIds.add(row.transaction_id);
+    const payment = txById.get(row.transaction_id)!;
+    if (b.version < 4 && payment.type === "income" && originalTxById.get(payment.id)?.service_id === undefined && (row.service_id || row.service_name)) {
+      payment.service_id = row.service_id;
+      payment.service_name = row.service_name || payment.category_name_snapshot;
+      payment.income_kind = "service";
+    }
   }
   for (const rows of [clients, appointments]) {
     const ids = rows.map((r) => r.remote_id).filter((id) => id != null);
     if (new Set(ids).size !== ids.length) throw new Error("Duplicate shared identity in backup.");
   }
-  return { app: "ffyon-business-tracker", version: 3, exported_at: str(b.exported_at) ? b.exported_at : new Date().toISOString(), categories, clients, transactions, appointments };
+  return { app: "ffyon-business-tracker", version: 4, exported_at: str(b.exported_at) ? b.exported_at : new Date().toISOString(), categories, clients, transactions, appointments };
 }
 
 export async function wipeAll() {

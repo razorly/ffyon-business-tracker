@@ -7,7 +7,6 @@ import {
   getAppointment,
   getTransaction,
   isTauri,
-  listCategories,
   markAppointmentPaid,
   markAppointmentUnpaid,
   type TxType,
@@ -15,6 +14,7 @@ import {
 import { useData } from "@/lib/data";
 import { runAutoBackup } from "@/lib/export";
 import { isoDate, money } from "@/lib/format";
+import { listServices, serviceDiscountPrice } from "@/lib/sync";
 import {
   applyShortcut,
   hideWindow,
@@ -42,45 +42,61 @@ export function TrayBridge() {
   useEffect(() => {
     if (!isTauri()) return;
 
-    /** One click on a usual-price service books the money in, dated today. */
-    const quickAdd = async (categoryId: number) => {
-      const category = (await listCategories("income")).find((c) => c.id === categoryId);
-      if (!category) return;
-      // The price can be taken off a category while the menu is still showing it.
-      if (category.default_pence == null || category.default_pence <= 0) {
-        await showWindow();
-        return openNewEntry("income");
+    const adding = new Set<string>();
+    /** Read the cached catalogue again because a tray menu can outlive a price or archive change. */
+    const quickAdd = async (serviceId: string) => {
+      if (adding.has(serviceId)) return;
+      adding.add(serviceId);
+      try {
+        const service = (await listServices()).find((item) => item.id === serviceId && item.active);
+        if (!service) {
+          await syncTray();
+          return toast.info("That service is no longer available");
+        }
+        const pence = serviceDiscountPrice(service.price_pence, service.discount_percent ?? 0);
+        if (pence <= 0) {
+          await showWindow();
+          return openNewEntry("income");
+        }
+        const id = await createTransaction({
+          type: "income",
+          date: isoDate(new Date()),
+          amount_pence: pence,
+          category_id: null,
+          client_id: null,
+          description: null,
+          service_id: service.id,
+          service_name: service.name,
+          category_name_snapshot: service.name,
+          income_kind: "service",
+        });
+        refresh();
+        toast.success(`${service.name} · ${money(pence)} added`, {
+          description: "Dated today. Add the client or a note whenever you like.",
+          duration: TOAST_MS,
+          action: {
+            label: "Add details",
+            onClick: async () => {
+              const row = await getTransaction(id);
+              await showWindow();
+              if (row) openEditEntry(row);
+            },
+          },
+          cancel: {
+            label: "Undo",
+            onClick: async () => {
+              await deleteTransaction(id);
+              refresh();
+            },
+          },
+        });
+        await notifyFromTray("Added to today", `${service.name} — ${money(pence)}`);
+      } catch (err) {
+        console.error(err);
+        toast.error("Couldn't record that payment. Open Ffyon and try again.");
+      } finally {
+        adding.delete(serviceId);
       }
-      const pence = category.default_pence;
-      const id = await createTransaction({
-        type: "income",
-        date: isoDate(new Date()),
-        amount_pence: pence,
-        category_id: category.id,
-        client_id: null,
-        description: null,
-      });
-      refresh();
-      toast.success(`${category.name} · ${money(pence)} added`, {
-        description: "Dated today. Add the client or a note whenever you like.",
-        duration: TOAST_MS,
-        action: {
-          label: "Add details",
-          onClick: async () => {
-            const row = await getTransaction(id);
-            await showWindow();
-            if (row) openEditEntry(row);
-          },
-        },
-        cancel: {
-          label: "Undo",
-          onClick: async () => {
-            await deleteTransaction(id);
-            refresh();
-          },
-        },
-      });
-      await notifyFromTray("Added to today", `${category.name} — ${money(pence)}`);
     };
 
     /** Marking paid from the tray is the same money moment as doing it in the diary. */
@@ -99,7 +115,7 @@ export function TrayBridge() {
         return toast.error("Couldn't mark that paid — open the schedule and try there");
       }
       refresh();
-      const who = appointment.client_name ?? appointment.category_name ?? "Appointment";
+      const who = appointment.client_name ?? (appointment.service_name || appointment.category_name || "Appointment");
       toast.success(`${money(appointment.price_pence)} added to your money`, {
         description: who,
         duration: TOAST_MS,
@@ -132,7 +148,7 @@ export function TrayBridge() {
 
     const listeners: Promise<UnlistenFn>[] = [
       listen<TxType>(TRAY_EVENT.newEntry, (e) => openNewEntry(e.payload)),
-      listen<number>(TRAY_EVENT.quickAdd, (e) => void quickAdd(e.payload)),
+      listen<string>(TRAY_EVENT.quickAdd, (e) => void quickAdd(e.payload)),
       listen<number>(TRAY_EVENT.markPaid, (e) => void markPaid(e.payload)),
       listen(TRAY_EVENT.backup, () => void backUpNow()),
       listen(TRAY_EVENT.askClose, () => setAsking(true)),

@@ -2,6 +2,7 @@ import { forwardRef, useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { FittedValue } from "./FittedValue";
 
 type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
 
@@ -29,7 +30,7 @@ export const Button = forwardRef<
 
 export function Card({ className, children }: { className?: string; children: ReactNode }) {
   return (
-    <div className={cn("rounded-3xl border border-line bg-surface shadow-[0_1px_3px_rgba(74,36,20,0.05)]", className)}>
+    <div className={cn("min-w-0 rounded-3xl border border-line bg-surface shadow-[0_1px_3px_rgba(74,36,20,0.05)]", className)}>
       {children}
     </div>
   );
@@ -37,8 +38,8 @@ export function Card({ className, children }: { className?: string; children: Re
 
 export function CardHeader({ title, subtitle, action }: { title: string; subtitle?: string; action?: ReactNode }) {
   return (
-    <div className="flex items-start justify-between gap-4 px-5 pt-4 pb-2">
-      <div>
+    <div className="flex flex-wrap items-start justify-between gap-4 px-5 pt-4 pb-2">
+      <div className="min-w-0">
         <h3 className="font-display text-[19px] leading-tight text-ink">{title}</h3>
         {subtitle && <p className="mt-0.5 text-[13px] text-muted">{subtitle}</p>}
       </div>
@@ -205,15 +206,14 @@ export function Stat({
   return (
     <Card className={cn("px-5 py-4", strong && "border-transparent bg-accent text-accent-ink")}>
       <div className={cn("eyebrow", strong ? "text-accent-ink/80" : "text-ink-2")}>{label}</div>
-      <div
+      <FittedValue
         className={cn(
-          "mt-2 font-display text-[28px] leading-none",
+          "mt-2 min-w-0 font-display text-[28px] leading-none",
           !strong && tone === "good" && "text-good",
           !strong && tone === "bad" && "text-bad",
         )}
-      >
-        {value}
-      </div>
+        value={value}
+      />
       {hint && (
         <div className={cn("mt-1.5 text-[12px] leading-snug", strong ? "text-accent-ink/70" : "text-muted")}>{hint}</div>
       )}

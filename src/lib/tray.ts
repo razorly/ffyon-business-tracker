@@ -3,7 +3,6 @@ import { format } from "date-fns";
 import {
   isTauri,
   listAppointments,
-  listCategories,
   listTransactions,
   unpaidBefore,
   type AppointmentRow,
@@ -11,10 +10,11 @@ import {
 import { readAutoBackup } from "./export";
 import { getAccessStatus } from "./access";
 import { isoDate, moneyNeat, shortDate, timeLabel } from "./format";
+import { listServices, serviceDiscountPrice } from "./sync";
 
 /**
  * The tray menu is built here, not in Rust: this side knows what an
- * appointment is worth and which services have a usual price. Rust draws
+ * appointment is worth and the shared catalogue's current service prices. Rust draws
  * whatever it's handed and sends the clicks back as the events below.
  */
 
@@ -30,16 +30,16 @@ export const TRAY_EVENT = {
 export const QUICK_KEYS = "CommandOrControl+Shift+N";
 export const QUICK_KEYS_LABEL = "Ctrl/⌘ + Shift + N";
 
-interface TrayItem {
-  id: number;
+interface TrayItem<T extends string | number> {
+  id: T;
   label: string;
 }
 
 interface TrayState {
   tooltip: string;
   lines: string[];
-  quickAdd: TrayItem[];
-  markPaid: TrayItem[];
+  quickAdd: TrayItem<string>[];
+  markPaid: TrayItem<number>[];
   backup: boolean;
 }
 
@@ -51,8 +51,8 @@ async function trayState(): Promise<TrayState> {
   const today = isoDate(new Date());
   const now = format(new Date(), "HH:mm");
 
-  const [income, todays, txs, overdue] = await Promise.all([
-    listCategories("income"),
+  const [services, todays, txs, overdue] = await Promise.all([
+    listServices(),
     listAppointments({ from: today, to: today }),
     listTransactions({ from: today, to: today }),
     unpaidBefore(today),
@@ -81,9 +81,9 @@ async function trayState(): Promise<TrayState> {
       .filter(Boolean)
       .join(" · "),
     lines: [takings, diary, ...(untimed ? [`${untimed} appointment${untimed === 1 ? "" : "s"} need${untimed === 1 ? "s" : ""} a time`] : [])],
-    quickAdd: income
-      .filter((c) => c.default_pence != null && c.default_pence > 0)
-      .map((c) => ({ id: c.id, label: `${c.name} — ${moneyNeat(c.default_pence!)}` })),
+    quickAdd: services
+      .filter((service) => service.active && serviceDiscountPrice(service.price_pence, service.discount_percent ?? 0) > 0)
+      .map((service) => ({ id: service.id, label: `${service.name} — ${moneyNeat(serviceDiscountPrice(service.price_pence, service.discount_percent ?? 0))}${service.discount_percent > 0 ? ` (${service.discount_percent}% off)` : ""}` })),
     markPaid: waiting.map((a) => ({ id: a.id, label: waitingLabel(a, today) })),
     backup: readAutoBackup() != null,
   };
@@ -91,7 +91,7 @@ async function trayState(): Promise<TrayState> {
 
 function waitingLabel(a: AppointmentRow, today: string): string {
   const when = a.date === today ? a.time_confirmed === 0 ? "Time to confirm" : timeLabel(a.start_time) : `${shortDate(a.date)}${a.time_confirmed === 0 ? " · time to confirm" : ""}`;
-  const who = a.client_name ?? a.category_name ?? "Appointment";
+  const who = a.client_name ?? (a.service_name || a.category_name || "Appointment");
   return `${when} · ${who}${a.price_pence ? ` — ${moneyNeat(a.price_pence)}` : ""}`;
 }
 

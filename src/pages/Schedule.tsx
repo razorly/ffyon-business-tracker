@@ -148,7 +148,7 @@ function OwedCard({
               onClick={() => onOpen(a)}
               className="min-w-0 flex-1 text-left text-[13.5px] cursor-pointer hover:underline decoration-rose underline-offset-4"
             >
-              <span className="font-medium">{a.client_name ?? a.category_name ?? "Appointment"}</span>
+              <span className="font-medium">{a.client_name || a.service_name || a.category_name || "Appointment"}</span>
               <span className="block text-[12px] text-muted">
                 {shortDate(a.date)} · {a.time_confirmed === 0 ? "Time to confirm" : timeLabel(a.start_time)}
                 {a.client_name && (a.service_name || a.category_name) ? ` · ${a.service_name || a.category_name}` : ""}

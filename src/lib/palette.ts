@@ -20,6 +20,13 @@ export function themedColour(hex: string, dark: boolean): string {
   return slot ? slot.dark : hex;
 }
 
+/** Shared service identities keep the same colour across diary and finance views. */
+export function serviceColour(identity: string): string {
+  let hash = 0;
+  for (const character of identity) hash = (Math.imul(hash, 31) + character.codePointAt(0)!) >>> 0;
+  return PALETTE[hash % PALETTE.length].light;
+}
+
 /** A translucent wash of a category colour — used for appointment blocks. */
 export function tint(hex: string, alpha: number): string {
   const h = hex.replace("#", "");
