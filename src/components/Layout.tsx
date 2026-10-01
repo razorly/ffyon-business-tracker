@@ -89,12 +89,12 @@ function ConnectionStatus() {
 export function PageHeader({ title, subtitle, children }: { title: string; subtitle?: string; children?: React.ReactNode }) {
   return (
     <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
-      <div>
+      <div className="min-w-0">
         <h1 className="font-display text-[38px] leading-none text-ink">{title}</h1>
         <div className="mt-3 h-px w-16 bg-rose" />
         {subtitle && <p className="eyebrow mt-3 text-ink-2">{subtitle}</p>}
       </div>
-      {children && <div className="flex items-center gap-2">{children}</div>}
+      {children && <div className="flex min-w-0 flex-wrap items-center gap-2">{children}</div>}
     </div>
   );
 }

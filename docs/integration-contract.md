@@ -1,4 +1,4 @@
-# Ffyon Integration Contract v1
+# Ffyon Integration Contract v2
 
 This file is public. It contains no private credential or signing key.
 
@@ -15,14 +15,14 @@ This file is public. It contains no private credential or signing key.
 
 ```ts
 type BookingStatus = 'pending' | 'confirmed' | 'rejected' | 'cancelled' | 'no_show';
-type CloudClient = { id: string; account_id: string | null; merged_into: string | null; name: string; email: string; phone: string; disabled: boolean; revision: number; updated_at: string };
-type CloudService = { id: string; name: string; description: string; duration_min: number; price_pence: number; active: boolean; revision: number };
-type CloudAppointment = { id: string; client_id: string; service_id: string | null; service_name: string; date: string; start_time: string; duration_min: number; price_pence: number; notes: string; status: BookingStatus; revision: number; proposed_date: string | null; proposed_start_time: string | null; series_id: string | null; created_at: string; updated_at: string };
+type CloudClient = { id: string; account_id: string | null; merged_into: string | null; name: string; email: string; phone: string; saved_address: string; saved_postcode: string; disabled: boolean; revision: number; updated_at: string };
+type CloudService = { id: string; name: string; description: string; duration_min: number; price_pence: number; discount_percent: number; booking_price_pence: number; active: boolean; revision: number };
+type CloudAppointment = { id: string; client_id: string; service_id: string | null; service_name: string; date: string; start_time: string; time_confirmed: boolean; duration_min: number; price_pence: number; base_price_pence: number | null; discount_percent: number; is_remote: boolean; visit_address: string; visit_postcode: string; notes: string; status: BookingStatus; revision: number; proposed_date: string | null; proposed_start_time: string | null; proposed_time_confirmed: boolean | null; series_id: string | null; created_at: string; updated_at: string };
 type CloudBlock = { id: string; date: string; start_time: string; duration_min: number; label: string; revision: number };
-type BusinessSettings = { booking_enabled: boolean; timezone: 'Europe/London'; slot_minutes: 30; horizon_days: 90; opening_hours: { weekday: number; open: string; close: string }[]; revision: number };
+type BusinessSettings = { booking_enabled: boolean; timezone: 'Europe/London'; slot_minutes: 30; horizon_days: 90; opening_hours: { weekday: number; open: string; close: string }[]; admin_notifications_enabled: boolean; admin_notification_email: string; revision: number };
 type CloudSnapshot = { clients: CloudClient[]; appointments: CloudAppointment[]; services: CloudService[]; blocks: CloudBlock[]; settings: BusinessSettings; cursor: number };
 type CloudChange = { sequence: number; entity: 'client' | 'appointment' | 'service' | 'block' | 'settings'; id: string; record: CloudClient | CloudAppointment | CloudService | CloudBlock | BusinessSettings | null };
-type SyncResponse = { snapshot: CloudSnapshot | null; changes: CloudChange[]; cursor: number; has_more: boolean };
+type SyncResponse = { snapshot: CloudSnapshot | null; changes: CloudChange[]; cursor: number; has_more: boolean; notifications?: { configured: boolean; pending: number; failed: number } };
 type Device = { id: string; name: string; created_at: string; last_seen_at: string | null; revoked_at: string | null };
 type LeaseClaims = { version: 1; site_id: string; device_id: string; token_hash: string; issued_at: number; expires_at: number };
 type SignedLease = { payload: string; signature: string }; // base64url original UTF-8 JSON bytes and Ed25519 signature
@@ -46,6 +46,32 @@ Guest clients have no account. Account profiles remain customer-owned; associate
 - `POST blocks` `{ operation_id, id, date, start_time, duration_min, label }`; `DELETE blocks` JSON `{ operation_id, id, revision }`. Response `{ block }` or `{ ok: true }`.
 - `POST import` `{ operation_id, clients: CloudClientInput[], appointments: CloudAppointmentInput[] }` imports explicit selected legacy records idempotently. Exclude staff notes/ledger. Use same creation shapes, with persisted UUID IDs. Report conflicts before changes; apply selected import atomically.
 - Customer `GET /api/availability?service_id=...&date=...` -> `{ times: string[], services: CloudService[], booking_enabled: boolean }`. Existing customer POST/PATCH routes stay origin/cookie protected, add expected revision on changes and revision in all appointment DTOs.
+
+## Booking Extensions
+
+- `time_confirmed` defaults to true for old rows. False stores `start_time: '00:00'` solely as a compatibility sentinel, renders **Time to confirm**, and never reserves any timed capacity. `proposed_time_confirmed` carries the same distinction for a proposed date. An accepted date-only appointment remains confirmed and all-day until explicitly assigned a time.
+- All admin/manual creation, including date-only and repeating entries, is confirmed directly. Only customer requests and customer change proposals enter the requests inbox.
+- Remote appointments require nonempty `visit_address` and a valid UK `visit_postcode`. Nonremote records clear these fields. `save_visit_address: true` is an explicit creation/edit opt-in to save `saved_address` and `saved_postcode` on the client/profile. Each appointment retains its own address snapshot.
+- Service `price_pence` remains the base price. `discount_percent` is an integer from 0 to 100; `booking_price_pence` is `floor((price_pence * (100 - discount_percent) + 50) / 100)`. Bookings snapshot base price, discount and effective agreed quote. Catalogue edits and retirement never rewrite old quotes or durations.
+- Availability accepts `from` and `to` instead of `date`, for at most 93 calendar days, returning bookable dates within the configured horizon. The customer calendar disables unavailable dates before selection. Capacity, hours, time off and London-local past times are checked again at confirmation; date-only bookings do not block slots.
+
+## Deletion and Notifications
+
+- `DELETE appointments` and `DELETE clients` require admin authorization, operation UUID and expected revision. Customer self-deletion requires account authorization, current password and explicit confirmation. Cancellation remains a separate, reversible history-preserving operation.
+- Deletion physically removes booking/account details, aliases, saved addresses, associated authentication/session/reset data and affected historical personal payloads. Minimal terminal ID tombstones prevent stale imports or retries from recreating deleted identities. Mirror deletion unlinks retained payments and removes linked personal descriptions without changing their amount, date or category. Unrelated manual financial entries remain intact. Privacy deletion has no undo.
+- Admin settings configure `admin_notifications_enabled` and `admin_notification_email`; enabling or sending requires a valid email. This email is admin-only, never included in public catalogue/availability responses.
+- Customer-created requests enqueue an admin notification with booking details when enabled. Manual admin creation does not enqueue a new-request email. Actual confirmation, refusal and cancellation changes notify the account customer through the hosted Resend API. Deletion never sends any notification.
+- Enqueue delivery together with the booking mutation, deduplicate by appointment/revision/event, and preserve identical payload and Resend idempotency key on retry. Mail failure must not undo a committed booking. Delivery state is visible to admins. Private API keys stay in hosted runtime secrets, not the desktop or public source. Resend retains idempotency keys for [24 hours](https://resend.com/changelog/idempotency-keys); indeterminate retries beyond that window must stop for review.
+
+## Remote Maps
+
+- `lookup_postcode` requires native authorization and calls only the fixed [Postcodes.io lookup endpoint](https://postcodes.io/docs/api/lookup-postcode/) with a validated postcode, never the full address or admin credential. Responses are bounded and coordinates validated; authorization is checked again after the request.
+- Remote-only map controls load an OpenStreetMap iframe only after an explicit click and label the pin as an approximate postcode location. CSP permits only the specific map frame origin.
+- `open_appointment_directions` opens a fixed Google Maps directions URL after an explicit click and disclosure that the full address is shared. It is not a generic URL opener and remains native-authorized.
+
+## Desktop Mirror v7
+
+The additive v7 migration supplies time-confirmation, remote address and quote-discount snapshots plus optional saved client address fields. Existing appointments default to timed, nonremote and undiscounted; existing quotes are copied to `base_price_pence`. Legacy databases receive a safety backup before migration. Backup v3 remains readable using optional-field defaults; authoritative cloud records replace stale booking details on the next sync.
 
 ## Native IPC
 

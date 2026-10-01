@@ -5,9 +5,8 @@ import { undoDelete, type DeletedSnapshot } from "./db";
 const UNDO_MS = 12_000;
 
 /**
- * The message shown after anything is deleted, with a way to take it back.
- * Every delete goes through here, so nothing in the app is ever lost to a
- * mis-click. `onUndone` re-reads the data once it's back.
+ * Accounting deletes may be undone; permanent customer/booking deletion cannot.
+ * `onUndone` re-reads the data once it is restored.
  */
 export function toastDeleted(snap: DeletedSnapshot, onUndone: () => void) {
   if (snap.undoable === false) {

@@ -62,6 +62,6 @@ function AppContent() {
   const { dark } = useTheme();
   return <>
     <AccessGate><Shell /></AccessGate>
-    <Toaster position="bottom-right" theme={dark ? "dark" : "light"} richColors closeButton />
+    <Toaster position="bottom-right" theme={dark ? "dark" : "light"} style={{ zIndex: 40 }} richColors closeButton />
   </>;
 }

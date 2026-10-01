@@ -47,6 +47,9 @@ fn legacy_version(conn: &Connection) -> rusqlite::Result<i64> {
     if !has_table(conn, "clients")? {
         return Ok(0);
     }
+    if has_column(conn, "appointments", "time_confirmed")? {
+        return Ok(7);
+    }
     if has_column(conn, "appointments", "remote_id")? {
         return Ok(6);
     }
@@ -89,10 +92,15 @@ fn open(path: &Path) -> Result<DatabaseState, String> {
         legacy_version(&conn)
     }
     .map_err(|e| e.to_string())?;
-    if legacy && version < 6 {
+    if legacy && version < 7 {
         let stamp = crate::access::now_seconds();
+        let upgrade = if version < 6 {
+            "cloud"
+        } else {
+            "booking-features"
+        };
         let backup = path.with_file_name(format!(
-            "ffyon-pre-cloud-{stamp}-{}.db",
+            "ffyon-pre-{upgrade}-{stamp}-{}.db",
             uuid::Uuid::new_v4()
         ));
         conn.backup(DatabaseName::Main, backup, None)
@@ -376,6 +384,166 @@ mod tests {
         }
         assert_eq!(legacy_version(&conn).unwrap(), 3);
         assert!(!has_table(&conn, "_sqlx_migrations").unwrap());
+    }
+
+    #[test]
+    fn v7_upgrade_preserves_existing_quotes_contacts_notes_and_payments() {
+        let conn = Connection::open_in_memory().unwrap();
+        for migration in crate::migrations().into_iter().take(6) {
+            conn.execute_batch(migration.sql).unwrap();
+        }
+        conn.execute_batch("PRAGMA foreign_keys=ON;
+            INSERT INTO clients(id,name,email,phone,notes,remote_id,account_id)
+            VALUES (1,'Existing customer','customer@example.test','123','Private note','client-1','account-1');
+            INSERT INTO transactions(id,type,date,amount_pence,client_id,description)
+            VALUES (1,'income','2026-10-01',2500,1,'Recorded payment');
+            INSERT INTO appointments(id,date,start_time,client_id,price_pence,notes,status,transaction_id,remote_id)
+            VALUES (1,'2026-10-01','09:00',1,2500,'Private booking note','confirmed',1,'booking-1');
+            INSERT INTO appointments(id,date,start_time,client_id,price_pence,status)
+            VALUES (2,'2026-10-02','10:00',1,NULL,'confirmed');").unwrap();
+        conn.execute_batch(crate::migrations()[6].sql).unwrap();
+        assert_eq!(legacy_version(&conn).unwrap(), 7);
+        let details: (i64, i64, String, String, i64, i64, i64) = conn.query_row(
+            "SELECT time_confirmed,is_remote,visit_address,visit_postcode,base_price_pence,discount_percent,transaction_id FROM appointments WHERE id=1",
+            [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?)),
+        ).unwrap();
+        assert_eq!(details, (1, 0, "".into(), "".into(), 2500, 0, 1));
+        assert_eq!(
+            conn.query_row(
+                "SELECT base_price_pence FROM appointments WHERE id=2",
+                [],
+                |row| row.get::<_, Option<i64>>(0)
+            )
+            .unwrap(),
+            None
+        );
+        assert_eq!(
+            conn.query_row("SELECT notes FROM clients WHERE id=1", [], |row| row
+                .get::<_, String>(0))
+                .unwrap(),
+            "Private note"
+        );
+        assert_eq!(
+            conn.query_row("SELECT email FROM clients WHERE id=1", [], |row| row
+                .get::<_, String>(0))
+                .unwrap(),
+            "customer@example.test"
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT amount_pence FROM transactions WHERE id=1",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+            2500
+        );
+
+        conn.authorizer(Some(authorize_sql));
+        conn.execute_batch("UPDATE clients SET saved_address='12 Example Lane',saved_postcode='SW1A 1AA' WHERE id=1;
+            INSERT INTO appointments(date,start_time,time_confirmed,is_remote,visit_address,visit_postcode,price_pence,base_price_pence,discount_percent,status)
+            VALUES ('2026-10-03','00:00',0,1,'12 Example Lane','SW1A 1AA',2000,2500,20,'confirmed');").unwrap();
+        assert!(conn
+            .execute_batch("UPDATE appointments SET time_confirmed=2 WHERE id=3")
+            .is_err());
+        assert!(conn
+            .execute_batch("UPDATE appointments SET is_remote=-1 WHERE id=3")
+            .is_err());
+        assert!(conn
+            .execute_batch("UPDATE appointments SET discount_percent=101 WHERE id=3")
+            .is_err());
+        assert!(conn
+            .execute_batch("UPDATE appointments SET proposed_time_confirmed=2 WHERE id=3")
+            .is_err());
+    }
+
+    #[test]
+    fn v6_file_is_backed_up_before_booking_features_and_only_upgraded_once() {
+        let dir =
+            std::env::temp_dir().join(format!("ffyon-features-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ffyon.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            for migration in crate::migrations().into_iter().take(6) {
+                conn.execute_batch(migration.sql).unwrap();
+            }
+            conn.execute_batch("INSERT INTO clients(name,notes) VALUES ('Existing customer','Private');
+                INSERT INTO transactions(type,date,amount_pence,client_id) VALUES ('income','2026-10-01',2500,1);
+                INSERT INTO appointments(date,start_time,price_pence,status,transaction_id) VALUES ('2026-10-01','09:00',2500,'confirmed',1);").unwrap();
+        }
+        for _ in 0..2 {
+            let state = open(&path).unwrap();
+            let conn = state.0.lock().unwrap();
+            assert_eq!(
+                conn.query_row(
+                    "SELECT base_price_pence FROM appointments WHERE id=1",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+                2500
+            );
+            assert_eq!(
+                conn.query_row(
+                    "SELECT amount_pence FROM transactions WHERE id=1",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+                2500
+            );
+        }
+        let backups: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("ffyon-pre-booking-features-")
+            })
+            .collect();
+        assert_eq!(backups.len(), 1);
+        {
+            let backup = Connection::open(backups[0].path()).unwrap();
+            assert_eq!(legacy_version(&backup).unwrap(), 6);
+            assert_eq!(
+                backup
+                    .query_row(
+                        "SELECT price_pence FROM appointments WHERE id=1",
+                        [],
+                        |row| row.get::<_, i64>(0)
+                    )
+                    .unwrap(),
+                2500
+            );
+            assert_eq!(
+                backup
+                    .query_row(
+                        "SELECT transaction_id FROM appointments WHERE id=1",
+                        [],
+                        |row| row.get::<_, i64>(0)
+                    )
+                    .unwrap(),
+                1
+            );
+        }
+        assert!(dir.starts_with(std::env::temp_dir()));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn metadata_less_v7_is_detected_without_repeating_migration_or_backup() {
+        let conn = Connection::open_in_memory().unwrap();
+        for migration in crate::migrations() {
+            conn.execute_batch(migration.sql).unwrap();
+        }
+        assert_eq!(legacy_version(&conn).unwrap(), 7);
+        assert!(conn
+            .prepare("SELECT saved_address,saved_postcode FROM clients")
+            .is_ok());
+        assert!(!has_table(&conn, "_ffyon_migrations").unwrap());
     }
 
     #[test]

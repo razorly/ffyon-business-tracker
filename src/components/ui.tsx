@@ -48,7 +48,7 @@ export function CardHeader({ title, subtitle, action }: { title: string; subtitl
 }
 
 const fieldBase =
-  "w-full rounded-xl border border-line bg-surface px-3 text-sm text-ink placeholder:text-muted " +
+  "w-full min-w-0 rounded-xl border border-line bg-surface px-3 text-sm text-ink placeholder:text-muted " +
   "focus:outline-none focus:ring-2 focus:ring-rose/50 focus:border-rose";
 
 export const Input = forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
@@ -67,7 +67,7 @@ export const Select = forwardRef<HTMLSelectElement, React.SelectHTMLAttributes<H
 
 export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
   return (
-    <label className="block">
+    <label className="block min-w-0">
       <span className="eyebrow mb-1.5 block text-ink-2">{label}</span>
       {children}
       {hint && <span className="mt-1 block text-xs text-muted">{hint}</span>}
@@ -121,29 +121,33 @@ export function Modal({
   const panel = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      const dialogs = document.querySelectorAll('[role="dialog"][aria-modal="true"]');
+      if (dialogs[dialogs.length - 1] === panel.current) onClose();
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
   if (!open) return null;
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4">
       <div className="absolute inset-0 bg-[#2a1208]/45" onClick={onClose} />
       <div
         ref={panel}
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className={cn("relative w-full rounded-3xl border border-line bg-surface shadow-2xl", width)}
+        className={cn("relative flex max-h-[calc(100dvh-24px)] w-full min-w-0 flex-col rounded-3xl border border-line bg-surface shadow-2xl", width)}
       >
-        <div className="flex items-center justify-between px-6 pt-5">
+        <div className="flex shrink-0 items-center justify-between gap-3 px-4 pt-4 sm:px-6 sm:pt-5">
           <h2 className="font-display text-[22px]">{title}</h2>
           <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close">
             <X size={16} />
           </Button>
         </div>
-        <div className="px-6 pb-6 pt-3">{children}</div>
+        <div className="min-h-0 overflow-y-auto px-4 pb-4 pt-3 sm:px-6 sm:pb-6">{children}</div>
       </div>
     </div>,
     document.body,

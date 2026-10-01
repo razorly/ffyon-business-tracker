@@ -2,6 +2,7 @@ mod tray;
 mod access;
 mod database;
 mod protected_files;
+mod location;
 
 use tauri::Manager;
 
@@ -182,6 +183,21 @@ fn migrations() -> Vec<Migration> {
             CREATE TABLE cloud_settings(id TEXT PRIMARY KEY, data TEXT NOT NULL);
             CREATE TABLE sync_state(key TEXT PRIMARY KEY, value TEXT NOT NULL);
         "#,
+    },
+    Migration {
+        version: 7,
+        sql: r#"
+            ALTER TABLE clients ADD COLUMN saved_address TEXT NOT NULL DEFAULT '';
+            ALTER TABLE clients ADD COLUMN saved_postcode TEXT NOT NULL DEFAULT '';
+            ALTER TABLE appointments ADD COLUMN time_confirmed INTEGER NOT NULL DEFAULT 1 CHECK(time_confirmed IN (0,1));
+            ALTER TABLE appointments ADD COLUMN proposed_time_confirmed INTEGER CHECK(proposed_time_confirmed IN (0,1));
+            ALTER TABLE appointments ADD COLUMN is_remote INTEGER NOT NULL DEFAULT 0 CHECK(is_remote IN (0,1));
+            ALTER TABLE appointments ADD COLUMN visit_address TEXT NOT NULL DEFAULT '';
+            ALTER TABLE appointments ADD COLUMN visit_postcode TEXT NOT NULL DEFAULT '';
+            ALTER TABLE appointments ADD COLUMN base_price_pence INTEGER;
+            ALTER TABLE appointments ADD COLUMN discount_percent INTEGER NOT NULL DEFAULT 0 CHECK(discount_percent BETWEEN 0 AND 100);
+            UPDATE appointments SET base_price_pence=price_pence;
+        "#,
     }]
 }
 
@@ -218,6 +234,8 @@ pub fn run() {
             access::access_check,
             access::access_disconnect,
             access::admin_request,
+            location::lookup_postcode,
+            location::open_appointment_directions,
             database::db_select,
             database::db_execute,
             database::db_batch,

@@ -10,11 +10,13 @@ A small desktop app for tracking income and outgoings for a tanning business. It
 - **Tray**: while the app is running it also sits in the system tray (the menu bar on a Mac), with today's takings, the next appointment, one-click **Quick add** for your usual prices, and **Mark paid** for anything waiting. **Ctrl/⌘ + Shift + N** opens a new entry from whatever else you're in.
 - **Settings**: manage income and expense categories (each can have an optional usual price), export to Excel or CSV (with tax-year presets), save and restore backups, turn on automatic backups, choose what the tray does, check for updates, and switch between light and dark mode.
 
-Anything deleted — an entry, an appointment, a whole repeating run, a client or a category — can be put straight back with **Undo** on the message that appears in the corner. It restores everything the delete touched, so an appointment that was paid comes back paid, with its entry.
+Local financial entry and category deletion offers **Undo**. Shared appointment/account deletion is permanent privacy cleanup with no undo: it removes personal booking details while retaining anonymized recorded payments. Cancellation and disabling an account remain separate actions.
 
 The official app requires an approved admin device. Customers, services and bookings synchronize with the Ffyon website; income, expenses and private notes stay in the local SQLite database on each computer. A website customer account does not unlock the desktop app.
 
 See [Admin setup](docs/admin-setup.md) for Windows/macOS pairing, device access and recovery.
+
+Customer requests need admin approval; manual entries are confirmed directly. Date-only bookings show **Time to confirm** all day without blocking slots. Home visits require an address and postcode, with optional saved addresses and an on-demand postcode map. Service discounts synchronize to the website without changing existing quotes. Shared settings configure admin request emails; the website sends customer status updates through its private hosted Resend configuration. Deletion sends no email.
 
 ### Usual prices
 

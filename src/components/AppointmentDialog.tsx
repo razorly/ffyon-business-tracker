@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { addDays, parseISO } from "date-fns";
 import { toast } from "sonner";
-import { BanknoteArrowDown, CalendarOff, Check, Clock, Repeat, Trash2, Undo2, UserX, X } from "lucide-react";
+import { BanknoteArrowDown, CalendarOff, Check, Clock, MapPin, Repeat, Trash2, Undo2, UserX, X } from "lucide-react";
 import {
   createAppointment,
   createAppointmentSeries,
   createClient,
   deleteAppointment,
   deleteAppointmentSeries,
+  getAppointment,
   listCategories,
   listClients,
   markAppointmentPaid,
@@ -21,7 +22,7 @@ import {
   type Client,
 } from "@/lib/db";
 import { useData } from "@/lib/data";
-import { listServices, type CloudService } from "@/lib/sync";
+import { listServices, serviceDiscountPrice, type CloudService } from "@/lib/sync";
 import { useAccess } from "./AccessGate";
 import {
   durationLabel,
@@ -34,9 +35,9 @@ import {
   timeToMin,
   ukDate,
 } from "@/lib/format";
-import { toastDeleted } from "@/lib/undo";
 import { Button, Field, Input, Modal, Select, Textarea } from "./ui";
 import { ClientCombobox, type ClientChoice } from "./ClientCombobox";
+import { RemoteAppointmentMap } from "./RemoteAppointmentMap";
 
 const DURATIONS = [15, 20, 30, 45, 60, 75, 90, 120];
 const DEFAULT_DURATION = 30;
@@ -62,6 +63,11 @@ export function AppointmentDialog() {
 
   const [date, setDate] = useState("");
   const [start, setStart] = useState("09:00");
+  const [timeConfirmed, setTimeConfirmed] = useState(true);
+  const [remote, setRemote] = useState(false);
+  const [address, setAddress] = useState("");
+  const [postcode, setPostcode] = useState("");
+  const [saveAddress, setSaveAddress] = useState(false);
   const [duration, setDuration] = useState(DEFAULT_DURATION);
   const [categoryId, setCategoryId] = useState("");
   const [serviceId, setServiceId] = useState("");
@@ -88,19 +94,26 @@ export function AppointmentDialog() {
   // Reset the form each time the dialog opens
   useEffect(() => {
     if (!open) return;
+    let alive = true;
     Promise.all([listCategories("income"), listClients(), listServices()]).then(([cats, cls, catalog]) => {
+      if (!alive) return;
       setCategories(cats);
       setClients(cls);
       setServices(catalog);
       const firstService = catalog.find((s) => s.active);
       const first = cats.find((c) => c.service_id === firstService?.id) ?? cats[0];
-      setServiceId(editing?.service_id ?? firstService?.id ?? "");
+      setServiceId(editing ? editing.service_id ?? "" : firstService?.id ?? "");
       setDate(editing?.date ?? draft?.date ?? "");
       setStart(editing?.start_time ?? draft?.start_time ?? "09:00");
+      setTimeConfirmed(editing ? editing.time_confirmed !== 0 : true);
+      setRemote(Boolean(editing?.is_remote));
+      setAddress(editing?.visit_address ?? "");
+      setPostcode(editing?.visit_postcode ?? "");
+      setSaveAddress(false);
       setDuration(editing?.duration_min ?? firstService?.duration_min ?? DEFAULT_DURATION);
       setCategoryId(editing ? String(editing.category_id ?? "") : String(first?.id ?? ""));
       // A service's usual price only ever prefills a new booking.
-      const usual = editing ? null : (firstService?.price_pence ?? first?.default_pence ?? null);
+      const usual = editing ? null : (firstService ? serviceDiscountPrice(firstService.price_pence, firstService.discount_percent ?? 0) : first?.default_pence ?? null);
       setPrice(
         editing?.price_pence != null ? penceToInput(editing.price_pence) : usual != null ? penceToInput(usual) : "",
       );
@@ -116,7 +129,8 @@ export function AppointmentDialog() {
       setDeleting(null);
       // Start a new booking in the client box; leave an existing one alone to read.
       if (!editing && !cid) setTimeout(() => clientRef.current?.querySelector("input")?.focus(), 30);
-    }).catch((e) => setError(e instanceof Error ? e.message : "Could not load the appointment"));
+    }).catch((e) => { if (alive) setError(e instanceof Error ? e.message : "Could not load the appointment"); });
+    return () => { alive = false; };
   }, [open, editing, draft]);
 
   const pickService = (id: string) => {
@@ -125,7 +139,7 @@ export function AppointmentDialog() {
     setCategoryId(String(categories.find((c) => c.service_id === id)?.id ?? ""));
     if (service) {
       setDuration(service.duration_min);
-      setPrice(penceToInput(service.price_pence));
+      setPrice(penceToInput(serviceDiscountPrice(service.price_pence, service.discount_percent ?? 0)));
       setPriceIsDefault(true);
     }
   };
@@ -140,8 +154,12 @@ export function AppointmentDialog() {
       setError("Pick a date");
       return null;
     }
-    if (!start) {
+    if (timeConfirmed && !start) {
       setError("Pick a start time");
+      return null;
+    }
+    if (remote && (!address.trim() || !postcode.trim())) {
+      setError("Enter the visit address and postcode");
       return null;
     }
     let pence: number | null = null;
@@ -153,14 +171,26 @@ export function AppointmentDialog() {
       }
     }
     let clientId: number | null = client.id;
-    if (!clientId && client.name.trim()) clientId = await createClient({ name: client.name });
+    if (!clientId && client.name.trim()) {
+      clientId = await createClient({ name: client.name });
+      setClient({ id: clientId, name: client.name.trim() });
+    }
+    const selectedService = services.find((service) => service.id === serviceId);
+    const sameQuote = editing && editing.service_id === (serviceId || null) && editing.price_pence === pence;
     const input = {
       date,
-      start_time: start,
+      start_time: timeConfirmed ? start : "00:00",
+      time_confirmed: timeConfirmed,
       duration_min: duration,
       client_id: clientId,
       category_id: categoryId ? Number(categoryId) : null,
       price_pence: pence,
+      base_price_pence: sameQuote ? editing.base_price_pence : priceIsDefault && selectedService ? selectedService.price_pence : pence,
+      discount_percent: sameQuote ? editing.discount_percent : priceIsDefault ? selectedService?.discount_percent ?? 0 : 0,
+      is_remote: remote,
+      visit_address: remote ? address.trim() : "",
+      visit_postcode: remote ? postcode.trim().toUpperCase() : "",
+      save_visit_address: remote && saveAddress,
       notes: notes.trim() || null,
       service_id: serviceId || null,
       customer_notes: customerNotes.trim(),
@@ -236,7 +266,12 @@ export function AppointmentDialog() {
     if (!editing) return;
     setBusy(true);
     try {
-      await setAppointmentStatus(editing.id, next, editing.cloud_revision);
+      if (next === "confirmed") {
+        const id = await save();
+        if (id == null) return;
+        const current = await getAppointment(id);
+        await setAppointmentStatus(id, next, current?.cloud_revision);
+      } else await setAppointmentStatus(editing.id, next, editing.cloud_revision);
       toast.success(done);
       refresh();
       onClose();
@@ -250,38 +285,36 @@ export function AppointmentDialog() {
 
   const askDelete = async () => {
     if (!editing) return;
-    setDeleting(editing.series_id ? await seriesRemaining(editing.series_id, editing.date) : 1);
+    try { setDeleting(editing.series_id ? await seriesRemaining(editing.series_id, editing.date) : 1); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "Could not load this booking"); }
   };
 
   const remove = async (scope: "one" | "rest") => {
     if (!editing) return;
-    setDeleting(null);
+    setBusy(true);
     try {
-      if (scope === "one" && editing.remote_id) {
-        await setAppointmentStatus(editing.id, "cancelled", editing.cloud_revision);
-        toast.success("Appointment cancelled");
-        refresh();
-        onClose();
-        return;
-      }
-      const removed =
-        scope === "rest" && editing.series_id
-          ? await deleteAppointmentSeries(editing.series_id, editing.date)
-          : await deleteAppointment(editing.id);
-      toastDeleted(removed, refresh);
+      if (scope === "rest" && editing.series_id) await deleteAppointmentSeries(editing.series_id, editing.date);
+      else await deleteAppointment(editing.id);
+      setDeleting(null);
+      toast.success(scope === "rest" ? "Appointments deleted. Payments retained." : "Appointment deleted. Payments retained.");
       refresh();
       onClose();
     } catch (e) {
       console.error(e);
-      setError(e instanceof Error ? e.message : "Couldn't cancel it — please try again.");
-    }
+      setDeleting(null);
+      setError(e instanceof Error ? e.message : "Could not delete the booking. Please try again.");
+    } finally { setBusy(false); }
   };
 
-  const finish = start ? minToTime(timeToMin(start) + duration) : null;
+  const finish = timeConfirmed && start ? minToTime(timeToMin(start) + duration) : null;
   const dates = date && repeatDays ? repeatDates() : [];
+  const savedClient = clients.find((item) => item.id === client.id);
+  const selectedService = services.find((service) => service.id === serviceId);
+  const quoteDiscount = editing && editing.service_id === (serviceId || null) && editing.price_pence === parseAmount(price)
+    ? editing.discount_percent : priceIsDefault ? selectedService?.discount_percent ?? 0 : 0;
 
   return (
-    <Modal open={open} onClose={onClose} title={editing ? "Appointment" : "New appointment"} width="max-w-lg">
+    <Modal open={open} onClose={() => { if (!busy) onClose(); }} title={editing ? "Appointment" : "New appointment"} width="max-w-lg">
       <form onSubmit={submit} className="space-y-4">
         <div ref={clientRef}>
           <Field label="Client">
@@ -301,12 +334,14 @@ export function AppointmentDialog() {
         </Field>
         {editing?.service_name && editing.service_id === serviceId && services.find((s) => s.id === serviceId)?.name !== editing.service_name && <p className="text-xs text-muted">Booked service: {editing.service_name}</p>}
 
-        <div className="grid grid-cols-3 gap-3">
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!timeConfirmed} disabled={offline} className="accent-accent" onChange={(event) => { setTimeConfirmed(!event.target.checked); if (!event.target.checked && start === "00:00") setStart("09:00"); }} /><Clock size={14} className="text-muted" /> Time to confirm</label>
+        {!timeConfirmed && <p className="text-xs text-muted">Shown all day until a time is agreed. Other booking slots stay available.</p>}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <Field label="Date">
             <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} disabled={offline} />
           </Field>
           <Field label="Start">
-            <Input type="time" step={300} value={start} onChange={(e) => setStart(e.target.value)} disabled={offline} />
+            <Input type="time" step={300} value={timeConfirmed ? start : ""} onChange={(e) => setStart(e.target.value)} disabled={offline || !timeConfirmed} />
           </Field>
           <Field label="Length" hint={finish ? `Finishes ${timeLabel(finish)}` : undefined}>
             <Select value={duration} onChange={(e) => setDuration(Number(e.target.value))} disabled={offline}>
@@ -335,6 +370,16 @@ export function AppointmentDialog() {
             />
           </div>
         </Field>
+        {quoteDiscount > 0 && <p className="text-xs font-medium text-good">{quoteDiscount}% service discount included in this quote.</p>}
+
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={remote} disabled={offline} onChange={(event) => setRemote(event.target.checked)} className="accent-accent" /><MapPin size={14} className="text-muted" /> Home visit</label>
+        {remote && <div className="space-y-3 border-l-2 border-line pl-3">
+          {savedClient?.saved_address && savedClient?.saved_postcode && <Button type="button" size="sm" disabled={offline} onClick={() => { setAddress(savedClient.saved_address); setPostcode(savedClient.saved_postcode); }}>Use saved address</Button>}
+          <Field label="Address"><Textarea required maxLength={500} autoComplete="street-address" value={address} disabled={offline} onChange={(event) => setAddress(event.target.value)} /></Field>
+          <Field label="Postcode"><Input required maxLength={12} autoComplete="postal-code" value={postcode} disabled={offline} onChange={(event) => setPostcode(event.target.value.toUpperCase())} /></Field>
+          <label className="flex items-start gap-2 text-xs text-ink-2"><input type="checkbox" checked={saveAddress} disabled={offline || (!client.id && !client.name.trim())} onChange={(event) => setSaveAddress(event.target.checked)} className="mt-0.5 accent-accent" />Save this address for future appointments</label>
+          {address.trim() && postcode.trim() && <RemoteAppointmentMap address={address} postcode={postcode} />}
+        </div>}
 
         {!editing && (
           <div className="grid grid-cols-3 gap-3">
@@ -388,16 +433,16 @@ export function AppointmentDialog() {
 
         <PaymentStrip editing={editing} busy={busy} offline={offline} received={received} onReceived={setReceived} onPay={payNow} onUnpaid={markUnpaid} onStatus={changeStatus} />
 
-        <div className="flex items-center justify-between pt-1">
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
           {editing ? (
             <Button type="button" variant="ghost" className="text-bad" disabled={offline || busy} onClick={askDelete}>
-              <Trash2 size={15} /> Cancel booking
+              <Trash2 size={15} /> Delete booking
             </Button>
           ) : (
             <span />
           )}
-          <div className="flex gap-2">
-            <Button type="button" onClick={onClose}>
+          <div className="ml-auto flex flex-wrap gap-2">
+            <Button type="button" disabled={busy} onClick={onClose}>
               Cancel
             </Button>
             <Button type="submit" variant={editing ? "secondary" : "primary"} disabled={busy || (offline && !editing)}>
@@ -407,9 +452,9 @@ export function AppointmentDialog() {
         </div>
       </form>
 
-      <Modal open={deleting != null} onClose={() => setDeleting(null)} title="Cancel appointment?" width="max-w-sm">
+      <Modal open={deleting != null} onClose={() => { if (!busy) setDeleting(null); }} title="Delete appointment?" width="max-w-sm">
         <div className="text-sm text-ink-2">
-          This cancels the booking on the website and frees its time. Existing payments remain in your money tracking.
+          This permanently removes the booking and its details from the app and website. Existing payments stay in your financial history, without booking details. This cannot be undone.
           {deleting != null && deleting > 1 && (
             <p className="mt-2">
               It repeats — <b>{deleting}</b> of them are still to come, this one included.
@@ -417,14 +462,14 @@ export function AppointmentDialog() {
           )}
         </div>
         <div className="mt-5 flex flex-wrap justify-end gap-2">
-          <Button onClick={() => setDeleting(null)}>Cancel</Button>
+          <Button disabled={busy} onClick={() => setDeleting(null)}>Keep booking</Button>
           {deleting != null && deleting > 1 && (
-            <Button variant="danger" onClick={() => remove("rest")}>
-              Cancel all {deleting}
+            <Button variant="danger" disabled={busy} onClick={() => remove("rest")}>
+              Delete all {deleting}
             </Button>
           )}
-          <Button variant="danger" onClick={() => remove("one")}>
-            {deleting != null && deleting > 1 ? "Just this one" : "Cancel booking"}
+          <Button variant="danger" disabled={busy} onClick={() => remove("one")}>
+            {deleting != null && deleting > 1 ? "Just this one" : "Delete booking"}
           </Button>
         </div>
       </Modal>
@@ -460,7 +505,7 @@ function PaymentStrip({
     );
   }
 
-  const statusLabel = editing.status === "confirmed" ? "Confirmed" : editing.status === "pending" ? "Awaiting approval" : editing.status === "rejected" ? "Rejected" : editing.status === "cancelled" ? "Cancelled" : "Didn't show";
+  const statusLabel = editing.status === "confirmed" ? `Confirmed${editing.time_confirmed === 0 ? " · time to confirm" : ""}` : editing.status === "pending" ? "Awaiting approval" : editing.status === "rejected" ? "Rejected" : editing.status === "cancelled" ? "Cancelled" : "Didn't show";
   if (editing.transaction_id != null) {
     return (
       <div className="flex items-center gap-3 rounded-2xl bg-surface-2 px-4 py-3">
@@ -485,7 +530,7 @@ function PaymentStrip({
       <Clock size={16} className="text-muted" />
       <span className="min-w-0 flex-1 text-[13px] text-ink-2">Awaiting approval</span>
       <Button type="button" disabled={busy || offline} onClick={() => onStatus("rejected", "Request rejected")}><X size={14} /> Reject</Button>
-      <Button type="button" variant="primary" disabled={busy || offline} onClick={() => onStatus("confirmed", "Appointment accepted")}><Check size={14} /> Accept</Button>
+      <Button type="button" variant="primary" disabled={busy || offline} onClick={() => onStatus("confirmed", "Appointment accepted")}><Check size={14} /> {editing.time_confirmed === 0 ? "Accept date" : "Accept"}</Button>
     </div>;
   }
 
@@ -505,6 +550,11 @@ function PaymentStrip({
       </div>
     );
   }
+
+  if (editing.price_pence === 0) return <div className="space-y-2">
+    <p className="flex items-center gap-2 rounded-xl bg-surface-2 px-4 py-3 text-[13px] text-ink-2"><Check size={15} className="shrink-0 text-good" />{statusLabel} · No payment due.</p>
+    <div className="flex flex-wrap justify-end gap-1"><Button type="button" variant="ghost" size="sm" disabled={busy || offline} onClick={() => onStatus("cancelled", "Marked as cancelled")}><CalendarOff size={14} />Cancelled</Button><Button type="button" variant="ghost" size="sm" disabled={busy || offline} onClick={() => onStatus("no_show", "Marked as a no-show")}><UserX size={14} />Didn't show</Button></div>
+  </div>;
 
   return (
     <div>

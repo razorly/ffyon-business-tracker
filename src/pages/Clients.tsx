@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { CalendarPlus, Check, Link2, Pencil, Plus, Search, ShieldCheck, Trash2, UserRound, Users } from "lucide-react";
+import { CalendarPlus, Check, Link2, MapPin, Pencil, Plus, Search, ShieldCheck, ShieldOff, Trash2, UserRound, Users } from "lucide-react";
 import {
   createClient,
+  deleteClient,
   listClients,
   listAppointments,
   listTransactions,
@@ -30,6 +31,9 @@ export function Clients() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [editing, setEditing] = useState<Partial<ClientWithStats> | null>(null);
   const [toDelete, setToDelete] = useState<ClientWithStats | null>(null);
+  const [toDisable, setToDisable] = useState<ClientWithStats | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   const [linking, setLinking] = useState(false);
   const [accountId, setAccountId] = useState("");
   const [linkBusy, setLinkBusy] = useState(false);
@@ -159,9 +163,10 @@ export function Clients() {
                   <Button variant="ghost" size="icon" onClick={() => setEditing(selected)} aria-label="Edit client">
                     <Pencil size={14} />
                   </Button>
-                  <Button variant="ghost" size="icon" disabled={access.state !== "online" || !selected.remote_id || !!selected.disabled} onClick={() => setToDelete(selected)} title={selected.remote_id ? "Disable client" : "Import this client before managing website access"} aria-label="Disable client">
-                    <Trash2 size={14} />
+                  <Button variant="ghost" size="icon" disabled={access.state !== "online" || !selected.remote_id || !!selected.disabled} onClick={() => setToDisable(selected)} title={selected.remote_id ? "Disable client" : "Import this client before managing website access"} aria-label="Disable client">
+                    <ShieldOff size={14} />
                   </Button>
+                  <Button variant="ghost" size="icon" disabled={access.state !== "online"} onClick={() => { setDeleteError(""); setToDelete(selected); }} title={selected.account_id ? "Delete account" : "Delete client"} aria-label={selected.account_id ? "Delete account" : "Delete client"}><Trash2 size={14} /></Button>
                 </div>
               </div>
               <div className="flex flex-wrap gap-2 px-5 pt-3">
@@ -169,6 +174,7 @@ export function Clients() {
                 {!selected.account_id && selected.remote_id && <Button size="sm" disabled={access.state !== "online"} onClick={() => { setLinking(true); setAccountId(""); }}><Link2 size={14} /> Link website account</Button>}
               </div>
               {selected.notes && <p className="mx-5 mt-3 break-words rounded-lg bg-surface-2 px-3 py-2 text-[13px] text-ink-2">{selected.notes}</p>}
+              {selected.saved_address && selected.saved_postcode && <p className="mx-5 mt-3 whitespace-pre-line break-words text-[13px] text-ink-2"><MapPin size={13} className="mr-1 inline" />{selected.saved_address}<span className="block text-xs text-muted">{selected.saved_postcode}</span></p>}
               <div className="grid grid-cols-1 gap-2 px-5 pt-4 sm:grid-cols-3">
                 <MiniStat label="Visits" value={String(selected.visits)} />
                 <MiniStat label="Total spent" value={money(selected.total_pence)} />
@@ -196,7 +202,7 @@ export function Clients() {
                       >
                         <span className="min-w-0 flex-1">
                           <span className="font-medium">{shortDate(a.date)}</span>
-                          <span className="text-muted"> · {timeLabel(a.start_time)}</span>
+                          <span className="text-muted"> · {a.time_confirmed === 0 ? "Time to confirm" : timeLabel(a.start_time)}</span>
                           {(a.service_name || a.category_name) && <span className="block text-[12px] text-muted">{a.service_name || a.category_name}</span>}
                         </span>
                         {a.transaction_id != null && <Check size={13} strokeWidth={3} className="shrink-0 text-good" />}
@@ -211,7 +217,7 @@ export function Clients() {
 
               <div className="eyebrow px-5 pt-5 pb-2 text-ink-2">Appointment history</div>
               {pastAppointments.length ? <ul className="max-h-[300px] divide-y divide-line overflow-y-auto">
-                {pastAppointments.map((a) => <li key={a.id}><button onClick={() => openEditAppointment(a)} className="flex w-full flex-wrap items-center justify-between gap-2 px-5 py-2 text-left text-[13px] hover:bg-surface-2 cursor-pointer"><span>{shortDate(a.date)} · {timeLabel(a.start_time)}<span className="block text-xs text-muted">{a.service_name || a.category_name || "Appointment"}</span></span><span className="text-xs text-muted">{a.status.replace("_", " ")}{a.transaction_id != null ? " · paid" : ""}</span></button></li>)}
+                {pastAppointments.map((a) => <li key={a.id}><button onClick={() => openEditAppointment(a)} className="flex w-full flex-wrap items-center justify-between gap-2 px-5 py-2 text-left text-[13px] hover:bg-surface-2 cursor-pointer"><span>{shortDate(a.date)} · {a.time_confirmed === 0 ? "Time to confirm" : timeLabel(a.start_time)}<span className="block text-xs text-muted">{a.service_name || a.category_name || "Appointment"}{a.is_remote ? " · home visit" : ""}</span></span><span className="text-xs text-muted">{a.status.replace("_", " ")}{a.transaction_id != null ? " · paid" : ""}</span></button></li>)}
               </ul> : <p className="px-5 text-[13px] text-muted">No appointment history yet.</p>}
 
               <div className="flex flex-wrap items-center justify-between gap-2 px-5 pt-5 pb-2">
@@ -246,24 +252,29 @@ export function Clients() {
       />
 
       <ConfirmModal
-        open={!!toDelete}
-        onClose={() => setToDelete(null)}
+        open={!!toDisable}
+        onClose={() => setToDisable(null)}
         title="Disable client?"
         confirmLabel="Disable"
         message={
           <>
-            <b>{toDelete?.name}</b> will lose website access. Appointments and financial history are preserved. Existing bookings are not cancelled.
+            <b>{toDisable?.name}</b> will lose website access. Appointments and financial history are preserved. Existing bookings are not cancelled.
           </>
         }
         onConfirm={async () => {
-          if (!toDelete) return;
+          if (!toDisable) return;
           try {
-            await updateClient({ ...toDelete, disabled: 1 });
+            await updateClient({ ...toDisable, disabled: 1 });
             refresh();
             toast.success("Client disabled");
           } catch (e) { setClientError(e instanceof Error ? e.message : "Could not disable this client"); }
         }}
       />
+      <Modal open={!!toDelete} onClose={() => { if (!deleteBusy) setToDelete(null); }} title={toDelete?.account_id ? "Delete account?" : "Delete client?"} width="max-w-sm">
+        <p className="break-words text-sm text-ink-2"><b>{toDelete?.name}</b>{toDelete?.account_id ? "'s website account, contact details and all appointments" : "'s contact details and all appointments"} will be permanently removed. Recorded payments stay in financial history without client or booking details. This cannot be undone.</p>
+        {deleteError && <p role="alert" className="mt-3 text-sm text-bad">{deleteError}</p>}
+        <div className="mt-5 flex flex-wrap justify-end gap-2"><Button disabled={deleteBusy} onClick={() => setToDelete(null)}>Keep client</Button><Button variant="danger" disabled={deleteBusy || access.state !== "online"} onClick={async () => { if (!toDelete) return; setDeleteBusy(true); setDeleteError(""); try { await deleteClient(toDelete.id); setSelectedId(null); setToDelete(null); refresh(); toast.success("Client removed. Payments retained."); } catch (cause) { setDeleteError(cause instanceof Error ? cause.message : "Could not delete the client"); } finally { setDeleteBusy(false); } }}><Trash2 size={14} />{deleteBusy ? "Deleting..." : toDelete?.account_id ? "Delete account" : "Delete client"}</Button></div>
+      </Modal>
       <Modal open={linking && !!selected} onClose={() => setLinking(false)} title="Link website account">
         <form className="space-y-4" onSubmit={async (e) => { e.preventDefault(); if (!selected || !accountId) return; setLinkBusy(true); try { await linkClientAccount(selected.id, accountId); refresh(); setLinking(false); toast.success("Website account linked"); } catch (cause) { setClientError(cause instanceof Error ? cause.message : "Could not link the account"); } finally { setLinkBusy(false); } }}>
           <p className="text-sm text-ink-2">Choose the existing website account belonging to {selected?.name}. Booking history is preserved.</p>
@@ -289,6 +300,8 @@ function ClientForm({
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [notes, setNotes] = useState("");
+  const [savedAddress, setSavedAddress] = useState("");
+  const [savedPostcode, setSavedPostcode] = useState("");
   const [lastClient, setLastClient] = useState<typeof client>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -300,17 +313,20 @@ function ClientForm({
     setPhone(client?.phone ?? "");
     setEmail(client?.email ?? "");
     setNotes(client?.notes ?? "");
+    setSavedAddress(client?.saved_address ?? "");
+    setSavedPostcode(client?.saved_postcode ?? "");
     setError(null);
   }
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
+    if (Boolean(savedAddress.trim()) !== Boolean(savedPostcode.trim())) { setError("Enter both a saved address and postcode, or leave both blank."); return; }
     setBusy(true); setError(null);
     try {
       let id = client?.id;
-      if (id) await updateClient({ id, name, email, phone, notes, cloud_revision: client?.cloud_revision });
-      else id = await createClient({ name, email, phone, notes });
+      if (id) await updateClient({ id, name, email, phone, notes, saved_address: savedAddress, saved_postcode: savedPostcode, cloud_revision: client?.cloud_revision });
+      else id = await createClient({ name, email, phone, notes, saved_address: savedAddress, saved_postcode: savedPostcode });
       toast.success(client?.id ? "Client updated" : "Client added");
       onSaved(id);
       onClose();
@@ -331,6 +347,8 @@ function ClientForm({
         <Field label="Private staff notes (optional)">
           <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Preferred shade, skin notes, allergies…" />
         </Field>
+        <Field label="Saved visit address (optional)"><Textarea maxLength={500} autoComplete="street-address" value={savedAddress} onChange={(event) => setSavedAddress(event.target.value)} disabled={access.state !== "online"} /></Field>
+        <Field label="Saved postcode (optional)"><Input maxLength={12} autoComplete="postal-code" value={savedPostcode} onChange={(event) => setSavedPostcode(event.target.value.toUpperCase())} disabled={access.state !== "online"} /></Field>
         {error && <p role="alert" className="text-sm text-bad">{error}</p>}
         <div className="flex justify-end gap-2 pt-1">
           <Button type="button" onClick={onClose}>

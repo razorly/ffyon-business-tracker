@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Archive, CalendarOff, Check, Pencil, Plus, RotateCcw, Save, Trash2, Upload } from "lucide-react";
+import { Archive, Bell, CalendarOff, Check, Pencil, Plus, RotateCcw, Save, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { listAppointments, listCategories, type AppointmentRow, type Category } from "@/lib/db";
 import { useData } from "@/lib/data";
 import { durationLabel, isoDate, money, parseAmount, penceToInput, timeLabel, timeToMin, ukDate } from "@/lib/format";
 import {
-  createBlock, deleteBlock, getImportPreview, importLegacyRecords, listBlocks, listCloudSettings,
-  listServices, saveService, setServiceCategory, updateCloudSettings,
+  createBlock, deleteBlock, getImportPreview, getSyncState, importLegacyRecords, listBlocks, listCloudSettings, listNotificationStatus,
+  listServices, saveService, serviceDiscountPrice, setServiceCategory, subscribeSync, updateCloudSettings,
 } from "@/lib/sync";
 import { useAccess } from "@/components/AccessGate";
 import { Button, Card, CardHeader, Field, Input, Modal, Select, Textarea } from "@/components/ui";
@@ -56,6 +56,7 @@ export function SiteBusinessSettings() {
       {error && <p className="col-span-full text-sm text-bad" role="alert">{error}</p>}
       <ServiceCatalogCard services={services} categories={categories} online={online} loaded={loaded} onSaved={refresh} />
       <OpeningHoursCard settings={settings} services={services} online={online} loaded={loaded} onSaved={refresh} />
+      <RequestNotificationsCard settings={settings} online={online} onSaved={refresh} />
       <TimeOffCard blocks={blocks} online={online} loaded={loaded} onSaved={refresh} />
       <ImportReviewCard preview={preview} appointments={appointments} blocks={blocks} online={online} loaded={loaded} onSaved={refresh} />
     </>
@@ -100,7 +101,7 @@ function ServiceCatalogCard({ services, categories, online, loaded, onSaved }: {
               <li key={service.id} className="flex items-start justify-between gap-3 py-3">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2 text-sm font-medium"><span className="break-words">{service.name}</span>{!service.active && <span className="text-xs font-normal text-muted">Archived</span>}</div>
-                  <p className="mt-1 text-xs text-ink-2">{money(service.price_pence)} · {durationLabel(service.duration_min)}</p>
+                  <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-2">{service.discount_percent > 0 ? <><span className="text-muted line-through">{money(service.price_pence)}</span><span className="font-semibold text-good">{money(serviceDiscountPrice(service.price_pence, service.discount_percent))}</span><span className="text-good">{service.discount_percent}% off</span></> : <span>{money(service.price_pence)}</span>}<span>· {durationLabel(service.duration_min)}</span></p>
                   {service.description && <p className="mt-1 break-words text-xs text-muted">{service.description}</p>}
                   <p className="mt-1 text-xs text-muted">Income category: {category?.name ?? "Uncategorised"}</p>
                 </div>
@@ -126,12 +127,15 @@ function ServiceForm({ service, categories, online, onClose, onSaved }: {
   const [description, setDescription] = useState(service?.description ?? "");
   const [duration, setDuration] = useState(String(service?.duration_min ?? 30));
   const [price, setPrice] = useState(penceToInput(service?.price_pence ?? 0));
+  const [discountEnabled, setDiscountEnabled] = useState((service?.discount_percent ?? 0) > 0);
+  const [discount, setDiscount] = useState(String(service?.discount_percent || 20));
   const [categoryId, setCategoryId] = useState(String(categories.find((category) => category.service_id === service?.id)?.id ?? ""));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const durationMin = Number(duration);
   const pricePence = parseAmount(price);
-  const valid = name.trim().length >= 2 && name.trim().length <= 100 && description.length <= 1000 && Number.isInteger(durationMin) && durationMin >= 5 && durationMin <= 480 && pricePence !== null && pricePence <= 1_000_000;
+  const discountPercent = discountEnabled ? Number(discount) : 0;
+  const valid = name.trim().length >= 2 && name.trim().length <= 100 && description.length <= 1000 && Number.isInteger(durationMin) && durationMin >= 5 && durationMin <= 480 && pricePence !== null && pricePence <= 1_000_000 && Number.isInteger(discountPercent) && discountPercent >= 0 && discountPercent <= 100 && (!discountEnabled || discountPercent >= 1);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!online || !valid || pricePence === null || busy) return;
@@ -139,7 +143,7 @@ function ServiceForm({ service, categories, online, onClose, onSaved }: {
     setError("");
     const id = service?.id ?? crypto.randomUUID();
     try {
-      await saveService({ id, name: name.trim(), description: description.trim(), duration_min: durationMin, price_pence: pricePence, active: service?.active ?? true, ...(service ? { revision: service.revision } : {}) });
+      await saveService({ id, name: name.trim(), description: description.trim(), duration_min: durationMin, price_pence: pricePence, discount_percent: discountPercent, active: service?.active ?? true, ...(service ? { revision: service.revision } : {}) });
       try {
         await setServiceCategory(id, categoryId ? Number(categoryId) : null);
       } catch (mappingError) {
@@ -162,12 +166,67 @@ function ServiceForm({ service, categories, online, onClose, onSaved }: {
           <Field label="Duration (minutes)"><Input type="number" required min={5} max={480} step={1} value={duration} onChange={(event) => setDuration(event.target.value)} /></Field>
           <Field label="Price (GBP)"><Input required inputMode="decimal" value={price} onChange={(event) => setPrice(event.target.value)} /></Field>
         </div>
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={discountEnabled} onChange={(event) => setDiscountEnabled(event.target.checked)} className="accent-accent" />Discount enabled</label>
+        <Field label="Discount (%)"><Input type="number" min={1} max={100} step={1} disabled={!discountEnabled} value={discount} onChange={(event) => setDiscount(event.target.value)} /></Field>
+        {pricePence !== null && valid && <p className="text-sm text-ink-2">Booking price: <strong className={discountPercent > 0 ? "text-good" : ""}>{money(serviceDiscountPrice(pricePence, discountPercent))}</strong>{discountPercent > 0 ? ` (${discountPercent}% off ${money(pricePence)})` : ""}</p>}
+        <p className="text-xs text-muted">Existing bookings keep their original quoted price.</p>
         <Field label="Income category"><Select value={categoryId} onChange={(event) => setCategoryId(event.target.value)}><option value="">Uncategorised</option>{categories.filter((category) => !category.service_id || category.service_id === service?.id).map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</Select></Field>
         {error && <p className="text-sm text-bad" role="alert">{error}</p>}
         <div className="flex justify-end gap-2"><Button type="button" disabled={busy} onClick={onClose}>Cancel</Button><Button variant="primary" type="submit" disabled={!online || !valid || busy}><Save size={14} /> {busy ? "Saving..." : "Save"}</Button></div>
       </form>
     </Modal>
   );
+}
+
+function RequestNotificationsCard({ settings, online, onSaved }: { settings: BusinessSettings | null; online: boolean; onSaved: () => void }) {
+  const [sync, setSync] = useState(getSyncState);
+  const [enabled, setEnabled] = useState(false);
+  const [email, setEmail] = useState("");
+  const [revision, setRevision] = useState<number | null>(null);
+  const [dirty, setDirty] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => subscribeSync(setSync), []);
+  useEffect(() => {
+    let alive = true;
+    listNotificationStatus().then((notifications) => {
+      if (alive && getSyncState().last_synced_at === null) setSync((current) => ({ ...current, notifications }));
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  useEffect(() => {
+    if (!settings || dirty) return;
+    setEnabled(settings.admin_notifications_enabled ?? false);
+    setEmail(settings.admin_notification_email ?? "");
+    setRevision(settings.revision);
+  }, [settings, dirty]);
+  const stale = settings && dirty && settings.revision !== revision;
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!settings || !online || stale || busy || !event.currentTarget.reportValidity()) return;
+    setBusy(true); setError("");
+    try {
+      await updateCloudSettings({ ...settings, revision: revision ?? settings.revision, admin_notifications_enabled: enabled, admin_notification_email: email.trim() });
+      setDirty(false); toast.success("Request notifications saved"); onSaved();
+    } catch (cause) { setError(failureMessage(cause)); onSaved(); }
+    finally { setBusy(false); }
+  };
+  return <Card className="self-start">
+    <CardHeader title="Request notifications" />
+    <form className="space-y-4 px-5 pb-5" onSubmit={submit}>
+      <OnlineNotice online={online} />
+      <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={enabled} disabled={!settings || !online || busy} onChange={(event) => { setEnabled(event.target.checked); setDirty(true); }} className="mt-1 accent-accent" /><Bell size={15} className="mt-0.5 shrink-0 text-muted" />Email new website requests</label>
+      <Field label="Notification email"><Input type="email" autoComplete="email" required={enabled} value={email} disabled={!settings || !online || busy} onChange={(event) => { setEmail(event.target.value); setDirty(true); }} /></Field>
+      {sync.notifications ? <div className="space-y-1 text-xs">
+        <p className={sync.notifications.configured ? "text-muted" : "text-bad"}>{sync.notifications.configured ? "Email sender configured" : "Email sender is not configured on the site."}</p>
+        {sync.notifications.pending > 0 && <p className="text-muted">{sync.notifications.pending} email {sync.notifications.pending === 1 ? "delivery" : "deliveries"} pending</p>}
+        {sync.notifications.failed > 0 && <p className="text-bad" role="alert">{sync.notifications.failed} email {sync.notifications.failed === 1 ? "delivery has" : "deliveries have"} failed.</p>}
+      </div> : <p className="text-xs text-muted">Email delivery status is not yet available.</p>}
+      {stale && <p className="text-xs text-bad" role="alert">Settings changed on another device. Reload before saving.</p>}
+      {error && <p className="text-sm text-bad" role="alert">{error}</p>}
+      <div className="flex flex-wrap justify-end gap-2">{dirty && <Button type="button" disabled={busy} onClick={() => { setDirty(false); setError(""); }}><RotateCcw size={14} />{stale ? "Reload latest" : "Reset"}</Button>}<Button type="submit" variant="primary" disabled={!settings || !online || !dirty || busy || Boolean(stale) || (enabled && !email.trim())}><Save size={14} />{busy ? "Saving..." : "Save notifications"}</Button></div>
+    </form>
+  </Card>;
 }
 
 function openingDays(settings: BusinessSettings): OpeningDay[] {
@@ -309,12 +368,13 @@ export function ImportReviewCard({ preview, appointments, blocks, online, loaded
   const selectedAppointments = appointmentIds.filter((id) => preview.appointments.some((appointment) => appointment.id === id));
   const conflicts = useMemo(() => {
     const chosen = preview.appointments.filter((appointment) => appointmentIds.includes(appointment.id));
-    const confirmed = appointments.filter((appointment) => appointment.remote_id && appointment.status === "confirmed");
+    const confirmed = appointments.filter((appointment) => appointment.remote_id && appointment.status === "confirmed" && appointment.time_confirmed !== 0);
     const messages: string[] = [];
     for (const [index, appointment] of chosen.entries()) {
-      const name = `${ukDate(appointment.date)} ${timeLabel(appointment.start_time)} (${appointment.client_name ?? "No client"})`;
+      const name = `${ukDate(appointment.date)} ${appointment.time_confirmed === 0 ? "Time to confirm" : timeLabel(appointment.start_time)} (${appointment.client_name ?? "No client"})`;
       if (!appointment.client_id) { messages.push(`${name}: choose a client in the diary before importing.`); continue; }
-      const overlaps = (other: { date: string; start_time: string; duration_min: number }) => other.date === appointment.date && timeToMin(other.start_time) < timeToMin(appointment.start_time) + appointment.duration_min && timeToMin(appointment.start_time) < timeToMin(other.start_time) + other.duration_min;
+      if (appointment.time_confirmed === 0) continue;
+      const overlaps = (other: { date: string; start_time: string; duration_min: number; time_confirmed?: number }) => other.time_confirmed !== 0 && other.date === appointment.date && timeToMin(other.start_time) < timeToMin(appointment.start_time) + appointment.duration_min && timeToMin(appointment.start_time) < timeToMin(other.start_time) + other.duration_min;
       if (confirmed.some(overlaps) || chosen.slice(0, index).some(overlaps)) messages.push(`${name}: overlaps another confirmed appointment.`);
       if (blocks.some(overlaps)) messages.push(`${name}: overlaps time off.`);
     }
@@ -339,7 +399,7 @@ export function ImportReviewCard({ preview, appointments, blocks, online, loaded
       <div className="space-y-4 px-5 pb-5"><OnlineNotice online={online} />
         {!loaded ? <p className="text-sm text-muted">Loading existing records...</p> : !preview.clients.length && !preview.appointments.length ? <p className="flex items-center gap-2 text-sm text-muted"><Check size={15} /> All existing clients and diary entries are linked.</p> : <>
           {preview.clients.length > 0 && <div><div className="mb-2 flex flex-wrap items-center justify-between gap-2"><span className="text-sm font-medium">Clients ({preview.clients.length})</span><Button size="sm" variant="ghost" disabled={!online || busy} onClick={() => { setClientIds(selectedClients.length === preview.clients.length ? [] : preview.clients.map((client) => client.id)); setReviewed(false); }}>{selectedClients.length === preview.clients.length ? "Clear" : "Select all"}</Button></div><div className="max-h-48 space-y-2 overflow-auto pr-1">{preview.clients.map((client) => <label key={client.id} className="flex items-start gap-2 text-[13px]"><input type="checkbox" disabled={!online || busy} checked={selectedClients.includes(client.id)} onChange={() => toggle(client.id, clientIds, setClientIds)} className="mt-0.5 accent-accent" /><span className="min-w-0 break-words">{client.name}{client.phone && <span className="ml-2 text-xs text-muted">{client.phone}</span>}</span></label>)}</div></div>}
-          {preview.appointments.length > 0 && <div><div className="mb-2 flex flex-wrap items-center justify-between gap-2"><span className="text-sm font-medium">Diary entries ({preview.appointments.length})</span><Button size="sm" variant="ghost" disabled={!online || busy} onClick={() => { setAppointmentIds(selectedAppointments.length === preview.appointments.length ? [] : preview.appointments.map((appointment) => appointment.id)); setReviewed(false); }}>{selectedAppointments.length === preview.appointments.length ? "Clear" : "Select all"}</Button></div><div className="max-h-60 space-y-2 overflow-auto pr-1">{preview.appointments.map((appointment) => <label key={appointment.id} className="flex items-start gap-2 text-[13px]"><input type="checkbox" disabled={!online || busy} checked={selectedAppointments.includes(appointment.id)} onChange={() => toggle(appointment.id, appointmentIds, setAppointmentIds)} className="mt-0.5 accent-accent" /><span className="min-w-0 break-words">{appointment.client_name ?? "No client"}<span className="mt-0.5 block text-xs text-muted">{ukDate(appointment.date)} · {timeLabel(appointment.start_time)} · {durationLabel(appointment.duration_min)} · {money(appointment.price_pence ?? 0)}</span></span></label>)}</div></div>}
+          {preview.appointments.length > 0 && <div><div className="mb-2 flex flex-wrap items-center justify-between gap-2"><span className="text-sm font-medium">Diary entries ({preview.appointments.length})</span><Button size="sm" variant="ghost" disabled={!online || busy} onClick={() => { setAppointmentIds(selectedAppointments.length === preview.appointments.length ? [] : preview.appointments.map((appointment) => appointment.id)); setReviewed(false); }}>{selectedAppointments.length === preview.appointments.length ? "Clear" : "Select all"}</Button></div><div className="max-h-60 space-y-2 overflow-auto pr-1">{preview.appointments.map((appointment) => <label key={appointment.id} className="flex items-start gap-2 text-[13px]"><input type="checkbox" disabled={!online || busy} checked={selectedAppointments.includes(appointment.id)} onChange={() => toggle(appointment.id, appointmentIds, setAppointmentIds)} className="mt-0.5 accent-accent" /><span className="min-w-0 break-words">{appointment.client_name ?? "No client"}<span className="mt-0.5 block text-xs text-muted">{ukDate(appointment.date)} · {appointment.time_confirmed === 0 ? "Time to confirm" : timeLabel(appointment.start_time)} · {durationLabel(appointment.duration_min)} · {money(appointment.price_pence ?? 0)}</span></span></label>)}</div></div>}
           {conflicts.length > 0 && <div className="border-l-2 border-bad pl-3 text-xs text-bad" role="alert"><p className="mb-1 font-medium">Resolve {conflicts.length} import {conflicts.length === 1 ? "conflict" : "conflicts"}</p><ul className="space-y-1">{conflicts.slice(0, 12).map((conflict, index) => <li key={index}>{conflict}</li>)}</ul>{conflicts.length > 12 && <p className="mt-1">And {conflicts.length - 12} more.</p>}</div>}
           <label className="flex items-start gap-2 text-xs text-ink-2"><input type="checkbox" checked={reviewed} disabled={!online || busy} onChange={(event) => setReviewed(event.target.checked)} className="mt-0.5 accent-accent" />I have reviewed the selected records. Private notes and financial entries stay on this computer.</label>
           {error && <p className="text-sm text-bad" role="alert">{error}</p>}

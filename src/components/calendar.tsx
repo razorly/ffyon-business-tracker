@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { format, isSameDay, isSameMonth, isToday } from "date-fns";
-import { Check, Clock } from "lucide-react";
+import { Check, Clock, MapPin } from "lucide-react";
 import type { AppointmentRow } from "@/lib/db";
 import type { CloudBlock } from "@/lib/sync";
 import { isoDate, minToTime, money, moneyNeat, timeLabel, timeToMin } from "@/lib/format";
@@ -44,7 +44,7 @@ function groupByDay(rows: AppointmentRow[]) {
     if (day) day.push(a);
     else byDay.set(a.date, [a]);
   }
-  for (const day of byDay.values()) day.sort((a, b) => timeToMin(a.start_time) - timeToMin(b.start_time) || a.id - b.id);
+  for (const day of byDay.values()) day.sort((a, b) => a.time_confirmed - b.time_confirmed || timeToMin(a.start_time) - timeToMin(b.start_time) || a.id - b.id);
   return byDay;
 }
 
@@ -89,6 +89,7 @@ export function TimeGrid({ days, rows, blocks = [], onOpen, onNew }: CalendarPro
     let from = DEFAULT_START_HOUR;
     let to = DEFAULT_END_HOUR;
     for (const a of rows) {
+      if (a.time_confirmed === 0) continue;
       from = Math.min(from, Math.floor(timeToMin(a.start_time) / 60));
       to = Math.max(to, Math.ceil(endMin(a) / 60));
     }
@@ -103,6 +104,7 @@ export function TimeGrid({ days, rows, blocks = [], onOpen, onNew }: CalendarPro
   const gridStart = startHour * 60;
   const height = (endHour - startHour) * HOUR_PX;
   const byDay = groupByDay(rows);
+  const hasUntimed = rows.some((appointment) => appointment.time_confirmed === 0);
 
   const nowMin = now.getHours() * 60 + now.getMinutes();
   const nowVisible = nowMin >= gridStart && nowMin <= endHour * 60;
@@ -125,6 +127,16 @@ export function TimeGrid({ days, rows, blocks = [], onOpen, onNew }: CalendarPro
         ))}
       </div>
 
+      {hasUntimed && <div className="relative flex border-t border-line bg-surface-2/40 pl-14" aria-label="All-day appointments awaiting a time">
+        <span className="absolute left-0 top-3 w-12 text-right text-[10px] text-muted">All day</span>
+        {days.map((day) => <div key={day.toISOString()} className="min-w-0 flex-1 space-y-1 border-l border-line px-1 py-2">
+          {(byDay.get(isoDate(day)) ?? []).filter((appointment) => appointment.time_confirmed === 0).map((appointment) => <button key={appointment.id} type="button" onClick={() => onOpen(appointment)} title={`${title(appointment)} · Time to confirm · ${statusNote(appointment.status)}`} className={cn("w-full min-w-0 rounded-md border border-dashed border-line bg-surface px-2 py-1.5 text-left text-[11px] hover:bg-accent-soft cursor-pointer", offStatus(appointment) && "opacity-60")}>
+            <span className="flex items-center gap-1 font-medium"><Clock size={11} className="shrink-0" /><span className="truncate">{title(appointment)}</span>{!!appointment.is_remote && <MapPin size={11} className="ml-auto shrink-0" />}</span>
+            <span className="mt-0.5 block text-[10px] text-muted">Time to confirm</span>
+          </button>)}
+        </div>)}
+      </div>}
+
       {/* Hour labels and hour lines share the same offsets, so they can't drift apart. */}
       <div className="relative border-t border-line" style={{ height }}>
         {hours.map((h, i) => (
@@ -138,7 +150,7 @@ export function TimeGrid({ days, rows, blocks = [], onOpen, onNew }: CalendarPro
 
         <div className="flex h-full pl-14">
           {days.map((d) => {
-            const dayRows = byDay.get(isoDate(d)) ?? [];
+            const dayRows = (byDay.get(isoDate(d)) ?? []).filter((appointment) => appointment.time_confirmed !== 0);
             return (
               <div
                 key={d.toISOString()}
@@ -208,7 +220,7 @@ function Block({
         e.stopPropagation();
         onOpen(a);
       }}
-      title={`${timeLabel(a.start_time)} · ${title(a)}${a.price_pence != null ? ` · ${money(a.price_pence)}` : ""} · ${statusNote(a.status)}${paid ? " · paid" : ""}`}
+      title={`${timeLabel(a.start_time)} · ${title(a)}${a.price_pence != null ? ` · ${money(a.price_pence)}` : ""} · ${statusNote(a.status)}${paid ? " · paid" : ""}${a.is_remote ? " · home visit" : ""}`}
       className={cn(
         "absolute z-[1] overflow-hidden rounded-lg border-l-[3px] px-2 py-1 text-left leading-tight cursor-pointer",
         "transition-[filter] hover:brightness-[0.97] dark:hover:brightness-110",
@@ -227,6 +239,7 @@ function Block({
         {short && <span className="tabular shrink-0 text-ink-2">{timeLabel(a.start_time)}</span>}
         <span className={cn("truncate font-medium", off && "line-through")}>{title(a)}</span>
         {a.status === "pending" && <Clock size={11} className="ml-auto shrink-0 text-muted" />}
+        {!!a.is_remote && <MapPin size={11} className="shrink-0 text-muted" />}
         {paid && <Check size={11} strokeWidth={3} className="ml-auto shrink-0 text-good" />}
       </span>
       {!short && (
@@ -302,12 +315,12 @@ export function MonthGrid({
                       <button
                         key={a.id}
                         type="button"
-                        title={`${title(a)} · ${statusNote(a.status)}${a.transaction_id != null ? " · paid" : ""}`}
+                        title={`${title(a)} · ${a.time_confirmed === 0 ? "Time to confirm · " : ""}${statusNote(a.status)}${a.transaction_id != null ? " · paid" : ""}${a.is_remote ? " · home visit" : ""}`}
                         onClick={(e) => {
                           e.stopPropagation();
                           onOpen(a);
                         }}
-                        className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-[3px] text-left text-[11.5px] cursor-pointer hover:brightness-[0.97] dark:hover:brightness-110"
+                        className="flex w-full flex-wrap items-center gap-x-1.5 gap-y-0.5 rounded-md px-1.5 py-[3px] text-left text-[11.5px] cursor-pointer hover:brightness-[0.97] dark:hover:brightness-110"
                         style={{ background: tint(colour, dark ? 0.2 : 0.12) }}
                       >
                         {/* filled dot = paid, hollow = still to be paid */}
@@ -319,11 +332,12 @@ export function MonthGrid({
                               : { boxShadow: `inset 0 0 0 1.5px ${colour}` }
                           }
                         />
-                        <span className="tabular shrink-0 text-muted">{timeLabel(a.start_time)}</span>
-                        <span className={cn("truncate text-ink", offStatus(a) && "line-through opacity-65")}>
+                        {a.time_confirmed !== 0 && <span className="tabular shrink-0 text-muted">{timeLabel(a.start_time)}</span>}
+                        <span className={cn("min-w-0 flex-1 truncate text-ink", offStatus(a) && "line-through opacity-65")}>
                           {title(a)}
                         </span>
-                        {a.status === "pending" && <Clock size={10} className="ml-auto shrink-0 text-muted" />}
+                        {(a.status === "pending" || a.time_confirmed === 0) && <Clock size={10} className="ml-auto shrink-0 text-muted" />}
+                        {a.time_confirmed === 0 && <span className="basis-full text-[10px] text-muted">Time to confirm</span>}
                       </button>
                     );
                   })}

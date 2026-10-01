@@ -64,7 +64,8 @@ async function trayState(): Promise<TrayState> {
   const outToday = total("expense");
 
   const booked = todays.filter((a) => a.status === "confirmed");
-  const next = booked.find((a) => a.start_time >= now);
+  const next = booked.find((a) => a.time_confirmed !== 0 && a.start_time >= now);
+  const untimed = booked.filter((a) => a.time_confirmed === 0).length;
   const takings = `Today: ${moneyNeat(inToday)} in${outToday ? ` · ${moneyNeat(outToday)} out` : ""}`;
   const diary = next
     ? `Next: ${timeLabel(next.start_time)} ${next.client_name ?? "appointment"}`
@@ -73,13 +74,13 @@ async function trayState(): Promise<TrayState> {
       : "Nothing booked today";
 
   // Today's bookings first, then the oldest debts working backwards.
-  const waiting = [...booked.filter((a) => a.transaction_id == null), ...[...overdue].reverse()].slice(0, MAX_WAITING);
+  const waiting = [...booked.filter((a) => a.transaction_id == null), ...[...overdue].reverse()].filter((appointment) => appointment.price_pence != null && appointment.price_pence > 0).slice(0, MAX_WAITING);
 
   return {
     tooltip: [`Ffyon — ${moneyNeat(inToday)} in today`, next && `next ${timeLabel(next.start_time)}`]
       .filter(Boolean)
       .join(" · "),
-    lines: [takings, diary],
+    lines: [takings, diary, ...(untimed ? [`${untimed} appointment${untimed === 1 ? "" : "s"} need${untimed === 1 ? "s" : ""} a time`] : [])],
     quickAdd: income
       .filter((c) => c.default_pence != null && c.default_pence > 0)
       .map((c) => ({ id: c.id, label: `${c.name} — ${moneyNeat(c.default_pence!)}` })),
@@ -89,7 +90,7 @@ async function trayState(): Promise<TrayState> {
 }
 
 function waitingLabel(a: AppointmentRow, today: string): string {
-  const when = a.date === today ? timeLabel(a.start_time) : shortDate(a.date);
+  const when = a.date === today ? a.time_confirmed === 0 ? "Time to confirm" : timeLabel(a.start_time) : `${shortDate(a.date)}${a.time_confirmed === 0 ? " · time to confirm" : ""}`;
   const who = a.client_name ?? a.category_name ?? "Appointment";
   return `${when} · ${who}${a.price_pence ? ` — ${moneyNeat(a.price_pence)}` : ""}`;
 }

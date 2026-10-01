@@ -12,7 +12,7 @@ import {
   startOfMonth,
   startOfWeek,
 } from "date-fns";
-import { BanknoteArrowDown, ChevronLeft, ChevronRight, Plus } from "lucide-react";
+import { BanknoteArrowDown, ChevronLeft, ChevronRight, Clock, Plus } from "lucide-react";
 import { isOwed, listAppointments, markAppointmentPaid, unpaidBefore, type AppointmentRow } from "@/lib/db";
 import { useData, useLoad } from "@/lib/data";
 import { listBlocks } from "@/lib/sync";
@@ -44,9 +44,11 @@ export function Schedule() {
   const paid = rows.filter((r) => r.date >= period.countFrom && r.date <= period.countTo && r.transaction_id != null)
     .reduce((s, r) => s + (r.paid_amount_pence ?? 0), 0);
   const owed = counted.filter(isOwed).reduce((s, r) => s + (r.price_pence ?? 0), 0);
+  const untimed = counted.filter((appointment) => appointment.time_confirmed === 0);
 
   // Past bookings never marked paid. Not tied to the week on screen — it's a standing to-do list.
-  const [overdue] = useLoad(() => unpaidBefore(isoDate(new Date())), [], []);
+  const [overdueRows] = useLoad(() => unpaidBefore(isoDate(new Date())), [], []);
+  const overdue = overdueRows.filter((appointment) => appointment.price_pence !== 0);
 
   const showsToday = period.days.some((d) => isToday(d));
   const openNew = (date: string, start_time: string) => {
@@ -64,7 +66,7 @@ export function Schedule() {
           <Button variant="ghost" size="icon" onClick={() => step(-1)} aria-label={`Previous ${view}`}>
             <ChevronLeft size={16} />
           </Button>
-          <span className="min-w-[200px] px-2 text-center font-display text-[18px]">{period.label}</span>
+          <span className="min-w-0 px-1 text-center font-display text-[16px] sm:min-w-[200px] sm:px-2 sm:text-[18px]">{period.label}</span>
           <Button variant="ghost" size="icon" onClick={() => step(1)} aria-label={`Next ${view}`}>
             <ChevronRight size={16} />
           </Button>
@@ -84,15 +86,20 @@ export function Schedule() {
         </Button>
       </PageHeader>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4">
         <Stat label="Confirmed appointments" value={String(counted.length)} />
         <Stat label="Paid" value={money(paid)} tone="good" hint="Counted in your money" />
         <Stat label="Still to collect" value={money(owed)} hint="Not in your money until you mark it paid" />
       </div>
 
-      <Card className="mt-4 overflow-hidden">
+      {untimed.length > 0 && <section className="mt-4 border-l-2 border-accent pl-3" aria-label="Appointments needing a confirmed time">
+        <p className="flex items-center gap-2 text-sm font-medium"><Clock size={15} /> Time to confirm ({untimed.length})</p>
+        <div className="mt-2 flex flex-wrap gap-2">{untimed.map((appointment) => <Button key={appointment.id} size="sm" className="max-w-full" onClick={() => openEditAppointment(appointment)} title={`Confirm time for ${appointment.client_name || "appointment"}`}><Clock size={12} className="shrink-0" /><span className="min-w-0 truncate">{shortDate(appointment.date)} · {appointment.client_name || appointment.service_name || "Appointment"}</span></Button>)}</div>
+      </section>}
+
+      <Card className="mt-4 max-w-full overflow-x-auto">
         {view === "month" ? (
-          <MonthGrid
+          <div className="min-w-[640px]"><MonthGrid
             month={anchor}
             days={period.days}
             rows={rows}
@@ -103,9 +110,9 @@ export function Schedule() {
               setAnchor(d);
               setView("day");
             }}
-          />
+          /></div>
         ) : (
-          <div className="py-3 pr-3">
+          <div className={view === "week" ? "min-w-[640px] py-3 pr-3" : "py-3 pr-3"}>
             <TimeGrid days={period.days} rows={rows} blocks={blocks} onOpen={openEditAppointment} onNew={openNew} />
           </div>
         )}
@@ -143,7 +150,7 @@ function OwedCard({
             >
               <span className="font-medium">{a.client_name ?? a.category_name ?? "Appointment"}</span>
               <span className="block text-[12px] text-muted">
-                {shortDate(a.date)} · {timeLabel(a.start_time)}
+                {shortDate(a.date)} · {a.time_confirmed === 0 ? "Time to confirm" : timeLabel(a.start_time)}
                 {a.client_name && (a.service_name || a.category_name) ? ` · ${a.service_name || a.category_name}` : ""}
               </span>
             </button>

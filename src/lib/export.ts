@@ -98,14 +98,7 @@ export async function loadBackup(): Promise<number | null> {
   const parsed = JSON.parse(await invoke<string>("protected_read_text_file", { path }));
   if (!validateBackup(parsed)) throw new Error("That file isn't a Ffyon backup.");
 
-  // Keep the current data so a failed restore can be rolled back.
-  const previous = await exportAll();
-  try {
-    await restoreAll(parsed);
-  } catch (e) {
-    await restoreAll(previous);
-    throw e;
-  }
+  await restoreAll(parsed);
   return parsed.transactions.length;
 }
 

@@ -798,7 +798,10 @@ impl AdminOperation {
             Self::Pairing | Self::ClientsLink | Self::AppointmentSeries | Self::Import => {
                 method == Method::POST
             }
-            Self::Clients | Self::Appointments | Self::Services => {
+            Self::Clients | Self::Appointments => {
+                method == Method::POST || method == Method::PATCH || method == Method::DELETE
+            }
+            Self::Services => {
                 method == Method::POST || method == Method::PATCH
             }
             Self::Settings => method == Method::PUT,
@@ -995,6 +998,11 @@ mod tests {
     fn admin_operations_have_fixed_routes_and_methods() {
         assert!(AdminOperation::Sync.permits(&Method::GET));
         assert!(!AdminOperation::Sync.permits(&Method::POST));
+        assert!(AdminOperation::Clients.permits(&Method::DELETE));
+        assert!(AdminOperation::Appointments.permits(&Method::DELETE));
+        assert!(!AdminOperation::Services.permits(&Method::DELETE));
+        assert!(!AdminOperation::ClientsLink.permits(&Method::DELETE));
+        assert!(!AdminOperation::Devices.permits(&Method::DELETE));
         assert!(serde_json::from_str::<AdminOperation>("\"https://evil.example\"").is_err());
     }
 
