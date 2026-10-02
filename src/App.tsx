@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect, type ReactNode } from "react";
 import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Toaster, toast } from "sonner";
 import { DataProvider } from "@/lib/data";
@@ -13,12 +13,16 @@ import { AppointmentDialog } from "@/components/AppointmentDialog";
 import { TrayBridge } from "@/components/TrayBridge";
 import { AccessGate } from "@/components/AccessGate";
 import { SyncBridge } from "@/components/SyncBridge";
-import { InboxPage } from "@/pages/Inbox";
-import { Dashboard } from "@/pages/Dashboard";
-import { Schedule } from "@/pages/Schedule";
-import { Monthly } from "@/pages/Monthly";
-import { Clients } from "@/pages/Clients";
-import { Settings } from "@/pages/Settings";
+const InboxPage = lazy(() => import("@/pages/Inbox").then(module => ({ default: module.InboxPage })));
+const Dashboard = lazy(() => import("@/pages/Dashboard").then(module => ({ default: module.Dashboard })));
+const Schedule = lazy(() => import("@/pages/Schedule").then(module => ({ default: module.Schedule })));
+const Monthly = lazy(() => import("@/pages/Monthly").then(module => ({ default: module.Monthly })));
+const Clients = lazy(() => import("@/pages/Clients").then(module => ({ default: module.Clients })));
+const Settings = lazy(() => import("@/pages/Settings").then(module => ({ default: module.Settings })));
+
+function Page({ children }: { children: ReactNode }) {
+  return <Suspense fallback={<p className="p-6 text-muted" role="status">Loading…</p>}>{children}</Suspense>;
+}
 
 function Shell() {
   // One quiet copy a day, if she's set a folder for it.
@@ -37,13 +41,13 @@ function Shell() {
           <SyncBridge />
           <Routes>
             <Route element={<Layout />}>
-              <Route index element={<Dashboard />} />
-              <Route path="schedule" element={<Schedule />} />
-              <Route path="inbox" element={<InboxPage />} />
+              <Route index element={<Page><Dashboard /></Page>} />
+              <Route path="schedule" element={<Page><Schedule /></Page>} />
+              <Route path="inbox" element={<Page><InboxPage /></Page>} />
               <Route path="requests" element={<Navigate to="/inbox" replace />} />
-              <Route path="monthly" element={<Monthly />} />
-              <Route path="clients" element={<Clients />} />
-              <Route path="settings" element={<Settings />} />
+              <Route path="monthly" element={<Page><Monthly /></Page>} />
+              <Route path="clients" element={<Page><Clients /></Page>} />
+              <Route path="settings" element={<Page><Settings /></Page>} />
             </Route>
           </Routes>
         </HashRouter>

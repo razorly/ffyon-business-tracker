@@ -81,6 +81,8 @@ export function AppointmentDialog() {
   // true while the price box still holds a service's usual price the user hasn't touched
   const [priceIsDefault, setPriceIsDefault] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [loadedFor, setLoadedFor] = useState<typeof appointment | null>(null);
+  const ready = loadedFor === appointment;
   // null when closed, otherwise how many of this booking's run are still to come
   const [deleting, setDeleting] = useState<number | null>(null);
   const clientRef = useRef<HTMLDivElement>(null);
@@ -91,6 +93,9 @@ export function AppointmentDialog() {
   useEffect(() => {
     if (!open) return;
     let alive = true;
+    setLoadedFor(null);
+    setError(null);
+    setDeleting(null);
     Promise.all([listClients(), listServices()]).then(([cls, catalog]) => {
       if (!alive) return;
       setClients(cls);
@@ -120,8 +125,9 @@ export function AppointmentDialog() {
       setRepeatTimes(4);
       setError(null);
       setDeleting(null);
+      setLoadedFor(appointment);
       // Start a new booking in the client box; leave an existing one alone to read.
-      if (!editing && !cid) setTimeout(() => clientRef.current?.querySelector("input")?.focus(), 30);
+      if (!editing && !cid) setTimeout(() => alive && clientRef.current?.querySelector("input")?.focus(), 30);
     }).catch((e) => { if (alive) setError(e instanceof Error ? e.message : "Could not load the appointment"); });
     return () => { alive = false; };
   }, [open, editing, draft]);
@@ -149,6 +155,7 @@ export function AppointmentDialog() {
 
   /** Validates and saves. Returns the appointment id, or null if something's missing. */
   const save = async (): Promise<number | null> => {
+    if (!ready) return null;
     const selectedService = services.find((service) => service.id === serviceId);
     const preservesBookedService = Boolean(editing && (editing.service_id ?? "") === serviceId);
     if (!preservesBookedService && (!selectedService || !selectedService.active)) {
@@ -163,8 +170,16 @@ export function AppointmentDialog() {
       setError("Pick a start time");
       return null;
     }
+    if (timeConfirmed && timeToMin(start) + duration > 1440) {
+      setError("The appointment must finish by midnight. Choose an earlier time or a shorter length.");
+      return null;
+    }
     if (remote && (!address.trim() || !postcode.trim())) {
       setError("Enter the visit address and postcode");
+      return null;
+    }
+    if ((!editing || editing.remote_id) && !client.name.trim()) {
+      setError("Choose a client or enter a new client's name.");
       return null;
     }
     let pence: number | null = null;
@@ -174,6 +189,10 @@ export function AppointmentDialog() {
         setError("Enter a price, e.g. 25 or 27.50");
         return null;
       }
+    }
+    if (!editing && pence == null) {
+      setError("Enter the agreed total price before booking.");
+      return null;
     }
     let clientId: number | null = client.id;
     if (!clientId && client.name.trim()) {
@@ -212,6 +231,7 @@ export function AppointmentDialog() {
 
   /** Saves, then runs `action` on the saved appointment. Anything that throws lands in the form. */
   const run = async (action: (id: number) => Promise<void>, done: string) => {
+    if (busy || !ready) return;
     setBusy(true);
     try {
       const id = await save();
@@ -235,9 +255,9 @@ export function AppointmentDialog() {
   };
 
   const payNow = async () => {
-    if (!editing) return;
+    if (!editing || busy || !ready) return;
     const pence = parseAmount(received);
-    if (pence == null || pence <= 0) return setError("Enter the amount received before recording payment");
+    if (pence == null || !Number.isSafeInteger(pence) || pence <= 0) return setError("Enter the amount received before recording payment");
     setBusy(true);
     try {
       await markAppointmentPaid(editing.id, pence);
@@ -252,7 +272,7 @@ export function AppointmentDialog() {
   };
 
   const markUnpaid = async () => {
-    if (!editing) return;
+    if (!editing || busy || !ready) return;
     setBusy(true);
     try {
       await markAppointmentUnpaid(editing.id);
@@ -267,7 +287,7 @@ export function AppointmentDialog() {
   };
 
   const changeStatus = async (next: AppointmentStatus, done: string) => {
-    if (!editing) return;
+    if (!editing || busy || !ready) return;
     setBusy(true);
     try {
       if (next === "confirmed") {
@@ -311,6 +331,7 @@ export function AppointmentDialog() {
   };
 
   const finish = timeConfirmed && start ? minToTime(timeToMin(start) + duration) : null;
+  const finishesAtMidnight = timeConfirmed && start && timeToMin(start) + duration === 1440;
   const dates = date && repeatDays ? repeatDates() : [];
   const savedClient = clients.find((item) => item.id === client.id);
   const selectedService = services.find((service) => service.id === serviceId);
@@ -322,10 +343,13 @@ export function AppointmentDialog() {
 
   return (
     <Modal open={open} onClose={() => { if (!busy) onClose(); }} title={editing ? "Appointment" : "New appointment"} width="max-w-lg">
-      <form onSubmit={submit} className="space-y-4">
+      {!ready && !error && <p role="status" className="mb-3 text-sm text-muted">Loading appointment details…</p>}
+      {!ready && error && <p role="alert" className="mb-3 text-sm text-bad">{error}</p>}
+      <form onSubmit={submit}>
+        <fieldset disabled={busy || !ready} className="space-y-4">
         <div ref={clientRef}>
           <Field label="Client">
-            <fieldset disabled={offline}><ClientCombobox clients={clients} value={client} onChange={setClient} /></fieldset>
+            <fieldset disabled={offline}><ClientCombobox clients={clients} value={client} onChange={setClient} required={!editing || Boolean(editing.remote_id)} placeholder={!editing || editing.remote_id ? "Search or add a client" : "Search or add a client (optional)"} /></fieldset>
           </Field>
         </div>
 
@@ -354,7 +378,7 @@ export function AppointmentDialog() {
           <Field label="Start">
             <Input type="time" step={300} value={timeConfirmed ? start : ""} onChange={(e) => setStart(e.target.value)} disabled={offline || !timeConfirmed} />
           </Field>
-          <Field label="Length" hint={finish ? `Finishes ${timeLabel(finish)}` : undefined}>
+          <Field label="Length" hint={finish ? `Finishes ${finishesAtMidnight ? "midnight" : timeLabel(finish)}` : undefined}>
             <Select value={duration} onChange={(e) => setDuration(Number(e.target.value))} disabled={offline}>
               {Array.from(new Set([...DURATIONS, duration])).sort((a, b) => a - b).map((d) => (
                 <option key={d} value={d}>
@@ -365,7 +389,7 @@ export function AppointmentDialog() {
           </Field>
         </div>
 
-        <Field label="Price" hint={priceIsDefault ? "Usual price — type over it if this one's different" : undefined}>
+        <Field label="Price (agreed total)" hint={remote ? "Include any home-visit fee in this total." : priceIsDefault ? "Usual price — type over it if this one's different" : undefined}>
           <div className="relative">
             <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted">£</span>
             <Input
@@ -440,7 +464,7 @@ export function AppointmentDialog() {
           </p>
         )}
 
-        {error && <p className="text-[13px] text-bad">{error}</p>}
+        {ready && error && <p role="alert" className="text-[13px] text-bad">{error}</p>}
 
         <PaymentStrip editing={editing} busy={busy} offline={offline} received={received} onReceived={setReceived} onPay={payNow} onUnpaid={markUnpaid} onStatus={changeStatus} />
 
@@ -461,6 +485,7 @@ export function AppointmentDialog() {
             </Button>
           </div>
         </div>
+        </fieldset>
       </form>
 
       <Modal open={deleting != null} onClose={() => { if (!busy) setDeleting(null); }} title="Delete appointment?" width="max-w-sm">
@@ -519,7 +544,7 @@ function PaymentStrip({
   const statusLabel = editing.status === "confirmed" ? `Confirmed${editing.time_confirmed === 0 ? " · time to confirm" : ""}` : editing.status === "pending" ? "Awaiting approval" : editing.status === "rejected" ? "Rejected" : editing.status === "cancelled" ? "Cancelled" : "Didn't show";
   if (editing.transaction_id != null) {
     return (
-      <div className="flex items-center gap-3 rounded-2xl bg-surface-2 px-4 py-3">
+      <div className="space-y-2"><div className="flex flex-wrap items-center gap-3 rounded-2xl bg-surface-2 px-4 py-3">
         <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-good/15 text-good">
           <Check size={15} strokeWidth={3} />
         </span>
@@ -532,7 +557,9 @@ function PaymentStrip({
         >
           <Undo2 size={15} /> Mark unpaid
         </Button>
-      </div>
+      </div><div className="flex flex-wrap justify-end gap-1">
+        {editing.status === "confirmed" ? <><Button type="button" variant="ghost" size="sm" disabled={busy || offline} onClick={() => onStatus("cancelled", "Marked as cancelled. Payment retained.")}><CalendarOff size={14} />Cancelled</Button><Button type="button" variant="ghost" size="sm" disabled={busy || offline} onClick={() => onStatus("no_show", "Marked as a no-show. Payment retained.")}><UserX size={14} />Didn't show</Button></> : <Button type="button" variant="ghost" size="sm" disabled={busy || offline} onClick={() => onStatus("confirmed", "Appointment confirmed")}><Undo2 size={15} />Confirm</Button>}
+      </div></div>
     );
   }
 

@@ -1,0 +1,32 @@
+{
+  "site": {
+    "url": "https://tannedbyffy.co.uk",
+    "generated_url": "https://ffyon-customer.razorly.chatgpt.site",
+    "version": 19,
+    "commit_sha": "12fcad6c253ba7280a5a6a5e5cadb199f40b4105",
+    "version_id": "appgprj_6abd6e180c8081918b5ec762c98ae90e~appgver_62bd8e0e76c881918249cbd2e86c8d71",
+    "deployment_id": "appgdep_6ac036031f1881919573137ccd41e0ca",
+    "deployment_status": "succeeded",
+    "environment_revision": 5
+  },
+  "desktop": {
+    "version": "0.5.8",
+    "path": "src-tauri/target/release/ffyon-tracker.exe",
+    "build": "release --no-bundle",
+    "installed_copy_replaced": false,
+    "frontend_entry_kb": 265.03,
+    "frontend_entry_gzip_kb": 81.6
+  },
+  "validation": {
+    "javascript_tests": 73,
+    "native_rust_tests": 33,
+    "site_bridge_checks": 383,
+    "site_auth_checks": 28,
+    "npm_vulnerabilities": 0,
+    "rust_security_vulnerabilities": 0
+  },
+  "cleanup": {
+    "cargo_audit_temp_folder": "C:\\Users\\rober\\AppData\\Local\\Temp\\ffyon-cargo-audit-build",
+    "status": "retained; automatic approval review blocked deletion"
+  }
+}

@@ -18,6 +18,7 @@ import {
 } from "@/lib/db";
 import { useData } from "@/lib/data";
 import { isoDate, money, parseAmount, penceToInput } from "@/lib/format";
+import { businessNow } from "@/lib/dates";
 import { listServices, type CloudService } from "@/lib/sync";
 import { toastDeleted } from "@/lib/undo";
 import { Button, Field, Input, Modal, Segmented, Select, Textarea } from "./ui";
@@ -27,12 +28,12 @@ type IncomeSource = "service" | "other" | "legacy";
 const HISTORICAL_SERVICE = "__historical_service__";
 
 export function EntryDialog() {
-  const { entry, closeEntry, openNewAppointment, refresh } = useData();
+  const { entry, closeEntry, switchEntryToAppointment, refresh } = useData();
   const editing = entry.editing;
 
   const [type, setType] = useState<TxType>("income");
   const [incomeSource, setIncomeSource] = useState<IncomeSource>("other");
-  const [date, setDate] = useState(isoDate(new Date()));
+  const [date, setDate] = useState(() => isoDate(businessNow()));
   const [amount, setAmount] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [serviceId, setServiceId] = useState("");
@@ -47,6 +48,8 @@ export function EntryDialog() {
   const [amountIsDefault, setAmountIsDefault] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [loadedFor, setLoadedFor] = useState<typeof entry | null>(null);
+  const ready = loaded && loadedFor === entry;
   const [saving, setSaving] = useState(false);
   const amountRef = useRef<HTMLInputElement>(null);
 
@@ -55,6 +58,7 @@ export function EntryDialog() {
     let alive = true;
     setLoading(true);
     setLoaded(false);
+    setLoadedFor(null);
     setError(null);
     Promise.all([listCategories("expense"), listOtherIncomeCategories(), listClients(),
       editing ? listServices() : Promise.resolve([]), editing ? listAppointments() : Promise.resolve([])])
@@ -74,7 +78,7 @@ export function EntryDialog() {
           : editing.service_id || editing.service_name ? "service" : "legacy" : "other");
         setServiceId(editing?.type === "income" && (editing.service_id || editing.service_name)
           ? editing.service_id ?? HISTORICAL_SERVICE : "");
-        setDate(editing?.date ?? isoDate(new Date()));
+        setDate(editing?.date ?? isoDate(businessNow()));
         setAmount(editing ? penceToInput(editing.amount_pence) : defaultAmount != null ? penceToInput(defaultAmount) : "");
         setAmountIsDefault(!editing && defaultAmount != null);
         setCategoryId(editing ? String(editing.category_id ?? "") : t === "expense" ? String(expenses[0]?.id ?? "") : "");
@@ -82,6 +86,7 @@ export function EntryDialog() {
         setClient({ id: cid, name: cid ? cls.find((c) => c.id === cid)?.name ?? "" : "" });
         setDescription(editing?.description ?? "");
         setLoaded(true);
+        setLoadedFor(entry);
         setTimeout(() => alive && amountRef.current?.focus(), 30);
       })
       .catch(() => { if (alive) setError("Couldn't load your payment details. Close this entry and try again."); })
@@ -141,9 +146,8 @@ export function EntryDialog() {
   const switchEntryMode = (value: TxType | "appointment") => {
     if (value !== "appointment") return switchType(value);
     if (editing) return;
-    closeEntry();
-    openNewAppointment({
-      date: loaded ? date : isoDate(new Date()),
+    switchEntryToAppointment({
+      date: ready ? date : isoDate(businessNow()),
       start_time: "09:00",
       clientId: (loaded ? client.id : entry.clientId) ?? undefined,
       clientName: loaded ? client.name : undefined,
@@ -157,7 +161,7 @@ export function EntryDialog() {
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (loading || saving || !loaded) return;
+    if (loading || saving || !ready) return;
     const pence = parseAmount(amount);
     if (pence == null || !Number.isSafeInteger(pence) || pence <= 0) return setError("Enter an amount, e.g. 10 or 12.50");
     if (!date) return setError("Pick a date");
@@ -195,7 +199,7 @@ export function EntryDialog() {
       closeEntry();
     } catch (err) {
       console.error(err);
-      setError("Couldn't save. Please try again.");
+      setError(err instanceof Error ? err.message : "Couldn't save. Please try again.");
     } finally {
       setSaving(false);
     }
@@ -216,8 +220,9 @@ export function EntryDialog() {
   };
 
   return (
-    <Modal open={entry.open} onClose={closeEntry} title={editing ? "Edit entry" : "New entry"}>
-      <form onSubmit={submit} className="space-y-4">
+    <Modal open={entry.open} onClose={() => { if (!saving) closeEntry(); }} title={editing ? "Edit entry" : "New entry"}>
+      {loading && <p role="status" className="mb-3 text-sm text-muted">Loading entry details…</p>}
+      <form onSubmit={submit}><fieldset disabled={loading || saving || !ready} className="space-y-4">
         {linkedAppointment ? (
           <p className="inline-flex items-center gap-1.5 text-sm text-ink-2">
             {type === "income" ? <ArrowDownLeft size={14} /> : <ArrowUpRight size={14} />}
@@ -288,20 +293,20 @@ export function EntryDialog() {
             value={description} onChange={(event) => setDescription(event.target.value)} />
         </Field>
 
-        {error && <p className="text-[13px] text-bad">{error}</p>}
+        {error && <p role="alert" className="text-[13px] text-bad">{error}</p>}
 
         <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
           {editing ? <Button type="button" variant="ghost" className="text-bad" onClick={remove} disabled={saving || loading || !loaded}>
             <Trash2 size={15} /> Delete
           </Button> : <span />}
           <div className="flex gap-2">
-            <Button type="button" onClick={closeEntry}>Cancel</Button>
+            <Button type="button" disabled={saving} onClick={closeEntry}>Cancel</Button>
             <Button type="submit" variant="primary" disabled={saving || loading || !loaded}>
               {editing ? "Save changes" : type === "income" ? "Record income" : "Add expense"}
             </Button>
           </div>
         </div>
-      </form>
+      </fieldset></form>
     </Modal>
   );
 }

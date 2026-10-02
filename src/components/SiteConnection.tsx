@@ -5,12 +5,12 @@ import { checkAccess, disconnectDevice } from "@/lib/access";
 import { createPairingCode, listDevices, retryPendingMutation, revokeDevice, syncNow, type Device } from "@/lib/sync";
 import { useData, useLoad } from "@/lib/data";
 import { useAccess } from "./AccessGate";
-import { Button, Card, CardHeader, ConfirmModal, Modal } from "./ui";
+import { Button, Card, CardHeader, ConfirmModal, LoadError, Modal } from "./ui";
 
 export function SiteConnection() {
   const access = useAccess();
   const { refresh } = useData();
-  const [devices, loading] = useLoad(() => access.state === "online" ? listDevices() : Promise.resolve([]), [access.state], []);
+  const [devices, loading, loadError] = useLoad(() => access.state === "online" ? listDevices() : Promise.resolve([]), [access.state], []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pairing, setPairing] = useState<{ code: string; expires_at: string | number } | null>(null);
@@ -30,6 +30,7 @@ export function SiteConnection() {
   return <Card className="min-w-0 lg:col-span-2">
     <CardHeader title="Site Connection" subtitle={access.device_name || "Approved computer"} action={<ShieldCheck size={19} className="text-good" />} />
     <div className="space-y-4 px-5 pb-5">
+      <LoadError error={loadError} onRetry={refresh} />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0 text-sm"><span className={access.state === "online" ? "text-good" : "text-ink-2"}>{access.state === "online" ? "Connected to Tanned by Ffy" : "Offline access"}</span><p className="mt-1 break-all text-xs text-muted">ffyon-customer.razorly.chatgpt.site</p>{access.expires_at && <p className="mt-1 text-xs text-muted">Offline access until {new Date(access.expires_at * 1000).toLocaleString("en-GB")}</p>}</div>
         <div className="flex flex-wrap gap-2"><Button disabled={busy} onClick={() => void run(async () => { const status = await checkAccess(); if (status.state === "online") { await retryPendingMutation(); await syncNow(); refresh(); toast.success("Connection verified"); } else throw new Error(status.error || "Could not reach the site"); })}><RefreshCw size={14} /> Verify Connection</Button><Button disabled={busy || access.state !== "online"} variant="primary" onClick={() => void run(async () => { setPairing(await createPairingCode()); setNow(Date.now()); })}><KeyRound size={14} /> Add Device</Button></div>

@@ -103,6 +103,21 @@ td {
   user-select: text;
 }
 
+button:focus-visible,
+a:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 .brand-logo {
   display: flex;
   flex-direction: column;
@@ -222,8 +237,8 @@ td {
 }
 
 /* Recharts focus outline off â€” hover tooltips carry interaction */
-.recharts-wrapper *:focus {
-  outline: none;
+.recharts-wrapper:focus-visible {
+  outline: 2px solid var(--accent);
 }
 
 ::-webkit-scrollbar {

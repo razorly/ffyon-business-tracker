@@ -247,17 +247,23 @@ pub fn db_select(
     params: Option<Vec<Value>>,
 ) -> Result<Vec<Value>, String> {
     access.require_authorized()?;
+    let conn = database.0.lock().map_err(|_| "The database is busy")?;
+    access.require_authorized()?;
+    let result = select(&conn, &sql, params.unwrap_or_default())?;
+    access.require_authorized()?;
+    Ok(result)
+}
+
+fn select(conn: &Connection, sql: &str, params: Vec<Value>) -> Result<Vec<Value>, String> {
     if sql.len() > 100_000 {
         return Err("Database statement is too large".into());
     }
-    let conn = database.0.lock().map_err(|_| "The database is busy")?;
-    access.require_authorized()?;
-    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
     if !stmt.readonly() || stmt.column_count() == 0 {
         return Err("Only read-only queries may use db_select".into());
     }
     let names: Vec<String> = stmt.column_names().iter().map(|n| n.to_string()).collect();
-    let values = sql_params(params.unwrap_or_default())?;
+    let values = sql_params(params)?;
     bind_parameters(&mut stmt, &values)?;
     let mut rows = stmt.raw_query();
     let mut result = Vec::new();
@@ -282,7 +288,32 @@ pub fn db_select(
         }
         result.push(Value::Object(value));
     }
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn db_read_batch(
+    access: State<'_, AccessState>,
+    database: State<'_, DatabaseState>,
+    statements: Vec<Statement>,
+) -> Result<Vec<Vec<Value>>, String> {
     access.require_authorized()?;
+    if statements.len() > 100 {
+        return Err("The database read batch is too large".into());
+    }
+    let mut conn = database.0.lock().map_err(|_| "The database is busy")?;
+    access.require_authorized()?;
+    let result = read_batch(&mut conn, statements)?;
+    access.require_authorized()?;
+    Ok(result)
+}
+
+fn read_batch(conn: &mut Connection, statements: Vec<Statement>) -> Result<Vec<Vec<Value>>, String> {
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let result = statements.into_iter()
+        .map(|statement| select(&tx, &statement.sql, statement.params))
+        .collect::<Result<Vec<_>, _>>()?;
+    tx.commit().map_err(|e| e.to_string())?;
     Ok(result)
 }
 
@@ -310,6 +341,7 @@ pub fn db_batch(
     access: State<'_, AccessState>,
     database: State<'_, DatabaseState>,
     statements: Vec<Statement>,
+    expected_rows: Option<Vec<Option<usize>>>,
 ) -> Result<Vec<ExecuteResult>, String> {
     access.require_authorized()?;
     if statements.len() > 20_000 {
@@ -317,14 +349,24 @@ pub fn db_batch(
     }
     let mut conn = database.0.lock().map_err(|_| "The database is busy")?;
     access.require_authorized()?;
-    batch(&mut conn, statements)
+    batch_checked(&mut conn, statements, expected_rows.as_deref())
 }
 
+#[cfg(test)]
 fn batch(conn: &mut Connection, statements: Vec<Statement>) -> Result<Vec<ExecuteResult>, String> {
+    batch_checked(conn, statements, None)
+}
+
+fn batch_checked(conn: &mut Connection, statements: Vec<Statement>, expected_rows: Option<&[Option<usize>]>) -> Result<Vec<ExecuteResult>, String> {
+    if expected_rows.is_some_and(|rows| rows.len() != statements.len()) { return Err("Invalid database batch expectations".into()); }
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let mut result = Vec::with_capacity(statements.len());
-    for stmt in statements {
-        result.push(execute(&tx, stmt)?);
+    for (index, stmt) in statements.into_iter().enumerate() {
+        let executed = execute(&tx, stmt)?;
+        if expected_rows.and_then(|rows| rows[index]).is_some_and(|expected| executed.rows_affected != expected) {
+            return Err("The record changed. Refresh before trying again.".into());
+        }
+        result.push(executed);
     }
     tx.commit().map_err(|e| e.to_string())?;
     Ok(result)
@@ -333,6 +375,40 @@ fn batch(conn: &mut Connection, statements: Vec<Statement>) -> Result<Vec<Execut
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn atomic_read_batch_returns_related_tables_and_refuses_writes() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        for migration in crate::migrations() { conn.execute_batch(migration.sql).unwrap(); }
+        conn.execute_batch("INSERT INTO clients(id,name) VALUES (1,'Snapshot customer');
+            INSERT INTO transactions(id,type,date,amount_pence,client_id) VALUES (1,'income','2026-10-01',2500,1);
+            INSERT INTO appointments(date,start_time,client_id,transaction_id) VALUES ('2026-10-01','09:00',1,1);").unwrap();
+        conn.authorizer(Some(authorize_sql));
+        let rows = read_batch(&mut conn, vec![
+            Statement { sql: "SELECT id FROM clients".into(), params: vec![] },
+            Statement { sql: "SELECT id,amount_pence FROM transactions".into(), params: vec![] },
+            Statement { sql: "SELECT client_id,transaction_id FROM appointments".into(), params: vec![] },
+        ]).unwrap();
+        assert_eq!(rows[0][0]["id"], rows[2][0]["client_id"]);
+        assert_eq!(rows[1][0]["id"], rows[2][0]["transaction_id"]);
+        assert!(read_batch(&mut conn, vec![Statement { sql: "DELETE FROM clients RETURNING id".into(), params: vec![] }]).is_err());
+        assert_eq!(select(&conn, "SELECT name FROM clients", vec![]).unwrap()[0]["name"], "Snapshot customer");
+        assert!(conn.is_autocommit(), "A failed read batch releases its transaction");
+    }
+
+    #[test]
+    fn changed_row_expectations_roll_back_all_undo_statements() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        for migration in crate::migrations() { conn.execute_batch(migration.sql).unwrap(); }
+        conn.authorizer(Some(authorize_sql));
+        let result = batch_checked(&mut conn, vec![
+            Statement { sql: "INSERT INTO transactions(type,date,amount_pence) VALUES ('income','2026-10-01',2500)".into(), params: vec![] },
+            Statement { sql: "UPDATE appointments SET transaction_id=last_insert_rowid() WHERE id=999 AND transaction_id IS NULL".into(), params: vec![] },
+        ], Some(&[None, Some(1)]));
+        assert!(matches!(result, Err(ref error) if error.contains("record changed")));
+        assert_eq!(select(&conn, "SELECT COUNT(*) AS n FROM transactions", vec![]).unwrap()[0]["n"], 0);
+        assert!(conn.is_autocommit());
+    }
 
     #[test]
     fn authorizer_blocks_file_access_schema_and_credentials() {

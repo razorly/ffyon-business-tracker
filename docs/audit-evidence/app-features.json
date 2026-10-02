@@ -1,0 +1,67 @@
+{
+  "evidence": [
+    {
+      "target": "desktop-features",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "storage": "actual migrations + SQL in disposable memory",
+      "mapsExplicitOnly": true,
+      "mapRendered": false,
+      "mapProviderIssue": null,
+      "mapTiles": [],
+      "newEntryCreatesAppointmentWithoutIncome": true,
+      "moneyInDefaultsToOtherIncome": true,
+      "newEntryCarriesDateAndClient": true,
+      "manualConfirmedUntimedNotInRequests": true,
+      "allDayCalendarAndNeedsTimeHighlight": true,
+      "discountQuoteSnapshotPreserved": true,
+      "conflictedNewGuestRetryDoesNotDuplicateCustomer": true,
+      "destructiveBookingAndClientDeletionPreservesMoney": true,
+      "pageErrors": []
+    },
+    {
+      "target": "desktop-features",
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "storage": "actual migrations + SQL in disposable memory",
+      "mapsExplicitOnly": true,
+      "mapRendered": false,
+      "mapProviderIssue": null,
+      "mapTiles": [],
+      "newEntryCreatesAppointmentWithoutIncome": true,
+      "moneyInDefaultsToOtherIncome": true,
+      "newEntryCarriesDateAndClient": true,
+      "manualConfirmedUntimedNotInRequests": true,
+      "allDayCalendarAndNeedsTimeHighlight": true,
+      "discountQuoteSnapshotPreserved": true,
+      "conflictedNewGuestRetryDoesNotDuplicateCustomer": true,
+      "destructiveBookingAndClientDeletionPreservesMoney": true,
+      "pageErrors": []
+    },
+    {
+      "target": "desktop-features",
+      "viewport": {
+        "width": 320,
+        "height": 740
+      },
+      "storage": "actual migrations + SQL in disposable memory",
+      "mapsExplicitOnly": true,
+      "mapRendered": false,
+      "mapProviderIssue": null,
+      "mapTiles": [],
+      "newEntryCreatesAppointmentWithoutIncome": true,
+      "moneyInDefaultsToOtherIncome": true,
+      "newEntryCarriesDateAndClient": true,
+      "manualConfirmedUntimedNotInRequests": true,
+      "allDayCalendarAndNeedsTimeHighlight": true,
+      "discountQuoteSnapshotPreserved": true,
+      "conflictedNewGuestRetryDoesNotDuplicateCustomer": true,
+      "destructiveBookingAndClientDeletionPreservesMoney": true,
+      "pageErrors": []
+    }
+  ]
+}

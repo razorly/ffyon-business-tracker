@@ -1,0 +1,38 @@
+[
+  {
+    "target": "x86_64-pc-windows-msvc",
+    "package": "glib",
+    "exitCode": 0,
+    "output": "warning: nothing to print.\r\n\r\nTo find dependencies that require specific target platforms, try to use option `--target all` first, and then narrow your search scope accordingly."
+  },
+  {
+    "target": "x86_64-pc-windows-msvc",
+    "package": "proc-macro-error",
+    "exitCode": 0,
+    "output": "warning: nothing to print.\r\n\r\nTo find dependencies that require specific target platforms, try to use option `--target all` first, and then narrow your search scope accordingly."
+  },
+  {
+    "target": "aarch64-apple-darwin",
+    "package": "glib",
+    "exitCode": 0,
+    "output": "warning: nothing to print.\r\n\r\nTo find dependencies that require specific target platforms, try to use option `--target all` first, and then narrow your search scope accordingly."
+  },
+  {
+    "target": "aarch64-apple-darwin",
+    "package": "proc-macro-error",
+    "exitCode": 0,
+    "output": "warning: nothing to print.\r\n\r\nTo find dependencies that require specific target platforms, try to use option `--target all` first, and then narrow your search scope accordingly."
+  },
+  {
+    "target": "x86_64-apple-darwin",
+    "package": "glib",
+    "exitCode": 0,
+    "output": "warning: nothing to print.\r\n\r\nTo find dependencies that require specific target platforms, try to use option `--target all` first, and then narrow your search scope accordingly."
+  },
+  {
+    "target": "x86_64-apple-darwin",
+    "package": "proc-macro-error",
+    "exitCode": 0,
+    "output": "warning: nothing to print.\r\n\r\nTo find dependencies that require specific target platforms, try to use option `--target all` first, and then narrow your search scope accordingly."
+  }
+]

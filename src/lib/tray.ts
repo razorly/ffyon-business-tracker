@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { format } from "date-fns";
+import { businessNow } from "./dates";
 import {
   isTauri,
   listAppointments,
@@ -48,8 +49,9 @@ const MAX_WAITING = 8;
 
 /** Today as the menu sees it: what's come in, what's next, what's still to collect. */
 async function trayState(): Promise<TrayState> {
-  const today = isoDate(new Date());
-  const now = format(new Date(), "HH:mm");
+  const clock = businessNow();
+  const today = isoDate(clock);
+  const now = format(clock, "HH:mm");
 
   const [services, todays, txs, overdue] = await Promise.all([
     listServices(),

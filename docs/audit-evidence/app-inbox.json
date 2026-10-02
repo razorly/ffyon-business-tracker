@@ -1,0 +1,54 @@
+{
+  "storage": "Actual native migrations and disposable in-memory SQLite IPC fixture",
+  "nativeLimit": "Browser evidence does not verify native OS delivery, WebView2, macOS notifications or credentials",
+  "evidence": [
+    {
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "legacyRequestsRouteRedirectsToInbox": true,
+      "separateRequestsAndCompletedPayments": true,
+      "excludesUnconfirmedCancelledRejectedNoShowPaidFreeAndFuture": true,
+      "confirmedDateOnlyWaitsUntilFollowingDay": true,
+      "badgeIncludesRequestsAndPayments": true,
+      "actualAmountAndExactlyOnceQuickPayment": true,
+      "unknownPriceRequiresAmount": true,
+      "countOnlyNotificationsDeduplicatedAcrossSyncAndRestart": true,
+      "desktopPreferencePersistsAndKeepsInboxActive": true,
+      "noSharedPaymentMutationsOrCustomerEmails": true
+    },
+    {
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "legacyRequestsRouteRedirectsToInbox": true,
+      "separateRequestsAndCompletedPayments": true,
+      "excludesUnconfirmedCancelledRejectedNoShowPaidFreeAndFuture": true,
+      "confirmedDateOnlyWaitsUntilFollowingDay": true,
+      "badgeIncludesRequestsAndPayments": true,
+      "actualAmountAndExactlyOnceQuickPayment": true,
+      "unknownPriceRequiresAmount": true,
+      "countOnlyNotificationsDeduplicatedAcrossSyncAndRestart": true,
+      "desktopPreferencePersistsAndKeepsInboxActive": true,
+      "noSharedPaymentMutationsOrCustomerEmails": true
+    },
+    {
+      "viewport": {
+        "width": 320,
+        "height": 740
+      },
+      "legacyRequestsRouteRedirectsToInbox": true,
+      "separateRequestsAndCompletedPayments": true,
+      "excludesUnconfirmedCancelledRejectedNoShowPaidFreeAndFuture": true,
+      "confirmedDateOnlyWaitsUntilFollowingDay": true,
+      "badgeIncludesRequestsAndPayments": true,
+      "actualAmountAndExactlyOnceQuickPayment": true,
+      "unknownPriceRequiresAmount": true,
+      "countOnlyNotificationsDeduplicatedAcrossSyncAndRestart": true,
+      "desktopPreferencePersistsAndKeepsInboxActive": true,
+      "noSharedPaymentMutationsOrCustomerEmails": true
+    }
+  ]
+}

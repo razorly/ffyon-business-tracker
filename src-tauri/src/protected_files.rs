@@ -1,5 +1,6 @@
 use std::{
     collections::HashSet,
+    io::Write,
     path::{Path, PathBuf},
     sync::Mutex,
 };
@@ -77,7 +78,7 @@ fn approved(
             && target
                 .file_name()
                 .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with("ffyon-backup-") && name.ends_with(".json"))
+                .is_some_and(automatic_backup_name)
     });
     let listing = !writing && backup_dir.as_ref() == Some(&target);
     if !selected && !auto_backup && !listing {
@@ -198,7 +199,35 @@ fn write(access: &AccessState, grants: &FileGrants, path: &str, data: &[u8]) -> 
     if data.len() > 100_000_000 {
         return Err("That export is too large".into());
     }
-    std::fs::write(path, data).map_err(|_| "Could not write the selected file".into())
+    atomic_write(&path, data).map_err(|_| "Could not write the selected file".into())
+}
+
+fn atomic_write(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    let temporary = path.with_file_name(format!(".ffyon-export-{}.tmp", uuid::Uuid::new_v4()));
+    let result = (|| {
+        let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&temporary)?;
+        file.write_all(data)?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&temporary, path)
+    })();
+    if result.is_err() { let _ = std::fs::remove_file(&temporary); }
+    result
+}
+
+fn automatic_backup_name(name: &str) -> bool {
+    let Some(date) = name.strip_prefix("ffyon-backup-").and_then(|name| name.strip_suffix(".json")) else { return false; };
+    let bytes = date.as_bytes();
+    if bytes.len() != 10 || bytes[4] != b'-' || bytes[7] != b'-'
+        || !bytes.iter().enumerate().all(|(index, byte)| index == 4 || index == 7 || byte.is_ascii_digit()) {
+        return false;
+    }
+    let year: u32 = date[..4].parse().unwrap_or_default();
+    let month: u32 = date[5..7].parse().unwrap_or_default();
+    let day: u32 = date[8..].parse().unwrap_or_default();
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days = match month { 1 | 3 | 5 | 7 | 8 | 10 | 12 => 31, 4 | 6 | 9 | 11 => 30, 2 if leap => 29, 2 => 28, _ => 0 };
+    year > 0 && day > 0 && day <= days
 }
 
 #[tauri::command]
@@ -261,5 +290,30 @@ mod tests {
     #[test]
     fn relative_paths_are_never_accepted() {
         assert!(canonical_target(Path::new("../secret.json")).is_err());
+    }
+
+    #[test]
+    fn automatic_backups_use_only_calendar_valid_dated_names() {
+        assert!(automatic_backup_name("ffyon-backup-2026-10-02.json"));
+        assert!(automatic_backup_name("ffyon-backup-2028-02-29.json"));
+        for name in ["ffyon-backup-wedding-import.json", "ffyon-backup-2026-02-30.json",
+            "ffyon-backup-2026-10-02-copy.json", "ffyon-backup-0000-01-01.json",
+            "ffyon-backup-2026-10-02.json.exe"] { assert!(!automatic_backup_name(name)); }
+    }
+
+    #[test]
+    fn atomic_export_replaces_the_complete_file_and_cleans_failed_temporary_files() {
+        let dir = std::env::temp_dir().join(format!("ffyon-file-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("backup.json");
+        std::fs::write(&path, b"old complete backup").unwrap();
+        atomic_write(&path, b"new complete backup").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"new complete backup");
+        let blocked = dir.join("directory.json");
+        std::fs::create_dir(&blocked).unwrap();
+        assert!(atomic_write(&blocked, b"cannot replace a directory").is_err());
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 2, "No temporary export remains");
+        assert!(dir.starts_with(std::env::temp_dir()));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

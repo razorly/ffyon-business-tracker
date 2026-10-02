@@ -115,11 +115,13 @@ export type AppointmentInput = Pick<Appointment, "date" | "start_time" | "durati
     save_visit_address?: boolean;
   };
 
-export interface Statement { sql: string; params?: unknown[] }
+export interface Statement { sql: string; params?: unknown[]; expectedRows?: number }
 export interface DbResult { rowsAffected: number; lastInsertId?: number }
 
 export interface Db {
   select<T>(sql: string, params?: unknown[]): Promise<T>;
+  /** Read related tables under one database snapshot, without an intervening writer. */
+  readBatch<T extends unknown[]>(statements: Statement[]): Promise<T>;
   execute(sql: string, params?: unknown[]): Promise<DbResult>;
   batch(statements: Statement[]): Promise<DbResult[]>;
 }
@@ -135,9 +137,13 @@ export function getDb(): Promise<Db> {
     } else if (isTauri()) {
       dbPromise = Promise.resolve({
         select: <T>(sql: string, params: unknown[] = []) => invoke<T>("db_select", { sql, params }),
+        readBatch: <T extends unknown[]>(statements: Statement[]) => invoke<T>("db_read_batch", {
+          statements: statements.map((s) => ({ sql: s.sql, params: s.params ?? [] })),
+        }),
         execute: (sql: string, params: unknown[] = []) => invoke<DbResult>("db_execute", { sql, params }),
         batch: (statements: Statement[]) => invoke<DbResult[]>("db_batch", {
           statements: statements.map((s) => ({ sql: s.sql, params: s.params ?? [] })),
+          expectedRows: statements.map((s) => s.expectedRows ?? null),
         }),
       });
     } else {
@@ -393,6 +399,7 @@ export async function updateTransaction(id: number, t: TransactionInput) {
 }
 
 async function transactionAttribution(db: Db, t: TransactionInput, before?: Transaction) {
+  if (!["income", "expense"].includes(t.type) || !isCalendarDate(t.date)) throw new Error("Enter a valid entry type and date.");
   if (!Number.isSafeInteger(t.amount_pence) || t.amount_pence < 0) throw new Error("Enter a valid amount received or spent.");
   if (t.income_kind != null && !["legacy", "service", "other"].includes(t.income_kind)) throw new Error("Invalid income source.");
   if (t.type === "expense" && (t.service_id || t.service_name?.trim() || t.income_kind != null)) throw new Error("Expense entries cannot use an income service.");
@@ -691,8 +698,8 @@ export async function markAppointmentUnpaid(id: number) {
   const txId = await linkedTransactionId(id);
   if (txId == null) return;
   await db.batch([
-    { sql: "UPDATE appointments SET transaction_id = NULL WHERE id = $1", params: [id] },
-    { sql: "DELETE FROM transactions WHERE id = $1", params: [txId] },
+    { sql: "UPDATE appointments SET transaction_id = NULL WHERE id = $1 AND transaction_id = $2", params: [id, txId] },
+    { sql: "DELETE FROM transactions WHERE id = $1 AND changes() > 0", params: [txId] },
   ]);
 }
 
@@ -761,6 +768,14 @@ function bookingDetails(a: AppointmentInput, before?: Appointment) {
     return Boolean(value);
   };
   const time_confirmed = flag(a.time_confirmed, before?.time_confirmed !== 0);
+  if (!isCalendarDate(a.date)) throw new Error("Choose a valid appointment date.");
+  if (!Number.isSafeInteger(a.duration_min) || a.duration_min <= 0 || a.duration_min > 1440) throw new Error("Appointment duration must be from 1 to 1440 minutes.");
+  if (time_confirmed) {
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(a.start_time)) throw new Error("Choose a valid appointment time.");
+    const [hour, minute] = a.start_time.split(":").map(Number);
+    if (hour * 60 + minute + a.duration_min > 1440) throw new Error("The appointment must finish on the same day.");
+  }
+  if (a.price_pence != null && (!Number.isSafeInteger(a.price_pence) || a.price_pence < 0)) throw new Error("Enter a valid agreed booking price.");
   const is_remote = flag(a.is_remote, Boolean(before?.is_remote));
   const visit_address = is_remote ? (a.visit_address ?? before?.visit_address ?? "").trim() : "";
   const visit_postcode = is_remote ? (a.visit_postcode ?? before?.visit_postcode ?? "").trim().toUpperCase().replace(/\s+/g, " ") : "";
@@ -771,6 +786,12 @@ function bookingDetails(a: AppointmentInput, before?: Appointment) {
   if (base_price_pence != null && (!Number.isSafeInteger(base_price_pence) || base_price_pence < 0)) throw new Error("Invalid undiscounted booking price.");
   if (!Number.isSafeInteger(discount_percent) || discount_percent < 0 || discount_percent > 100) throw new Error("Discount must be a whole percentage from 0 to 100.");
   return { time_confirmed, is_remote, visit_address, visit_postcode, base_price_pence, discount_percent };
+}
+
+function isCalendarDate(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value) || value.startsWith("0000-")) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
 // ---------- Aggregates ----------
@@ -920,10 +941,10 @@ export async function undoDelete(s: DeletedSnapshot) {
     ...s.transactions.map(transactionStatement), ...s.appointments.filter((a) => !a.remote_id).map(appointmentStatement),
   ];
   for (const l of s.links) {
-    statements.push({ sql: `UPDATE ${l.table} SET ${l.column} = $1 WHERE id = $2`, params: [l.value, l.id] });
+    statements.push({ sql: `UPDATE ${l.table} SET ${l.column} = $1 WHERE id = $2 AND ${l.column} IS NULL`, params: [l.value, l.id], expectedRows: 1 });
   }
   for (const u of s.unpaid) {
-    statements.push({ sql: "UPDATE appointments SET transaction_id = $1 WHERE id = $2", params: [u.transaction_id, u.id] });
+    statements.push({ sql: "UPDATE appointments SET transaction_id = $1 WHERE id = $2 AND transaction_id IS NULL", params: [u.transaction_id, u.id], expectedRows: 1 });
   }
   await db.batch(statements);
 }
@@ -1004,11 +1025,11 @@ export interface Backup {
 
 export async function exportAll(): Promise<Backup> {
   const db = await getDb();
-  const [categories, clients, transactions, appointments] = await Promise.all([
-    db.select<Category[]>("SELECT * FROM categories ORDER BY id"),
-    db.select<Client[]>("SELECT * FROM clients ORDER BY id"),
-    db.select<Transaction[]>("SELECT * FROM transactions ORDER BY id"),
-    db.select<Appointment[]>("SELECT * FROM appointments ORDER BY id"),
+  const [categories, clients, transactions, appointments] = await db.readBatch<[Category[], Client[], Transaction[], Appointment[]]>([
+    { sql: "SELECT * FROM categories ORDER BY id" },
+    { sql: "SELECT * FROM clients ORDER BY id" },
+    { sql: "SELECT * FROM transactions ORDER BY id" },
+    { sql: "SELECT * FROM appointments ORDER BY id" },
   ]);
   return {
     app: "ffyon-business-tracker",
@@ -1051,6 +1072,7 @@ export function normalizeBackup(data: unknown): Backup {
       saved_address: c.saved_address ?? "", saved_postcode: c.saved_postcode ?? "" };
   });
   const transactions: Transaction[] = b.transactions.map((t) => {
+    if (!isCalendarDate(t.date)) throw new Error("Invalid entry date in backup.");
     if (!positiveId(t.id) || !["income", "expense"].includes(t.type) || !str(t.date) || !/^\d{4}-\d{2}-\d{2}$/.test(t.date) || !pence(t.amount_pence) || !nullableId(t.category_id) || !nullableId(t.client_id) || !optionalText(t.description) || !str(t.created_at) || !optionalText(t.service_id) || !optionalText(t.service_name) || !optionalText(t.category_name_snapshot) || (t.income_kind != null && !["legacy", "service", "other"].includes(t.income_kind))) throw new Error("Invalid entry in backup.");
     const category = t.category_id == null ? undefined : categoryById.get(t.category_id);
     const service_id = t.type === "income" ? t.service_id === undefined ? b.version < 4 && !t.service_name ? category?.service_id ?? null : null : t.service_id : null;
@@ -1061,6 +1083,7 @@ export function normalizeBackup(data: unknown): Backup {
       service_id, service_name, category_name_snapshot: t.category_name_snapshot ?? category?.name ?? "", income_kind };
   });
   const appointments = (b.appointments ?? []).map((a) => {
+    if (!isCalendarDate(a.date)) throw new Error("Invalid appointment date in backup.");
     const originalStatus = String(a.status);
     const status: AppointmentStatus = originalStatus === "booked" || originalStatus === "paid" ? "confirmed" : a.status;
     if (!positiveId(a.id) || !str(a.date) || !/^\d{4}-\d{2}-\d{2}$/.test(a.date) || !str(a.start_time) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(a.start_time) || !Number.isSafeInteger(a.duration_min) || a.duration_min <= 0 || !nullableId(a.client_id) || !nullableId(a.category_id) || (a.price_pence != null && !pence(a.price_pence)) || !optionalText(a.notes) || !["pending", "confirmed", "rejected", "cancelled", "no_show"].includes(status) || !nullableId(a.transaction_id) || !optionalText(a.series_id) || !str(a.created_at) || !optionalText(a.remote_id) || !optionalText(a.service_id) || !optionalText(a.service_name) || !optionalText(a.customer_notes)) throw new Error("Invalid appointment in backup.");

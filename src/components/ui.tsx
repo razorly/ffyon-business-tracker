@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useRef, type ReactNode } from "react";
+import { forwardRef, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -9,9 +9,10 @@ type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
 export const Button = forwardRef<
   HTMLButtonElement,
   React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant; size?: "sm" | "md" | "icon" }
->(({ className, variant = "secondary", size = "md", ...props }, ref) => (
+>(({ className, variant = "secondary", size = "md", type = "button", ...props }, ref) => (
   <button
     ref={ref}
+    type={type}
     className={cn(
       "inline-flex items-center justify-center gap-2 rounded-full font-medium tracking-wide transition-colors cursor-pointer",
       "disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
@@ -93,6 +94,7 @@ export function Segmented<T extends string>({
         <button
           key={o.value}
           type="button"
+          aria-pressed={value === o.value}
           onClick={() => onChange(o.value)}
           className={cn(
             "flex-1 whitespace-nowrap rounded-full px-3.5 py-1.5 text-[13px] font-medium transition-colors cursor-pointer",
@@ -120,16 +122,52 @@ export function Modal({
   width?: string;
 }) {
   const panel = useRef<HTMLDivElement>(null);
+  const close = useRef(onClose);
+  close.current = onClose;
   useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
+    if (!open || !panel.current) return;
+    const dialog = panel.current;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const root = dialog.parentElement;
+    const siblings = Array.from(document.body.children).filter((element): element is HTMLElement => element instanceof HTMLElement && element !== root &&
+      (!element.querySelector('[role="dialog"]') || Boolean(element.compareDocumentPosition(root!) & Node.DOCUMENT_POSITION_FOLLOWING)));
+    const previousInert = siblings.map((element) => element.inert);
+    siblings.forEach((element) => { element.inert = true; });
+    const focusable = () => Array.from(dialog.querySelectorAll<HTMLElement>('button, input, select, textarea, a[href], iframe, [tabindex]'))
+      .filter((element) => !element.matches(':disabled, [tabindex="-1"]') && element.getClientRects().length > 0);
+    const isTop = () => {
       const dialogs = document.querySelectorAll('[role="dialog"][aria-modal="true"]');
-      if (dialogs[dialogs.length - 1] === panel.current) onClose();
+      return dialogs[dialogs.length - 1] === dialog;
     };
+    const focusFirst = () => (focusable()[0] ?? dialog).focus();
+    if (!dialog.contains(document.activeElement)) focusFirst();
+    const onKey = (e: KeyboardEvent) => {
+      if (!isTop() || e.defaultPrevented) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        close.current();
+      } else if (e.key === "Tab") {
+        const elements = focusable();
+        const first = elements[0];
+        const last = elements[elements.length - 1];
+        if (!first) { e.preventDefault(); dialog.focus(); }
+        else if (e.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
+          e.preventDefault(); last.focus();
+        } else if (!e.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
+          e.preventDefault(); first.focus();
+        }
+      }
+    };
+    const onFocus = (e: FocusEvent) => { if (isTop() && e.target instanceof Node && !dialog.contains(e.target)) focusFirst(); };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+    document.addEventListener("focusin", onFocus);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.removeEventListener("focusin", onFocus);
+      siblings.forEach((element, index) => { element.inert = previousInert[index]; });
+      if (previouslyFocused?.isConnected && !previouslyFocused.closest('[inert]')) previouslyFocused.focus();
+    };
+  }, [open]);
 
   if (!open) return null;
   return createPortal(
@@ -140,6 +178,7 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-label={title}
+        tabIndex={-1}
         className={cn("relative flex max-h-[calc(100dvh-24px)] w-full min-w-0 flex-col rounded-3xl border border-line bg-surface shadow-2xl", width)}
       >
         <div className="flex shrink-0 items-center justify-between gap-3 px-4 pt-4 sm:px-6 sm:pt-5">
@@ -167,19 +206,27 @@ export function ConfirmModal({
   title: string;
   message: ReactNode;
   confirmLabel?: string;
-  onConfirm: () => void;
+  onConfirm: () => void | Promise<void>;
   onClose: () => void;
 }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { if (open) setError(null); }, [open]);
   return (
-    <Modal open={open} onClose={onClose} title={title} width="max-w-sm">
+    <Modal open={open} onClose={() => { if (!busy) onClose(); }} title={title} width="max-w-sm">
       <div className="text-sm text-ink-2">{message}</div>
+      {error && <p role="alert" className="mt-3 text-sm text-bad">{error}</p>}
       <div className="mt-5 flex justify-end gap-2">
-        <Button onClick={onClose}>Cancel</Button>
+        <Button disabled={busy} onClick={onClose}>Cancel</Button>
         <Button
           variant="danger"
-          onClick={() => {
-            onConfirm();
-            onClose();
+          disabled={busy}
+          onClick={async () => {
+            if (busy) return;
+            setBusy(true); setError(null);
+            try { await onConfirm(); onClose(); }
+            catch (cause) { setError(cause instanceof Error ? cause.message : "Could not complete this change. Please retry."); }
+            finally { setBusy(false); }
           }}
         >
           {confirmLabel}
@@ -187,6 +234,11 @@ export function ConfirmModal({
       </div>
     </Modal>
   );
+}
+
+/** Failed reads are visible and retryable; financial zeros must not imply success. */
+export function LoadError({ error, onRetry }: { error: string | null | undefined; onRetry: () => void }) {
+  return error ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-bad/30 bg-surface px-4 py-3 text-sm text-bad"><span className="min-w-0 flex-1 break-words">Could not load the latest information: {error}</span><Button size="sm" onClick={onRetry}>Retry</Button></div> : null;
 }
 
 /** Big figure on a card — the totals above the monthly and schedule tables. */

@@ -14,6 +14,7 @@ import {
 import { useData } from "@/lib/data";
 import { runAutoBackup } from "@/lib/export";
 import { isoDate, money } from "@/lib/format";
+import { businessNow } from "@/lib/dates";
 import { listServices, serviceDiscountPrice } from "@/lib/sync";
 import {
   applyShortcut,
@@ -60,7 +61,7 @@ export function TrayBridge() {
         }
         const id = await createTransaction({
           type: "income",
-          date: isoDate(new Date()),
+          date: isoDate(businessNow()),
           amount_pence: pence,
           category_id: null,
           client_id: null,

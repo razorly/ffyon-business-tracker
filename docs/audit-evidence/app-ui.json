@@ -1,0 +1,52 @@
+{
+  "evidence": [
+    {
+      "width": 1280,
+      "deviceTimezone": "America/Los_Angeles",
+      "dashboardDiary": true,
+      "selectedMonthBooking": true,
+      "asyncFormGuard": true,
+      "keyboardDateNavigation": true,
+      "modalAndNestedFocusTrap": true,
+      "focusRestoration": true,
+      "crossMidnightBlocked": true,
+      "actualPaymentAndPaidCancellationRestorePreserveReceipt": true,
+      "keyboardClientSelection": true
+    },
+    {
+      "width": 375,
+      "deviceTimezone": "America/Los_Angeles",
+      "dashboardDiary": true,
+      "selectedMonthBooking": true,
+      "asyncFormGuard": true,
+      "keyboardDateNavigation": true,
+      "modalAndNestedFocusTrap": true,
+      "focusRestoration": true,
+      "crossMidnightBlocked": true,
+      "actualPaymentAndPaidCancellationRestorePreserveReceipt": true,
+      "keyboardClientSelection": true
+    },
+    {
+      "width": 320,
+      "deviceTimezone": "America/Los_Angeles",
+      "dashboardDiary": true,
+      "selectedMonthBooking": true,
+      "asyncFormGuard": true,
+      "keyboardDateNavigation": true,
+      "modalAndNestedFocusTrap": true,
+      "focusRestoration": true,
+      "crossMidnightBlocked": true,
+      "actualPaymentAndPaidCancellationRestorePreserveReceipt": true,
+      "keyboardClientSelection": true
+    },
+    {
+      "visibleReadFailureDistinctFromZero": true,
+      "retryRecovers": true
+    },
+    {
+      "scopedLoaderNeverShowsPreviousClientData": true,
+      "londonClockAndExactSafePence": true
+    }
+  ],
+  "nativeLimit": "Disposable browser IPC/SQLite fixtures. Does not verify WebView2, native notifications or credential storage."
+}

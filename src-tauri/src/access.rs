@@ -26,6 +26,7 @@ const LEASE_PUBLIC_KEY: &str = "rGccNwiaYb5Ek0TVhC/aXWrlXrlByX0gar0Wwutr7NY=";
 const VAULT_SERVICE: &str = "com.ffyon.tracker.admin";
 const VAULT_ACCOUNT: &str = "device-v1";
 const LEASE_SECONDS: u64 = 86_400;
+const MAX_RESPONSE_BYTES: usize = 25_000_000;
 
 pub fn now_seconds() -> u64 {
     SystemTime::now()
@@ -475,6 +476,16 @@ impl AccessState {
             .ok_or_else(|| "Set up or pair this computer first".into())
     }
 
+    fn require_current_admin(&self, credential: &Vault) -> Result<(), String> {
+        self.require_authorized()?;
+        let inner = self.inner.lock().map_err(|_| "Credential storage is busy")?;
+        if !inner.online || !inner.vault.as_ref().is_some_and(|vault|
+            vault.device_id == credential.device_id && vault.token == credential.token) {
+            return Err("The device connection changed during this request. Verify the connection and retry.".into());
+        }
+        Ok(())
+    }
+
     async fn send(
         &self,
         vault: &Vault,
@@ -495,7 +506,7 @@ impl AccessState {
         if let Some(query) = query {
             request = request.query(&query);
         }
-        let response = request.send().await.map_err(|_| {
+        let mut response = request.send().await.map_err(|_| {
             (
                 false,
                 "Unable to reach the Tanned by Ffy site. Check the internet connection.".into(),
@@ -515,9 +526,18 @@ impl AccessState {
                     .into(),
             ));
         }
-        let payload = response
-            .json::<Value>()
-            .await
+        if response.content_length().is_some_and(|length| length > MAX_RESPONSE_BYTES as u64) {
+            return Err((false, "The site returned an oversized response.".into()));
+        }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await
+            .map_err(|_| (false, "The site response could not be read.".into()))? {
+            if bytes.len() + chunk.len() > MAX_RESPONSE_BYTES {
+                return Err((false, "The site returned an oversized response.".into()));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        let payload: Value = serde_json::from_slice(&bytes)
             .map_err(|_| (false, "The site returned an invalid response.".into()))?;
         if !status.is_success() {
             let message = payload
@@ -530,7 +550,15 @@ impl AccessState {
     }
 
     fn failed(&self, revoked: bool, error: String) {
+        self.failed_for(None, revoked, error);
+    }
+
+    fn failed_for(&self, credential: Option<&Vault>, revoked: bool, error: String) {
         if let Ok(mut inner) = self.inner.lock() {
+            if credential.is_some_and(|credential| !inner.vault.as_ref().is_some_and(|vault|
+                vault.device_id == credential.device_id && vault.token == credential.token)) {
+                return;
+            }
             inner.online = false;
             inner.error = Some(error);
             if revoked {
@@ -598,10 +626,10 @@ impl AccessState {
                 match self.send(&vault, operation, method, body, None).await {
                     Ok(response) => {
                         if let Err(error) = self.receive_session(&vault, response) {
-                            self.failed(true, error);
+                            self.failed_for(Some(&vault), true, error);
                         }
                     }
-                    Err((revoked, error)) => self.failed(revoked, error),
+                    Err((revoked, error)) => self.failed_for(Some(&vault), revoked, error),
                 }
             }
             Err(error) => self.failed(false, error),
@@ -725,7 +753,7 @@ pub async fn access_pair(
     {
         Ok(response) => state.receive_session(&vault, response)?,
         Err((revoked, error)) => {
-            state.failed(revoked, error.clone());
+            state.failed_for(Some(&vault), revoked, error.clone());
             emit(&app, state.status());
             return Err(error);
         }
@@ -839,10 +867,13 @@ pub async fn admin_request(
         .send(&vault, operation.route(), method, body, query)
         .await
     {
-        Ok(response) => Ok(response),
+        Ok(response) => {
+            state.require_current_admin(&vault)?;
+            Ok(response)
+        },
         Err((revoked, error)) => {
             if revoked || error.starts_with("Unable to reach") {
-                state.failed(revoked, error.clone());
+                state.failed_for(Some(&vault), revoked, error.clone());
                 emit(&app, state.status());
                 crate::tray::refresh_locked(&app);
             }
@@ -1030,6 +1061,39 @@ mod tests {
         assert_eq!(state.status().state, "offline");
         state.failed(false, "Network unavailable".into());
         assert!(state.require_authorized().is_ok());
+    }
+
+    #[test]
+    fn admin_response_requires_the_current_connection_and_unexpired_access() {
+        let (state, _, _) = offline_device();
+        let credential = state.credential().unwrap();
+        state.inner.lock().unwrap().online = true;
+        assert!(state.require_current_admin(&credential).is_ok());
+        state.inner.lock().unwrap().deadline = Some(Instant::now() - Duration::from_secs(1));
+        assert!(state.require_current_admin(&credential).is_err());
+
+        let (state, _, _) = offline_device();
+        let credential = state.credential().unwrap();
+        state.inner.lock().unwrap().vault = None;
+        assert!(state.require_current_admin(&credential).is_err());
+    }
+
+    #[test]
+    fn a_stale_request_cannot_revoke_or_disconnect_a_replacement_credential() {
+        let (state, _, _) = offline_device();
+        let credential = state.credential().unwrap();
+        {
+            let mut inner = state.inner.lock().unwrap();
+            inner.vault.as_mut().unwrap().device_id = "replacement-device".into();
+            inner.error = Some("Fresh connection".into());
+            inner.online = true;
+        }
+        state.failed_for(Some(&credential), true, "Old device revoked".into());
+        let inner = state.inner.lock().unwrap();
+        assert_eq!(inner.error.as_deref(), Some("Fresh connection"));
+        assert!(inner.online);
+        assert!(!inner.require_online);
+        assert!(inner.vault.as_ref().unwrap().lease.is_some());
     }
 
     #[test]

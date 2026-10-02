@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { format, isSameDay, isSameMonth, isToday } from "date-fns";
+import { useMemo } from "react";
+import { format, isSameDay, isSameMonth } from "date-fns";
 import { Check, Clock, MapPin } from "lucide-react";
 import type { AppointmentRow } from "@/lib/db";
 import type { CloudBlock } from "@/lib/sync";
@@ -7,6 +7,7 @@ import { isoDate, minToTime, money, moneyNeat, timeLabel, timeToMin } from "@/li
 import { themedColour, tint } from "@/lib/palette";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
+import { useBusinessNow } from "@/lib/dates";
 
 const HOUR_PX = 56;
 const PX_PER_MIN = HOUR_PX / 60;
@@ -23,18 +24,19 @@ export interface CalendarProps {
   onOpen: (a: AppointmentRow) => void;
   /** Clicking an empty slot books a new appointment there. */
   onNew: (date: string, startTime: string) => void;
+  onShowDay?: (day: Date) => void;
 }
 
 const endMin = (a: AppointmentRow) => timeToMin(a.start_time) + a.duration_min;
 
-/** A minute-accurate clock that ticks once a minute, for the "now" line. */
-function useNow() {
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 60_000);
-    return () => clearInterval(id);
-  }, []);
-  return now;
+function blocksByDay(blocks: CloudBlock[]) {
+  const grouped = new Map<string, CloudBlock[]>();
+  for (const block of blocks) {
+    const day = grouped.get(block.date);
+    if (day) day.push(block);
+    else grouped.set(block.date, [block]);
+  }
+  return grouped;
 }
 
 function groupByDay(rows: AppointmentRow[]) {
@@ -82,8 +84,10 @@ function place(dayRows: AppointmentRow[]) {
 }
 
 /** Day and week view: hours down the side, appointments as blocks. */
-export function TimeGrid({ days, rows, blocks = [], onOpen, onNew }: CalendarProps) {
-  const now = useNow();
+export function TimeGrid({ days, rows, blocks = [], onOpen, onNew, onShowDay }: CalendarProps) {
+  const now = useBusinessNow();
+  const byDay = useMemo(() => groupByDay(rows), [rows]);
+  const byBlockDay = useMemo(() => blocksByDay(blocks), [blocks]);
 
   const [startHour, endHour] = useMemo(() => {
     let from = DEFAULT_START_HOUR;
@@ -103,7 +107,6 @@ export function TimeGrid({ days, rows, blocks = [], onOpen, onNew }: CalendarPro
   const hours = Array.from({ length: endHour - startHour }, (_, i) => startHour + i);
   const gridStart = startHour * 60;
   const height = (endHour - startHour) * HOUR_PX;
-  const byDay = groupByDay(rows);
   const hasUntimed = rows.some((appointment) => appointment.time_confirmed === 0);
 
   const nowMin = now.getHours() * 60 + now.getMinutes();
@@ -115,14 +118,17 @@ export function TimeGrid({ days, rows, blocks = [], onOpen, onNew }: CalendarPro
         {days.map((d) => (
           <div key={d.toISOString()} className="min-w-0 flex-1 border-l border-line px-1 pb-2 text-center">
             <div className="eyebrow text-[10px] text-muted">{format(d, "EEE")}</div>
-            <div
+            <button
+              type="button"
+              onClick={() => onShowDay?.(d)}
+              aria-label={`Show ${format(d, "EEEE d MMMM yyyy")}`}
               className={cn(
-                "mx-auto mt-0.5 flex h-7 w-7 items-center justify-center rounded-full font-display text-[17px]",
-                isToday(d) ? "bg-accent text-accent-ink" : "text-ink",
+                "mx-auto mt-0.5 flex h-7 w-7 cursor-pointer items-center justify-center rounded-full font-display text-[17px] hover:bg-accent-soft",
+                isSameDay(d, now) ? "bg-accent text-accent-ink" : "text-ink",
               )}
             >
               {format(d, "d")}
-            </div>
+            </button>
           </div>
         ))}
       </div>
@@ -162,7 +168,7 @@ export function TimeGrid({ days, rows, blocks = [], onOpen, onNew }: CalendarPro
                 }}
                 role="presentation"
               >
-                {blocks.filter((b) => b.date === isoDate(d)).map((b) => <div key={b.id} onClick={(e) => e.stopPropagation()} title={`${b.label || "Time off"} · ${timeLabel(b.start_time)}`} className="absolute inset-x-0 z-[1] overflow-hidden border-y border-line bg-surface-2 px-2 py-1 text-[11px] text-muted" style={{ top: (timeToMin(b.start_time) - gridStart) * PX_PER_MIN, height: Math.max(22, b.duration_min * PX_PER_MIN - 2), backgroundImage: "repeating-linear-gradient(135deg, transparent 0, transparent 5px, var(--border) 5px, var(--border) 6px)" }}>{b.label || "Time off"}</div>)}
+                {(byBlockDay.get(isoDate(d)) ?? []).map((b) => <div key={b.id} onClick={(e) => e.stopPropagation()} title={`${b.label || "Time off"} · ${timeLabel(b.start_time)}`} className="absolute inset-x-0 z-[1] overflow-hidden border-y border-line bg-surface-2 px-2 py-1 text-[11px] text-muted" style={{ top: (timeToMin(b.start_time) - gridStart) * PX_PER_MIN, height: Math.max(22, b.duration_min * PX_PER_MIN - 2), backgroundImage: "repeating-linear-gradient(135deg, transparent 0, transparent 5px, var(--border) 5px, var(--border) 6px)" }}>{b.label || "Time off"}</div>)}
                 {place(dayRows).map(({ a, col, cols }) => (
                   <Block
                     key={a.id}
@@ -271,7 +277,9 @@ export function MonthGrid({
   onShowDay,
 }: CalendarProps & { month: Date; onShowDay: (d: Date) => void }) {
   const { dark } = useTheme();
-  const byDay = groupByDay(rows);
+  const now = useBusinessNow();
+  const byDay = useMemo(() => groupByDay(rows), [rows]);
+  const byBlockDay = useMemo(() => blocksByDay(blocks), [blocks]);
   const weeks = Array.from({ length: days.length / 7 }, (_, i) => days.slice(i * 7, i * 7 + 7));
 
   return (
@@ -299,16 +307,19 @@ export function MonthGrid({
                   outside && "bg-surface-2/25",
                 )}
               >
-                <div
+                <button
+                  type="button"
+                  aria-label={`Show ${format(d, "EEEE d MMMM yyyy")}`}
+                  onClick={(event) => { event.stopPropagation(); onShowDay(d); }}
                   className={cn(
-                    "mb-1 ml-auto flex h-6 w-6 items-center justify-center rounded-full font-display text-[15px]",
-                    isToday(d) ? "bg-accent text-accent-ink" : outside ? "text-muted" : "text-ink",
+                    "mb-1 ml-auto flex h-6 w-6 cursor-pointer items-center justify-center rounded-full font-display text-[15px] hover:bg-accent-soft",
+                    isSameDay(d, now) ? "bg-accent text-accent-ink" : outside ? "text-muted" : "text-ink",
                   )}
                 >
                   {format(d, "d")}
-                </div>
+                </button>
                 <div className="space-y-0.5">
-                  {blocks.filter((b) => b.date === isoDate(d)).map((b) => <div key={b.id} className="truncate rounded-md border border-dashed border-line px-1.5 py-0.5 text-[11px] text-muted" onClick={(e) => e.stopPropagation()} title={`${b.label || "Time off"} · ${timeLabel(b.start_time)}`}>{timeLabel(b.start_time)} · {b.label || "Time off"}</div>)}
+                  {(byBlockDay.get(isoDate(d)) ?? []).map((b) => <div key={b.id} className="truncate rounded-md border border-dashed border-line px-1.5 py-0.5 text-[11px] text-muted" onClick={(e) => e.stopPropagation()} title={`${b.label || "Time off"} · ${timeLabel(b.start_time)}`}>{timeLabel(b.start_time)} · {b.label || "Time off"}</div>)}
                   {shown.map((a) => {
                     const colour = themedColour(a.category_colour ?? FALLBACK_COLOUR, dark);
                     return (

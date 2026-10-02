@@ -47,11 +47,16 @@ function fixtureDatabase({ through = Infinity } = {}) {
   };
   const db = {
     select: (sql, params) => serialized(() => select(sqlite, sql, params)),
+    readBatch: (statements) => serialized(() => statements.map((statement) => select(sqlite, statement.sql, statement.params))),
     execute: (sql, params) => serialized(() => execute(sql, params)),
     batch: (statements) => serialized(() => {
       sqlite.run("BEGIN");
       try {
-        const result = statements.map((statement) => execute(statement.sql, statement.params));
+        const result = statements.map((statement) => {
+          const result = execute(statement.sql, statement.params);
+          if (statement.expectedRows != null && result.rowsAffected !== statement.expectedRows) throw new Error("The record changed. Refresh before trying again.");
+          return result;
+        });
         sqlite.run("COMMIT");
         return result;
       } catch (error) { sqlite.run("ROLLBACK"); throw error; }
@@ -74,8 +79,9 @@ async function application(fixture, entry = "src/lib/db.ts") {
   const native = async (command, args = {}) => {
     switch (command) {
       case "db_select": return fixture.db.select(args.sql, args.params);
+      case "db_read_batch": return fixture.db.readBatch(args.statements);
       case "db_execute": return fixture.db.execute(args.sql, args.params);
-      case "db_batch": return fixture.db.batch(args.statements);
+      case "db_batch": return fixture.db.batch(args.statements.map((statement, index) => ({ ...statement, expectedRows: args.expectedRows?.[index] })));
       case "access_status": return { state: fixture.accessState ?? "online", device_id: "fixture", device_name: "Fixture", expires_at: 2_000_000_000, error: null };
       case "admin_request":
         if (fixture.adminRequest) return fixture.adminRequest(args);

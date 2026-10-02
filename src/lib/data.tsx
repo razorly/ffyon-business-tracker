@@ -22,6 +22,7 @@ interface DataCtx {
   /** Appointment dialog control — opened from the schedule, a client, or the money owed list */
   appointment: { open: boolean; editing: AppointmentRow | null; draft: AppointmentDraft | null };
   openNewAppointment: (draft: AppointmentDraft) => void;
+  switchEntryToAppointment: (draft: AppointmentDraft) => void;
   openEditAppointment: (a: AppointmentRow) => void;
   closeAppointment: () => void;
 }
@@ -39,30 +40,51 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const refresh = useCallback(() => setVersion((v) => v + 1), []);
   const openNewEntry = useCallback(
-    (type: TxType = "income", clientId?: number) => setEntry({ open: true, type, editing: null, clientId }),
+    (type: TxType = "income", clientId?: number) => {
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      setAppointment((a) => ({ ...a, open: false }));
+      setEntry({ open: true, type, editing: null, clientId });
+    },
     [],
   );
   const openEditEntry = useCallback(
-    (tx: TransactionRow) => setEntry({ open: true, type: tx.type, editing: tx }),
+    (tx: TransactionRow) => {
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      setAppointment((a) => ({ ...a, open: false }));
+      setEntry({ open: true, type: tx.type, editing: tx });
+    },
     [],
   );
   const closeEntry = useCallback(() => setEntry((e) => ({ ...e, open: false })), []);
 
   const openNewAppointment = useCallback(
-    (draft: AppointmentDraft) => setAppointment({ open: true, editing: null, draft }),
+    (draft: AppointmentDraft) => {
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      setEntry((e) => ({ ...e, open: false }));
+      setAppointment({ open: true, editing: null, draft });
+    },
     [],
   );
   const openEditAppointment = useCallback(
-    (a: AppointmentRow) => setAppointment({ open: true, editing: a, draft: null }),
+    (a: AppointmentRow) => {
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      setEntry((e) => ({ ...e, open: false }));
+      setAppointment({ open: true, editing: a, draft: null });
+    },
     [],
   );
   const closeAppointment = useCallback(() => setAppointment((a) => ({ ...a, open: false })), []);
+  const switchEntryToAppointment = useCallback((draft: AppointmentDraft) => {
+    setEntry((e) => ({ ...e, open: false }));
+    setAppointment({ open: true, editing: null, draft });
+  }, []);
 
   // Ctrl/Cmd + N opens a new entry anywhere in the app
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "n") {
         e.preventDefault();
+        if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
         openNewEntry();
       }
     };
@@ -81,6 +103,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         closeEntry,
         appointment,
         openNewAppointment,
+        switchEntryToAppointment,
         openEditAppointment,
         closeAppointment,
       }}
@@ -93,21 +116,27 @@ export function DataProvider({ children }: { children: ReactNode }) {
 export const useData = () => useContext(Ctx);
 
 /** Run an async loader whenever deps or the data version change. */
-export function useLoad<T>(loader: () => Promise<T>, deps: unknown[], initial: T): [T, boolean] {
+export function useLoad<T>(loader: () => Promise<T>, deps: unknown[], initial: T): [T, boolean, string | null] {
   const { version } = useData();
-  const [value, setValue] = useState<T>(initial);
-  const [loading, setLoading] = useState(true);
+  const [state, setState] = useState<{ value: T; loading: boolean; error: string | null; deps: unknown[] }>(
+    () => ({ value: initial, loading: true, error: null, deps }),
+  );
+  const sameScope = deps.length === state.deps.length && deps.every((dep, i) => Object.is(dep, state.deps[i]));
   useEffect(() => {
     let alive = true;
-    setLoading(true);
-    loader()
-      .then((v) => alive && setValue(v))
-      .catch((e) => console.error(e))
-      .finally(() => alive && setLoading(false));
+    setState((previous) => ({ value: sameScope ? previous.value : initial, loading: true, error: null, deps }));
+    Promise.resolve().then(loader)
+      .then((value) => { if (alive) setState({ value, loading: false, error: null, deps }); })
+      .catch((error: unknown) => {
+        if (alive) setState((previous) => ({ ...previous, loading: false,
+          error: error instanceof Error ? error.message : "Could not load this information. Please retry." }));
+      });
     return () => {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [version, ...deps]);
-  return [value, loading];
+  // A new month/client must never render the previous scope's data, even before
+  // its effect starts. Same-scope refreshes keep the last successfully loaded view.
+  return sameScope ? [state.value, state.loading, state.error] : [initial, true, null];
 }

@@ -1,6 +1,6 @@
 [package]
 name = "ffyon-tracker"
-version = "0.5.7"
+version = "0.5.8"
 description = "Income and expense tracker for Tanned by Ffy"
 authors = ["you"]
 edition = "2021"

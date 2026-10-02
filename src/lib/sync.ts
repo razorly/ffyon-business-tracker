@@ -59,6 +59,13 @@ export function syncNow(): Promise<SyncState> {
   return running;
 }
 
+/** A request already in flight may have read the site before this write committed. */
+async function syncAfterWrite(): Promise<SyncState> {
+  const active = running;
+  if (active) await active.catch(() => {});
+  return syncNow();
+}
+
 function clientUpsert(c: CloudClient, guardDeleted = true): Statement {
   return { sql: `INSERT INTO clients (remote_id, account_id, name, email, phone, cloud_revision, disabled, created_at, saved_address, saved_postcode)
     ${guardDeleted ? "SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10 WHERE NOT EXISTS (SELECT 1 FROM sync_state WHERE key='deleted-client-' || $1)" : "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"}
@@ -244,6 +251,10 @@ async function applySyncResponseNow(response: SyncResponse, prefixStatements: St
   const [stored] = await db.select<{ value: string }[]>("SELECT value FROM sync_state WHERE key='cursor'");
   const previous = stored ? Number(stored.value) : 0;
   if (response.cursor < previous) throw new Error("The site returned an older sync cursor.");
+  if (!response.snapshot && response.changes.length === 0 && response.cursor === previous && prefixStatements.length === 0) {
+    await db.batch(syncMetadata(response));
+    return;
+  }
   const deleted = await deletionState(db, response, prefixStatements.length > 0);
   const statements: Statement[] = [...prefixStatements];
   if (response.snapshot) {
@@ -279,12 +290,17 @@ async function applySyncResponseNow(response: SyncResponse, prefixStatements: St
     for (const change of clients) if (change.record === null) statements.push(...changeStatements(change));
   }
   statements.push(...deleted.statements, linkedPaymentServices());
-  const notifications = notificationStatus(response.notifications);
-  statements.push(notifications
-    ? { sql: "INSERT INTO sync_state(key,value) VALUES ('notification-status',$1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", params: [JSON.stringify(notifications)] }
-    : { sql: "DELETE FROM sync_state WHERE key='notification-status'" });
-  statements.push({ sql: "INSERT INTO sync_state (key,value) VALUES ('cursor',$1) ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE CAST(excluded.value AS INTEGER)>=CAST(sync_state.value AS INTEGER)", params: [String(response.cursor)] });
+  statements.push(...syncMetadata(response));
   await db.batch(statements);
+}
+
+function syncMetadata(response: SyncResponse): Statement[] {
+  const notifications = notificationStatus(response.notifications);
+  return [notifications
+    ? { sql: "INSERT INTO sync_state(key,value) VALUES ('notification-status',$1) ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE sync_state.value!=excluded.value", params: [JSON.stringify(notifications)] }
+    : { sql: "DELETE FROM sync_state WHERE key='notification-status'" },
+    { sql: "INSERT INTO sync_state (key,value) VALUES ('cursor',$1) ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE CAST(excluded.value AS INTEGER)>CAST(sync_state.value AS INTEGER)", params: [String(response.cursor)] },
+  ];
 }
 
 async function cached<T>(table: "cloud_services" | "cloud_blocks" | "cloud_settings"): Promise<T[]> {
@@ -353,7 +369,7 @@ export function mutateAndSync(operation: string, method: string, body: Record<st
       if (/^4\d\d:/.test(String(error instanceof Error ? error.message : error))) await db.execute("DELETE FROM sync_state WHERE key='mutation-pending'").catch(() => {});
       throw error;
     }
-    await syncNow();
+    await syncAfterWrite();
     await db.execute("DELETE FROM sync_state WHERE key='mutation-pending'");
     return pending.body;
   });
@@ -424,7 +440,7 @@ export async function importLegacyRecords(selection: ImportSelection) {
     if (!same(saved.selection.clientIds, selection.clientIds) || !same(saved.selection.appointmentIds, selection.appointmentIds)) throw new Error("Retry the previous reviewed import before choosing a different selection.");
     try { await adminRequest("import", "POST", saved.body); }
     catch (error) { throw await rejectedImport(error); }
-    await syncNow();
+    await syncAfterWrite();
     await clearImportState();
     return;
   }
@@ -459,7 +475,7 @@ export async function importLegacyRecords(selection: ImportSelection) {
   await db.batch(statements);
   try { await adminRequest("import", "POST", body); }
   catch (error) { throw await rejectedImport(error); }
-  await syncNow();
+  await syncAfterWrite();
   await clearImportState();
 }
 

@@ -1,0 +1,648 @@
+{
+  "storage": "Actual native migrations and disposable in-memory SQLite IPC fixture",
+  "nativeLimit": "Browser evidence does not exercise native tray menus, OS credentials, WebView2 or macOS",
+  "evidence": [
+    {
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "catalogueIsSingleTreatmentSource": true,
+      "moneyInDefaultsToOtherWithoutServiceOrAppointmentOptions": true,
+      "otherIncomeCreatesNoBooking": true,
+      "appointmentSectionPaysOnceAtSavedQuote": true,
+      "otherIncomeAndExpensesSeparate": true,
+      "legacyChoicesExplicitNoNameGuessing": true,
+      "renameArchiveRetainHistoricNamesAndMoney": true,
+      "historicalEditorsDoNotReprice": true,
+      "explicitUnlinkedSourceCorrectionsPreserveActualAmount": true,
+      "linkedPaymentSourceRemainsFixed": true,
+      "reportIncomeKinds": true,
+      "trayPayloadUsesDiscountedActiveServicesOnly": true,
+      "charts": [
+        {
+          "selector": ".recharts-area-curve",
+          "shapes": [
+            {
+              "width": 555,
+              "height": 195.05999755859375
+            },
+            {
+              "width": 555,
+              "height": 37.34800720214844
+            }
+          ]
+        },
+        {
+          "selector": ".recharts-bar-rectangle path",
+          "shapes": [
+            {
+              "width": 24,
+              "height": 175.63385009765625
+            }
+          ]
+        },
+        {
+          "selector": ".recharts-pie-sector path",
+          "shapes": [
+            {
+              "width": 172.00001525878906,
+              "height": 172
+            },
+            {
+              "width": 1.6531982421875,
+              "height": 28.014999389648438
+            },
+            {
+              "width": 1.2194976806640625,
+              "height": 28.007400512695312
+            }
+          ]
+        }
+      ],
+      "fittedValues": [
+        {
+          "text": "£10,036.22",
+          "fontSize": "40px",
+          "width": 190,
+          "textWidth": 184.484375,
+          "left": 293,
+          "right": 483,
+          "textLeft": 293,
+          "textRight": 477.484375
+        },
+        {
+          "text": "£12,412.89",
+          "fontSize": "32px",
+          "width": 190,
+          "textWidth": 142.984375,
+          "left": 541,
+          "right": 731,
+          "textLeft": 541,
+          "textRight": 683.984375
+        },
+        {
+          "text": "£2,376.67",
+          "fontSize": "32px",
+          "width": 190,
+          "textWidth": 135.5,
+          "left": 789,
+          "right": 979,
+          "textLeft": 789,
+          "textRight": 924.5
+        },
+        {
+          "text": "1",
+          "fontSize": "32px",
+          "width": 190,
+          "textWidth": 11.203125,
+          "left": 1037,
+          "right": 1227,
+          "textLeft": 1037,
+          "textRight": 1048.203125
+        },
+        {
+          "text": "£12,412.89",
+          "fontSize": "22px",
+          "width": 102.328125,
+          "textWidth": 98.296875,
+          "left": 968.328125,
+          "right": 1070.65625,
+          "textLeft": 968.328125,
+          "textRight": 1066.625
+        },
+        {
+          "text": "£10,036.22",
+          "fontSize": "22px",
+          "width": 102.328125,
+          "textWidth": 101.46875,
+          "left": 1110.65625,
+          "right": 1212.984375,
+          "textLeft": 1110.65625,
+          "textRight": 1212.125
+        }
+      ],
+      "resizeEvidence": [
+        {
+          "width": 1280,
+          "values": [
+            {
+              "text": "£10,036.22",
+              "fontSize": "40px",
+              "width": 190,
+              "textWidth": 184.484375,
+              "left": 293,
+              "right": 483,
+              "textLeft": 293,
+              "textRight": 477.484375
+            },
+            {
+              "text": "£12,412.89",
+              "fontSize": "32px",
+              "width": 190,
+              "textWidth": 142.984375,
+              "left": 541,
+              "right": 731,
+              "textLeft": 541,
+              "textRight": 683.984375
+            },
+            {
+              "text": "£2,376.67",
+              "fontSize": "32px",
+              "width": 190,
+              "textWidth": 135.5,
+              "left": 789,
+              "right": 979,
+              "textLeft": 789,
+              "textRight": 924.5
+            },
+            {
+              "text": "1",
+              "fontSize": "32px",
+              "width": 190,
+              "textWidth": 11.203125,
+              "left": 1037,
+              "right": 1227,
+              "textLeft": 1037,
+              "textRight": 1048.203125
+            },
+            {
+              "text": "£12,412.89",
+              "fontSize": "22px",
+              "width": 102.328125,
+              "textWidth": 98.296875,
+              "left": 968.328125,
+              "right": 1070.65625,
+              "textLeft": 968.328125,
+              "textRight": 1066.625
+            },
+            {
+              "text": "£10,036.22",
+              "fontSize": "22px",
+              "width": 102.328125,
+              "textWidth": 101.46875,
+              "left": 1110.65625,
+              "right": 1212.984375,
+              "textLeft": 1110.65625,
+              "textRight": 1212.125
+            }
+          ]
+        },
+        {
+          "width": 1024,
+          "values": [
+            {
+              "text": "£10,036.22",
+              "fontSize": "27.31px",
+              "width": 126,
+              "textWidth": 125.96875,
+              "left": 293,
+              "right": 419,
+              "textLeft": 293,
+              "textRight": 418.96875
+            },
+            {
+              "text": "£12,412.89",
+              "fontSize": "28.19px",
+              "width": 126,
+              "textWidth": 125.953125,
+              "left": 477,
+              "right": 603,
+              "textLeft": 477,
+              "textRight": 602.953125
+            },
+            {
+              "text": "£2,376.67",
+              "fontSize": "29.75px",
+              "width": 126,
+              "textWidth": 125.96875,
+              "left": 661,
+              "right": 787,
+              "textLeft": 661,
+              "textRight": 786.96875
+            },
+            {
+              "text": "1",
+              "fontSize": "32px",
+              "width": 126,
+              "textWidth": 11.203125,
+              "left": 845,
+              "right": 971,
+              "textLeft": 845,
+              "textRight": 856.203125
+            },
+            {
+              "text": "£12,412.89",
+              "fontSize": "13.42px",
+              "width": 59.65625,
+              "textWidth": 59.96875,
+              "left": 797.65625,
+              "right": 857.3125,
+              "textLeft": 797.65625,
+              "textRight": 857.625
+            },
+            {
+              "text": "£10,036.22",
+              "fontSize": "13px",
+              "width": 59.671875,
+              "textWidth": 59.96875,
+              "left": 897.3125,
+              "right": 956.984375,
+              "textLeft": 897.3125,
+              "textRight": 957.28125
+            }
+          ]
+        },
+        {
+          "width": 320,
+          "values": [
+            {
+              "text": "£10,036.22",
+              "fontSize": "39.46px",
+              "width": 182,
+              "textWidth": 182,
+              "left": 101,
+              "right": 283,
+              "textLeft": 101,
+              "textRight": 283
+            },
+            {
+              "text": "£12,412.89",
+              "fontSize": "32px",
+              "width": 182,
+              "textWidth": 142.984375,
+              "left": 101,
+              "right": 283,
+              "textLeft": 101,
+              "textRight": 243.984375
+            },
+            {
+              "text": "£2,376.67",
+              "fontSize": "32px",
+              "width": 182,
+              "textWidth": 135.5,
+              "left": 101,
+              "right": 283,
+              "textLeft": 101,
+              "textRight": 236.5
+            },
+            {
+              "text": "1",
+              "fontSize": "32px",
+              "width": 182,
+              "textWidth": 11.203125,
+              "left": 101,
+              "right": 283,
+              "textLeft": 101,
+              "textRight": 112.203125
+            },
+            {
+              "text": "£12,412.89",
+              "fontSize": "22px",
+              "width": 154,
+              "textWidth": 98.296875,
+              "left": 115,
+              "right": 269,
+              "textLeft": 115,
+              "textRight": 213.296875
+            },
+            {
+              "text": "£10,036.22",
+              "fontSize": "22px",
+              "width": 154,
+              "textWidth": 101.46875,
+              "left": 115,
+              "right": 269,
+              "textLeft": 115,
+              "textRight": 216.46875
+            }
+          ]
+        },
+        {
+          "width": 1280,
+          "values": [
+            {
+              "text": "£10,036.22",
+              "fontSize": "40px",
+              "width": 190,
+              "textWidth": 184.484375,
+              "left": 293,
+              "right": 483,
+              "textLeft": 293,
+              "textRight": 477.484375
+            },
+            {
+              "text": "£12,412.89",
+              "fontSize": "32px",
+              "width": 190,
+              "textWidth": 142.984375,
+              "left": 541,
+              "right": 731,
+              "textLeft": 541,
+              "textRight": 683.984375
+            },
+            {
+              "text": "£2,376.67",
+              "fontSize": "32px",
+              "width": 190,
+              "textWidth": 135.5,
+              "left": 789,
+              "right": 979,
+              "textLeft": 789,
+              "textRight": 924.5
+            },
+            {
+              "text": "1",
+              "fontSize": "32px",
+              "width": 190,
+              "textWidth": 11.203125,
+              "left": 1037,
+              "right": 1227,
+              "textLeft": 1037,
+              "textRight": 1048.203125
+            },
+            {
+              "text": "£12,412.89",
+              "fontSize": "22px",
+              "width": 102.328125,
+              "textWidth": 98.296875,
+              "left": 968.328125,
+              "right": 1070.65625,
+              "textLeft": 968.328125,
+              "textRight": 1066.625
+            },
+            {
+              "text": "£10,036.22",
+              "fontSize": "22px",
+              "width": 102.328125,
+              "textWidth": 101.46875,
+              "left": 1110.65625,
+              "right": 1212.984375,
+              "textLeft": 1110.65625,
+              "textRight": 1212.125
+            }
+          ]
+        }
+      ],
+      "mainBounds": {
+        "width": 1040,
+        "content": 1040
+      },
+      "pageErrors": []
+    },
+    {
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "catalogueIsSingleTreatmentSource": true,
+      "moneyInDefaultsToOtherWithoutServiceOrAppointmentOptions": true,
+      "otherIncomeCreatesNoBooking": true,
+      "appointmentSectionPaysOnceAtSavedQuote": true,
+      "otherIncomeAndExpensesSeparate": true,
+      "legacyChoicesExplicitNoNameGuessing": true,
+      "renameArchiveRetainHistoricNamesAndMoney": true,
+      "historicalEditorsDoNotReprice": true,
+      "explicitUnlinkedSourceCorrectionsPreserveActualAmount": true,
+      "linkedPaymentSourceRemainsFixed": true,
+      "reportIncomeKinds": true,
+      "trayPayloadUsesDiscountedActiveServicesOnly": true,
+      "charts": [
+        {
+          "selector": ".recharts-area-curve",
+          "shapes": [
+            {
+              "width": 189,
+              "height": 195.05999755859375
+            },
+            {
+              "width": 189,
+              "height": 37.34800720214844
+            }
+          ]
+        },
+        {
+          "selector": ".recharts-bar-rectangle path",
+          "shapes": [
+            {
+              "width": 13,
+              "height": 175.63385009765625
+            }
+          ]
+        },
+        {
+          "selector": ".recharts-pie-sector path",
+          "shapes": [
+            {
+              "width": 172.00001525878906,
+              "height": 172
+            },
+            {
+              "width": 1.6531982421875,
+              "height": 28.014999389648438
+            },
+            {
+              "width": 1.2194976806640625,
+              "height": 28.007400512695312
+            }
+          ]
+        }
+      ],
+      "fittedValues": [
+        {
+          "text": "£10,036.22",
+          "fontSize": "40px",
+          "width": 237,
+          "textWidth": 184.484375,
+          "left": 101,
+          "right": 338,
+          "textLeft": 101,
+          "textRight": 285.484375
+        },
+        {
+          "text": "£12,412.89",
+          "fontSize": "32px",
+          "width": 237,
+          "textWidth": 142.984375,
+          "left": 101,
+          "right": 338,
+          "textLeft": 101,
+          "textRight": 243.984375
+        },
+        {
+          "text": "£2,376.67",
+          "fontSize": "32px",
+          "width": 237,
+          "textWidth": 135.5,
+          "left": 101,
+          "right": 338,
+          "textLeft": 101,
+          "textRight": 236.5
+        },
+        {
+          "text": "1",
+          "fontSize": "32px",
+          "width": 237,
+          "textWidth": 11.203125,
+          "left": 101,
+          "right": 338,
+          "textLeft": 101,
+          "textRight": 112.203125
+        },
+        {
+          "text": "£12,412.89",
+          "fontSize": "22px",
+          "width": 209,
+          "textWidth": 98.296875,
+          "left": 115,
+          "right": 324,
+          "textLeft": 115,
+          "textRight": 213.296875
+        },
+        {
+          "text": "£10,036.22",
+          "fontSize": "22px",
+          "width": 209,
+          "textWidth": 101.46875,
+          "left": 115,
+          "right": 324,
+          "textLeft": 115,
+          "textRight": 216.46875
+        }
+      ],
+      "resizeEvidence": [],
+      "mainBounds": {
+        "width": 311,
+        "content": 311
+      },
+      "pageErrors": []
+    },
+    {
+      "viewport": {
+        "width": 320,
+        "height": 740
+      },
+      "catalogueIsSingleTreatmentSource": true,
+      "moneyInDefaultsToOtherWithoutServiceOrAppointmentOptions": true,
+      "otherIncomeCreatesNoBooking": true,
+      "appointmentSectionPaysOnceAtSavedQuote": true,
+      "otherIncomeAndExpensesSeparate": true,
+      "legacyChoicesExplicitNoNameGuessing": true,
+      "renameArchiveRetainHistoricNamesAndMoney": true,
+      "historicalEditorsDoNotReprice": true,
+      "explicitUnlinkedSourceCorrectionsPreserveActualAmount": true,
+      "linkedPaymentSourceRemainsFixed": true,
+      "reportIncomeKinds": true,
+      "trayPayloadUsesDiscountedActiveServicesOnly": true,
+      "charts": [
+        {
+          "selector": ".recharts-area-curve",
+          "shapes": [
+            {
+              "width": 134,
+              "height": 195.05999755859375
+            },
+            {
+              "width": 134,
+              "height": 37.34800720214844
+            }
+          ]
+        },
+        {
+          "selector": ".recharts-bar-rectangle path",
+          "shapes": [
+            {
+              "width": 9,
+              "height": 175.63385009765625
+            }
+          ]
+        },
+        {
+          "selector": ".recharts-pie-sector path",
+          "shapes": [
+            {
+              "width": 172.00001525878906,
+              "height": 172
+            },
+            {
+              "width": 1.6531982421875,
+              "height": 28.014999389648438
+            },
+            {
+              "width": 1.2194976806640625,
+              "height": 28.007400512695312
+            }
+          ]
+        }
+      ],
+      "fittedValues": [
+        {
+          "text": "£10,036.22",
+          "fontSize": "39.46px",
+          "width": 182,
+          "textWidth": 182,
+          "left": 101,
+          "right": 283,
+          "textLeft": 101,
+          "textRight": 283
+        },
+        {
+          "text": "£12,412.89",
+          "fontSize": "32px",
+          "width": 182,
+          "textWidth": 142.984375,
+          "left": 101,
+          "right": 283,
+          "textLeft": 101,
+          "textRight": 243.984375
+        },
+        {
+          "text": "£2,376.67",
+          "fontSize": "32px",
+          "width": 182,
+          "textWidth": 135.5,
+          "left": 101,
+          "right": 283,
+          "textLeft": 101,
+          "textRight": 236.5
+        },
+        {
+          "text": "1",
+          "fontSize": "32px",
+          "width": 182,
+          "textWidth": 11.203125,
+          "left": 101,
+          "right": 283,
+          "textLeft": 101,
+          "textRight": 112.203125
+        },
+        {
+          "text": "£12,412.89",
+          "fontSize": "22px",
+          "width": 154,
+          "textWidth": 98.296875,
+          "left": 115,
+          "right": 269,
+          "textLeft": 115,
+          "textRight": 213.296875
+        },
+        {
+          "text": "£10,036.22",
+          "fontSize": "22px",
+          "width": 154,
+          "textWidth": 101.46875,
+          "left": 115,
+          "right": 269,
+          "textLeft": 115,
+          "textRight": 216.46875
+        }
+      ],
+      "resizeEvidence": [],
+      "mainBounds": {
+        "width": 256,
+        "content": 256
+      },
+      "pageErrors": []
+    }
+  ]
+}

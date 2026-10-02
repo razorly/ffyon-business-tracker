@@ -1,5 +1,35 @@
 import { addMonths, endOfMonth, format, startOfMonth } from "date-fns";
 import { isoDate } from "./format";
+import { useEffect, useState } from "react";
+
+const businessClock = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit",
+  hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+});
+
+/** A local Date containing the salon's London wall-clock fields. */
+export function businessNow(now = new Date()): Date {
+  const parts = Object.fromEntries(businessClock.formatToParts(now).map((part) => [part.type, part.value]));
+  return new Date(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute), Number(parts.second));
+}
+
+/** Refresh day-dependent views after midnight and when the app regains focus. */
+export function useBusinessNow(): Date {
+  const [now, setNow] = useState(businessNow);
+  useEffect(() => {
+    const tick = () => setNow(businessNow());
+    const timer = window.setInterval(tick, 60_000);
+    window.addEventListener("focus", tick);
+    const visible = () => { if (!document.hidden) tick(); };
+    document.addEventListener("visibilitychange", visible);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", tick);
+      document.removeEventListener("visibilitychange", visible);
+    };
+  }, []);
+  return now;
+}
 
 export const monthRange = (d: Date) => ({ from: isoDate(startOfMonth(d)), to: isoDate(endOfMonth(d)) });
 

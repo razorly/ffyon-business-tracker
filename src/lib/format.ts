@@ -30,7 +30,9 @@ export const moneyCompact = (pence: number) =>
 export function parseAmount(input: string): number | null {
   const cleaned = input.replace(/[£,\s]/g, "");
   if (!/^\d+(\.\d{0,2})?$/.test(cleaned)) return null;
-  return Math.round(parseFloat(cleaned) * 100);
+  const [whole, decimals = ""] = cleaned.split(".");
+  const pence = Number(whole) * 100 + Number(decimals.padEnd(2, "0"));
+  return Number.isSafeInteger(pence) ? pence : null;
 }
 
 export const penceToInput = (pence: number) => (pence / 100).toFixed(2);

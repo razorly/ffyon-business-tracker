@@ -37,10 +37,18 @@ function fixture(through = Infinity) {
   const serialized = (f) => { const next = tail.then(f); tail = next.catch(() => {}); return next; };
   const db = {
     select: (sql, params) => serialized(() => select(sql, params)),
+    readBatch: (statements) => serialized(() => statements.map((statement) => select(statement.sql, statement.params))),
     execute: (sql, params) => serialized(() => execute(sql, params)),
     batch: (statements) => serialized(() => {
       sqlite.run("BEGIN");
-      try { const results = statements.map((s) => execute(s.sql, s.params)); sqlite.run("COMMIT"); return results; }
+      try {
+        const results = statements.map((s) => {
+          const result = execute(s.sql, s.params);
+          if (s.expectedRows != null && result.rowsAffected !== s.expectedRows) throw new Error("The record changed. Refresh before trying again.");
+          return result;
+        });
+        sqlite.run("COMMIT"); return results;
+      }
       catch (e) { sqlite.run("ROLLBACK"); throw e; }
     }),
   };
@@ -53,8 +61,9 @@ async function application(f) {
     window: { __TAURI_INTERNALS__: {}, addEventListener() {}, removeEventListener() {} } });
   const native = async (command, args = {}) => {
     if (command === "db_select") return f.db.select(args.sql, args.params);
+    if (command === "db_read_batch") return f.db.readBatch(args.statements);
     if (command === "db_execute") return f.db.execute(args.sql, args.params);
-    if (command === "db_batch") return f.db.batch(args.statements);
+    if (command === "db_batch") return f.db.batch(args.statements.map((statement, index) => ({ ...statement, expectedRows: args.expectedRows?.[index] })));
     if (command === "access_status") return { state: "online", expires_at: 2_000_000_000, device_id: "fixture", device_name: "Fixture", error: null };
     if (command === "admin_request") throw new Error("Network access is forbidden in catalogue data tests.");
     throw new Error(`Unexpected native command: ${command}`);

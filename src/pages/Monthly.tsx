@@ -11,7 +11,7 @@ import { useTheme } from "@/lib/theme";
 import { toastDeleted } from "@/lib/undo";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/Layout";
-import { Button, Card, CardHeader, ConfirmModal, EmptyState, Input, Segmented, Select, Stat, Swatch } from "@/components/ui";
+import { Button, Card, CardHeader, ConfirmModal, EmptyState, Input, LoadError, Segmented, Select, Stat, Swatch } from "@/components/ui";
 import { DailyBars, Legend } from "@/components/charts";
 
 type Filter = "all" | "income" | "expense";
@@ -28,8 +28,8 @@ export function Monthly() {
   const [toDelete, setToDelete] = useState<TransactionRow | null>(null);
 
   const range = monthRange(month);
-  const [rows] = useLoad(() => listTransactions(range), [range.from], []);
-  const [days] = useLoad(() => dailyTotals(range.from, range.to), [range.from], []);
+  const [rows, loading, loadError] = useLoad(() => listTransactions(range), [range.from], []);
+  const [days, , daysError] = useLoad(() => dailyTotals(range.from, range.to), [range.from], []);
 
   const income = rows.filter((r) => r.type === "income").reduce((s, r) => s + r.amount_pence, 0);
   const expense = rows.filter((r) => r.type === "expense").reduce((s, r) => s + r.amount_pence, 0);
@@ -69,6 +69,8 @@ export function Monthly() {
     setSort((s) => (s.key === key ? { key, desc: !s.desc } : { key, desc: true }));
 
   const isCurrent = isSameMonth(month, new Date());
+  const unavailable = rows.length === 0 && (loading || Boolean(loadError));
+  const placeholder = loadError ? "Unavailable" : "…";
 
   return (
     <>
@@ -88,12 +90,14 @@ export function Monthly() {
           </Button>
         )}
       </PageHeader>
+      <LoadError error={loadError || daysError} onRetry={refresh} />
+      {loading && <p role="status" className="mb-3 text-sm text-muted">Loading monthly finances…</p>}
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Stat label="Money in" value={money(income)} tone="good" />
-        <Stat label="Money out" value={money(expense)} />
-        <Stat label="Profit" value={money(income - expense)} tone={income - expense < 0 ? "bad" : undefined} strong />
-        <Stat label="Client payments" value={String(clientVisits)} />
+        <Stat label="Money in" value={unavailable ? placeholder : money(income)} tone="good" />
+        <Stat label="Money out" value={unavailable ? placeholder : money(expense)} />
+        <Stat label="Profit" value={unavailable ? placeholder : money(income - expense)} tone={income - expense < 0 ? "bad" : undefined} strong />
+        <Stat label="Client payments" value={unavailable ? placeholder : String(clientVisits)} />
       </div>
 
       <Card className="mt-4">
@@ -153,9 +157,9 @@ export function Monthly() {
           </div>
         </div>
 
-        {visible.length === 0 ? (
-          <EmptyState icon={<CalendarDays size={20} />} title={rows.length ? "No matching entries" : "Nothing this month"}>
-            {rows.length ? "Try a different filter or search." : "Entries you add for this month will show here."}
+        {visible.length === 0 && !loading ? (
+          <EmptyState icon={<CalendarDays size={20} />} title={loadError ? "Entries unavailable" : rows.length ? "No matching entries" : "Nothing this month"}>
+            {loadError ? "Retry loading your finances above." : rows.length ? "Try a different filter or search." : "Entries you add for this month will show here."}
           </EmptyState>
         ) : (
           <div className="overflow-x-auto">
@@ -193,7 +197,7 @@ export function Monthly() {
                       {money(r.amount_pence)}
                     </td>
                     <td className="pr-5 text-right">
-                      <div className="flex justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                      <div className="flex justify-end gap-0.5">
                         <Button variant="ghost" size="icon" onClick={() => openEditEntry(r)} aria-label="Edit">
                           <Pencil size={14} />
                         </Button>
@@ -246,7 +250,7 @@ function SortTh({
   className?: string;
 }) {
   return (
-    <th className={cn("px-3 py-2 font-medium", className)}>
+    <th aria-sort={active ? desc ? "descending" : "ascending" : "none"} className={cn("px-3 py-2 font-medium", className)}>
       <button onClick={onClick} className={cn("eyebrow inline-flex items-center gap-1 cursor-pointer", active && "text-ink")}>
         {label}
         {active && (desc ? <ArrowDown size={12} /> : <ArrowUp size={12} />)}

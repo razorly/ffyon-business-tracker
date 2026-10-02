@@ -54,6 +54,7 @@ function fixtureDatabase({ legacy = false } = {}) {
   let failStatement = null;
   const db = {
     select: (sql, params) => serialized(() => select(sqlite, sql, params)),
+    readBatch: (statements) => serialized(() => statements.map((statement) => select(sqlite, statement.sql, statement.params))),
     execute: (sql, params) => serialized(() => {
       failStatement?.(sql, params);
       return execute(sqlite, sql, params);
@@ -63,7 +64,9 @@ function fixtureDatabase({ legacy = false } = {}) {
       try {
         const result = statements.map((statement) => {
           failStatement?.(statement.sql, statement.params);
-          return execute(sqlite, statement.sql, statement.params);
+          const result = execute(sqlite, statement.sql, statement.params);
+          if (statement.expectedRows != null && result.rowsAffected !== statement.expectedRows) throw new Error("The record changed. Refresh before trying again.");
+          return result;
         });
         sqlite.run("COMMIT");
         return result;
@@ -95,18 +98,22 @@ async function application(fixture, entry = "src/lib/db.ts") {
     clearTimeout,
     setInterval,
     clearInterval,
+    localStorage: fixture.storage ?? { getItem: () => null, setItem() {}, removeItem() {} },
     window: { __TAURI_INTERNALS__: {}, addEventListener() {}, removeEventListener() {} },
   });
   const native = async (command, args = {}) => {
     switch (command) {
       case "db_select": return fixture.db.select(args.sql, args.params);
+      case "db_read_batch": return fixture.db.readBatch(args.statements);
       case "db_execute": return fixture.db.execute(args.sql, args.params);
-      case "db_batch": return fixture.db.batch(args.statements);
+      case "db_batch": return fixture.db.batch(args.statements.map((statement, index) => ({ ...statement, expectedRows: args.expectedRows?.[index] })));
       case "access_status": return { state: fixture.accessState ?? "online", device_id: "fixture", device_name: "Fixture", expires_at: 2_000_000_000, error: null };
       case "admin_request":
         if (fixture.adminRequest) return fixture.adminRequest(args);
         throw new Error("Fixture does not permit network access");
-      default: throw new Error(`Unexpected native command: ${command}`);
+      default:
+        if (fixture.nativeRequest) return fixture.nativeRequest(command, args);
+        throw new Error(`Unexpected native command: ${command}`);
     }
   };
   const mocks = {
@@ -538,4 +545,181 @@ test("official frontend has no direct business SQL or filesystem capabilities", 
   const capability = JSON.parse(await readFile(path.join(root, "src-tauri/capabilities/default.json"), "utf8"));
   const forbidden = capability.permissions.filter((permission) => /^(sql|fs):/.test(typeof permission === "string" ? permission : permission.identifier));
   assert.deepEqual(forbidden, [], "Business data must cross the native authorization guard");
+});
+
+test("a shared write waits for a fresh sync after an older sync request", async () => {
+  const fixture = fixtureDatabase();
+  try {
+    const { response, service } = sharedFixture(fixture);
+    let releaseOld;
+    let signalStarted;
+    let signalWritten;
+    const started = new Promise((resolve) => { signalStarted = resolve; });
+    const written = new Promise((resolve) => { signalWritten = resolve; });
+    const oldResponse = new Promise((resolve) => { releaseOld = resolve; });
+    let syncCalls = 0;
+    fixture.adminRequest = ({ operation }) => {
+      if (operation === "services") { signalWritten(); return {}; }
+      if (operation === "sync") {
+        if (++syncCalls === 1) { signalStarted(); return oldResponse; }
+        return { snapshot: null, changes: [{ sequence: 2, entity: "service", id: service.id,
+          record: { ...service, name: "Updated service", revision: 2 } }], cursor: 2, has_more: false };
+      }
+      throw new Error(`Unexpected operation: ${operation}`);
+    };
+    const sync = await application(fixture, "src/lib/sync.ts");
+    const first = sync.syncNow();
+    await started;
+    const save = sync.saveService({ ...service, name: "Updated service" });
+    await written;
+    releaseOld(response);
+    await Promise.all([first, save]);
+    assert.equal(syncCalls, 2, "A sync that began before the mutation cannot acknowledge it");
+    assert.equal((await sync.listServices())[0].name, "Updated service");
+    assert.equal(sync.getSyncState().cursor, 2);
+    assert.equal(fixture.select("SELECT COUNT(*) AS n FROM sync_state WHERE key='mutation-pending'")[0].n, 0);
+  } finally { fixture.close(); }
+});
+
+test("a backup uses one atomic native read and remains valid during a payment", async () => {
+  const fixture = fixtureDatabase();
+  try {
+    const id = seedAppointment(fixture);
+    let readBatches = 0;
+    const original = fixture.db.readBatch;
+    fixture.db.readBatch = (statements) => { readBatches++; return original(statements); };
+    const app = await application(fixture);
+    const [backup] = await Promise.all([app.exportAll(), app.markAppointmentPaid(id)]);
+    assert.equal(readBatches, 1, "Related backup tables must share a native snapshot");
+    assert.equal(app.validateBackup(backup), true);
+    const after = await app.exportAll();
+    assert.equal(app.validateBackup(after), true);
+    assert.equal(after.appointments[0].transaction_id, after.transactions[0].id);
+  } finally { fixture.close(); }
+});
+
+test("CSV treats customer formulas as text while retaining numeric expense amounts", async () => {
+  const fixture = fixtureDatabase();
+  try {
+    seedAppointment(fixture, { paid: true });
+    fixture.execute("UPDATE clients SET name=? WHERE id=101", [" \t=HYPERLINK(\"https://example.test\")"]);
+    fixture.execute("UPDATE transactions SET description='@SUM(1+1)',category_name_snapshot='+1+1' WHERE id=201");
+    fixture.execute("INSERT INTO transactions(type,date,amount_pence,description) VALUES ('expense','2026-09-30',1000,'Ordinary expense')");
+    let csv;
+    fixture.nativeRequest = (command, args) => {
+      if (command === "protected_save_file") return "C:/fixture.csv";
+      if (command === "protected_write_text_file") { csv = args.data; return; }
+      throw new Error(`Unexpected command: ${command}`);
+    };
+    const exports = await application(fixture, "src/lib/export.ts");
+    assert.equal(await exports.exportSpreadsheet("2026-09-01", "2026-09-30", "csv"), true);
+    const XLSX = await import("xlsx");
+    const workbook = XLSX.read(csv, { type: "string", raw: true });
+    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1 });
+    assert.equal(rows[1][4], "'+1+1");
+    assert.equal(rows[1][6], "' \t=HYPERLINK(\"https://example.test\")");
+    assert.equal(rows[1][7], "'@SUM(1+1)");
+    assert.equal(rows[1][8], "25");
+    assert.equal(rows[2][8], "-10", "Amounts remain numeric CSV values");
+  } finally { fixture.close(); }
+});
+
+test("automatic backup retention removes only valid dated backups", async () => {
+  const fixture = fixtureDatabase();
+  try {
+    const cfg = JSON.stringify({ dir: "C:/fixture-backups", lastRun: null });
+    fixture.storage = { getItem: () => cfg, setItem() {}, removeItem() {} };
+    const removed = [];
+    const files = Array.from({ length: 13 }, (_, index) => ({ name: `ffyon-backup-2026-09-${String(index + 1).padStart(2, "0")}.json`, isFile: true }));
+    files.push({ name: "ffyon-backup-wedding-import.json", isFile: true },
+      { name: "ffyon-backup-2026-02-30.json", isFile: true },
+      { name: "ffyon-backup-2026-09-14.json", isFile: false });
+    fixture.nativeRequest = (command, args) => {
+      if (command === "protected_write_text_file") return;
+      if (command === "protected_read_dir") return files;
+      if (command === "protected_remove_file") { removed.push(args.path); return; }
+      throw new Error(`Unexpected command: ${command}`);
+    };
+    const exports = await application(fixture, "src/lib/export.ts");
+    assert.ok(await exports.runAutoBackup(true));
+    assert.deepEqual(removed, [1, 2, 3].map((day) => `C:/fixture-backups/ffyon-backup-2026-09-0${day}.json`));
+  } finally { fixture.close(); }
+});
+
+test("invalid calendar dates and cross-midnight edits cannot corrupt finances or the diary", async () => {
+  const fixture = fixtureDatabase();
+  try {
+    const id = seedAppointment(fixture);
+    const app = await application(fixture);
+    const input = { type: "expense", date: "2026-02-30", amount_pence: 1000, category_id: null, client_id: null, description: null };
+    await assert.rejects(app.createTransaction(input), /valid.*date/i);
+    const appointment = await app.getAppointment(id);
+    await assert.rejects(app.updateAppointment(id, { ...appointment, start_time: "23:45", duration_min: 30 }), /same day/i);
+    await assert.rejects(app.updateAppointment(id, { ...appointment, date: "2026-02-30" }), /valid.*date/i);
+    await assert.rejects(app.updateAppointment(id, { ...appointment, duration_min: 1.5 }), /duration/i);
+    assert.equal((await app.getAppointment(id)).start_time, "10:00");
+    const backup = normalize(await app.exportAll());
+    assert.equal(app.validateBackup({ ...backup, appointments: [{ ...backup.appointments[0], date: "2026-02-30" }] }), false);
+    await app.createTransaction({ ...input, date: "2028-02-29" });
+    assert.equal(fixture.select("SELECT COUNT(*) AS n FROM transactions")[0].n, 1, "Leap-day entries remain valid");
+  } finally { fixture.close(); }
+});
+
+test("a delayed unpaid action cannot unlink a replacement receipt", async () => {
+  const fixture = fixtureDatabase();
+  try {
+    const id = seedAppointment(fixture, { paid: true });
+    const app = await application(fixture);
+    const original = fixture.db.batch;
+    let intervened = false;
+    fixture.db.batch = (statements) => {
+      if (!intervened && statements[0].sql.includes("SET transaction_id = NULL")) {
+        intervened = true;
+        // Another action replaced the receipt after this action read the old ID.
+        fixture.execute("DELETE FROM transactions WHERE id=201");
+        fixture.execute("INSERT INTO transactions(id,type,date,amount_pence,client_id) VALUES (202,'income','2026-09-30',2700,101)");
+        fixture.execute("UPDATE appointments SET transaction_id=202 WHERE id=301");
+      }
+      return original(statements);
+    };
+    await app.markAppointmentUnpaid(id);
+    assert.equal((await app.getAppointment(id)).transaction_id, 202);
+    assert.equal(fixture.select("SELECT SUM(amount_pence) AS income FROM transactions")[0].income, 2700);
+  } finally { fixture.close(); }
+});
+
+test("undoing a deleted receipt refuses to overwrite a payment recorded since deletion", async () => {
+  const fixture = fixtureDatabase();
+  try {
+    const id = seedAppointment(fixture, { paid: true });
+    const app = await application(fixture);
+    const deleted = await app.deleteTransaction(201);
+    await app.markAppointmentPaid(id, 2700);
+    const current = await app.getAppointment(id);
+    await assert.rejects(app.undoDelete(deleted), /record changed/i);
+    assert.equal((await app.getAppointment(id)).transaction_id, current.transaction_id);
+    assert.equal(fixture.select("SELECT COUNT(*) AS n, SUM(amount_pence) AS income FROM transactions")[0].n, 1);
+    assert.equal(fixture.select("SELECT SUM(amount_pence) AS income FROM transactions")[0].income, 2700);
+  } finally { fixture.close(); }
+});
+
+test("unchanged sync refreshes notification state without scanning or rewriting business history", async () => {
+  const fixture = fixtureDatabase();
+  try {
+    const { response } = sharedFixture(fixture);
+    const sync = await application(fixture, "src/lib/sync.ts");
+    await sync.applySyncResponse(response);
+    const reads = [];
+    const writes = [];
+    const select = fixture.db.select;
+    const batch = fixture.db.batch;
+    fixture.db.select = (sql, params) => { reads.push(sql); return select(sql, params); };
+    fixture.db.batch = (statements) => { writes.push(...statements.map((statement) => statement.sql)); return batch(statements); };
+    await sync.applySyncResponse({ snapshot: null, changes: [], cursor: 1, has_more: false,
+      notifications: { configured: true, pending: 2, failed: 1 } });
+    assert.equal(reads.length, 1, "Only the cursor is read when business data has not changed");
+    assert.ok(reads[0].includes("key='cursor'"));
+    assert.ok(writes.every((sql) => !/\b(clients|appointments|transactions)\b/.test(sql)));
+    assert.deepEqual(normalize(await sync.listNotificationStatus()), { configured: true, pending: 2, failed: 1 });
+  } finally { fixture.close(); }
 });

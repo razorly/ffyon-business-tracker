@@ -267,6 +267,7 @@ pub fn run() {
             location::lookup_postcode,
             location::open_appointment_directions,
             database::db_select,
+            database::db_read_batch,
             database::db_execute,
             database::db_batch,
             protected_files::protected_pick_file,

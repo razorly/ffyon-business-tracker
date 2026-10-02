@@ -1,34 +1,41 @@
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import { format, subMonths } from "date-fns";
-import { BanknoteArrowDown, ChevronRight, PoundSterling, Receipt, Sparkles, Users, Wallet } from "lucide-react";
-import { distinctClients, incomeTotals, listTransactions, monthlyTotals, unpaidBefore, type MonthTotal } from "@/lib/db";
+import { BanknoteArrowDown, CalendarHeart, ChevronRight, Inbox, MapPin, Plus, PoundSterling, Receipt, Sparkles, Users, Wallet } from "lucide-react";
+import { distinctClients, incomeTotals, listAppointments, listTransactions, monthlyTotals, unpaidBefore, type MonthTotal } from "@/lib/db";
 import { useData, useLoad } from "@/lib/data";
-import { lastMonths, monthRange, taxYear } from "@/lib/dates";
-import { isoDate, money, monthLabel, percentChange } from "@/lib/format";
+import { lastMonths, monthRange, taxYear, useBusinessNow } from "@/lib/dates";
+import { isoDate, money, monthLabel, percentChange, timeLabel } from "@/lib/format";
+import { useInbox } from "@/lib/inbox";
 import { themedColour } from "@/lib/palette";
 import { useTheme } from "@/lib/theme";
 import { PageHeader } from "@/components/Layout";
 import { KpiCard } from "@/components/KpiCard";
 import { FittedValue } from "@/components/FittedValue";
-import { Button, Card, CardHeader, EmptyState } from "@/components/ui";
+import { Button, Card, CardHeader, EmptyState, LoadError } from "@/components/ui";
+import { useAccess } from "@/components/AccessGate";
 import { CategoryDonut, IncomeExpenseChart, Legend, ProfitBars } from "@/components/charts";
 import { TransactionList } from "@/components/TransactionList";
 
 export function Dashboard() {
-  const { openNewEntry } = useData();
+  const { openNewEntry, openNewAppointment, openEditAppointment, refresh } = useData();
+  const access = useAccess();
+  const { requests, payments, error: inboxError, loading: inboxLoading } = useInbox();
   const { dark } = useTheme();
-  const now = new Date();
+  const now = useBusinessNow();
+  const today = isoDate(now);
   const months = lastMonths(now, 12);
   const tax = taxYear(now);
   const thisMonth = monthRange(now);
 
-  const [monthly] = useLoad<MonthTotal[]>(() => monthlyTotals(months[0] + "-01", thisMonth.to), [], []);
-  const [taxMonthly] = useLoad<MonthTotal[]>(() => monthlyTotals(tax.from, tax.to), [], []);
-  const [incomeSources] = useLoad(() => incomeTotals(tax.from, tax.to), [], []);
-  const [clientsThisMonth] = useLoad(() => distinctClients(thisMonth.from, thisMonth.to), [], 0);
-  const [recent, loadingRecent] = useLoad(() => listTransactions({ limit: 6 }), [], []);
-  const [overdue] = useLoad(() => unpaidBefore(isoDate(now)), [], []);
+  const [monthly, monthlyLoading, monthlyError] = useLoad<MonthTotal[]>(() => monthlyTotals(months[0] + "-01", thisMonth.to), [thisMonth.from], []);
+  const [taxMonthly, taxLoading, taxError] = useLoad<MonthTotal[]>(() => monthlyTotals(tax.from, today), [tax.from, today], []);
+  const [incomeSources, incomeLoading, incomeError] = useLoad(() => incomeTotals(tax.from, today), [tax.from, today], []);
+  const [clientsThisMonth, clientsLoading, clientsError] = useLoad(() => distinctClients(thisMonth.from, thisMonth.to), [thisMonth.from], 0);
+  const [recent, loadingRecent, recentError] = useLoad(() => listTransactions({ limit: 6 }), [], []);
+  const [overdue, , overdueError] = useLoad(() => unpaidBefore(today), [today], []);
+  const [todayRows, todayLoading, todayError] = useLoad(() => listAppointments({ from: today, to: today }), [today], []);
+  const todayAppointments = todayRows.filter(row => row.status === "confirmed").sort((a, b) => b.time_confirmed - a.time_confirmed || a.start_time.localeCompare(b.start_time));
 
   const byMonth = useMemo(() => new Map(monthly.map((m) => [m.month, m])), [monthly]);
   const series = months.map((m) => ({
@@ -42,37 +49,55 @@ export function Dashboard() {
   const taxProfit = taxMonthly.reduce((s, m) => s + m.income - m.expense, 0);
   const prevLabel = format(subMonths(now, 1), "MMMM");
 
-  const empty = !loadingRecent && recent.length === 0;
+  const empty = !loadingRecent && !recentError && recent.length === 0;
+  const figuresUnavailable = monthly.length === 0 && (monthlyLoading || Boolean(monthlyError));
+  const figuresPlaceholder = monthlyError ? "Unavailable" : "…";
 
   return (
     <>
-      <PageHeader title={greeting()} subtitle={`Here's how ${format(now, "MMMM")} is going`} />
+      <PageHeader title={greeting(now)} subtitle={`Here's how ${format(now, "MMMM")} is going`} />
+      <LoadError error={monthlyError || taxError || incomeError || clientsError || recentError || overdueError || todayError || inboxError} onRetry={refresh} />
+      {monthlyLoading && <p role="status" className="mb-3 text-sm text-muted">Loading business figures…</p>}
+
+      <div className="mb-4 grid min-w-0 gap-4 lg:grid-cols-3">
+        <Card className="lg:col-span-2">
+          <CardHeader title={`Today · ${format(now, "EEE d MMM")}`} subtitle={`${todayAppointments.length} confirmed appointment${todayAppointments.length === 1 ? "" : "s"}`} action={<Button size="sm" disabled={access.state !== "online"} onClick={() => openNewAppointment({ date: today, start_time: "09:00" })}><Plus size={14} />Book</Button>} />
+          {todayLoading && todayAppointments.length === 0 ? <p role="status" className="px-5 py-3 text-sm text-muted">Loading today's appointments…</p> : todayAppointments.length ? <ul className="max-h-64 divide-y divide-line overflow-y-auto">
+            {todayAppointments.map(row => <li key={row.id}><button type="button" onClick={() => openEditAppointment(row)} className="grid w-full grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 px-5 py-3 text-left text-sm hover:bg-surface-2/60 sm:flex sm:items-center sm:gap-3"><span className="col-span-2 font-medium text-ink-2 sm:w-24 sm:shrink-0">{row.time_confirmed === 0 ? "Time to confirm" : timeLabel(row.start_time)}</span><span className="min-w-0 sm:flex-1"><span className="block break-words font-medium">{row.client_name || "Client"}</span><span className="block break-words text-xs text-muted">{row.service_name || row.category_name || "Appointment"} · {row.duration_min} min{row.is_remote ? <> · <MapPin size={12} className="inline" /> home visit</> : ""}</span></span><span className="self-start whitespace-nowrap text-xs text-muted sm:self-auto">{row.transaction_id != null ? "Paid" : row.price_pence === 0 ? "No payment due" : row.price_pence == null ? "Price to agree" : money(row.price_pence)}</span></button></li>)}
+          </ul> : <p className="px-5 py-3 text-sm text-muted">{todayError ? "Today's appointments are unavailable." : "No confirmed appointments today."}</p>}
+          <div className="px-5 py-3"><Link to="/schedule" className="inline-flex items-center gap-2 text-sm font-medium text-ink-2 hover:underline"><CalendarHeart size={15} />Open schedule<ChevronRight size={14} /></Link></div>
+        </Card>
+        <Card>
+          <CardHeader title="Needs your attention" />
+          <div className="space-y-3 px-5 pb-4 text-sm">{inboxError ? <p className="text-bad">Inbox is unavailable. Retry above.</p> : inboxLoading && requests.length === 0 && payments.length === 0 ? <p role="status" className="text-muted">Loading Inbox…</p> : <><p className="flex items-center gap-2"><Inbox size={15} className="text-muted" />{requests.length} booking request{requests.length === 1 ? "" : "s"}</p><p className="flex items-center gap-2"><BanknoteArrowDown size={15} className="text-muted" />{payments.length} payment{payments.length === 1 ? "" : "s"} to confirm</p></>}<Link to="/inbox" className="inline-flex items-center gap-2 font-medium text-ink-2 hover:underline">Open Inbox<ChevronRight size={14} /></Link></div>
+        </Card>
+      </div>
 
       <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <KpiCard
           hero
           label={`Profit in ${format(now, "MMMM")}`}
-          value={money(cur.income - cur.expense)}
-          delta={percentChange(cur.income - cur.expense, prev.income - prev.expense)}
+          value={figuresUnavailable ? figuresPlaceholder : money(cur.income - cur.expense)}
+          delta={figuresUnavailable ? undefined : percentChange(cur.income - cur.expense, prev.income - prev.expense)}
           deltaLabel={prevLabel}
           icon={<Wallet size={17} />}
         />
         <KpiCard
           label="Money in"
-          value={money(cur.income)}
-          delta={percentChange(cur.income, prev.income)}
+          value={figuresUnavailable ? figuresPlaceholder : money(cur.income)}
+          delta={figuresUnavailable ? undefined : percentChange(cur.income, prev.income)}
           deltaLabel={prevLabel}
           icon={<PoundSterling size={17} />}
         />
         <KpiCard
           label="Money out"
-          value={money(cur.expense)}
-          delta={percentChange(cur.expense, prev.expense)}
+          value={figuresUnavailable ? figuresPlaceholder : money(cur.expense)}
+          delta={figuresUnavailable ? undefined : percentChange(cur.expense, prev.expense)}
           deltaLabel={prevLabel}
           upIsGood={false}
           icon={<Receipt size={17} />}
         />
-        <KpiCard label="Clients this month" value={String(clientsThisMonth)} icon={<Users size={17} />} />
+        <KpiCard label="Clients this month" value={clientsError ? "Unavailable" : clientsLoading ? "…" : String(clientsThisMonth)} icon={<Users size={17} />} />
       </div>
 
       {overdue.length > 0 && (
@@ -131,11 +156,11 @@ export function Dashboard() {
               <div className="grid grid-cols-1 gap-3 px-5 pb-4 sm:grid-cols-2">
                 <div className="rounded-2xl bg-surface-2 p-3.5">
                   <div className="eyebrow text-[10px] text-ink-2">Income</div>
-                  <FittedValue className="mt-1.5 min-w-0 font-display text-[22px] leading-none" value={money(taxIncome)} />
+                  <FittedValue className="mt-1.5 min-w-0 font-display text-[22px] leading-none" value={taxMonthly.length === 0 && (taxError || taxLoading) ? taxError ? "Unavailable" : "…" : money(taxIncome)} />
                 </div>
                 <div className="rounded-2xl bg-surface-2 p-3.5">
                   <div className="eyebrow text-[10px] text-ink-2">Profit</div>
-                  <FittedValue className={`mt-1.5 min-w-0 font-display text-[22px] leading-none ${taxProfit < 0 ? "text-bad" : ""}`} value={money(taxProfit)} />
+                  <FittedValue className={`mt-1.5 min-w-0 font-display text-[22px] leading-none ${taxProfit < 0 ? "text-bad" : ""}`} value={taxMonthly.length === 0 && (taxError || taxLoading) ? taxError ? "Unavailable" : "…" : money(taxProfit)} />
                 </div>
               </div>
               <div className="px-5 pb-5">
@@ -152,7 +177,7 @@ export function Dashboard() {
                     }))}
                   />
                 ) : (
-                  <p className="text-[13px] text-muted">No income this tax year yet.</p>
+                  <p className="text-[13px] text-muted">{incomeError ? "Income sources are unavailable." : incomeLoading ? "Loading income sources…" : "No income this tax year yet."}</p>
                 )}
               </div>
             </Card>
@@ -185,7 +210,7 @@ export function Dashboard() {
   );
 }
 
-function greeting() {
-  const h = new Date().getHours();
+function greeting(now: Date) {
+  const h = now.getHours();
   return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
 }

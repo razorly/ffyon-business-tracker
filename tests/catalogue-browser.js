@@ -99,7 +99,7 @@ async function catalogueFlows(browser, width, output) {
     await bookingEntry.waitFor({ state: "hidden" });
     const newBooking = page.getByRole("dialog", { name: "New appointment", exact: true });
     await newBooking.waitFor();
-    await page.waitForFunction(() => document.querySelector('[placeholder="Search or add a client (optional)"]')?.value === "Unsaved booking customer");
+    await page.waitForFunction(() => document.querySelector('input[role="combobox"]')?.value === "Unsaved booking customer");
     await newBooking.getByLabel(/^Service/).selectOption(services[0].id);
     assert.equal(await newBooking.getByLabel(/^Service/).inputValue(), services[0].id, "Services are chosen in the appointment form");
     assert.equal(await newBooking.getByLabel(/^Price/).inputValue(), "22.00");
@@ -224,7 +224,7 @@ async function catalogueFlows(browser, width, output) {
     await page.getByRole("button", { name: new RegExp(client.name) }).first().click();
     const savedBooking = page.getByRole("dialog", { name: "Appointment", exact: true });
     await savedBooking.waitFor();
-    await page.waitForFunction(name => document.querySelector('[placeholder="Search or add a client (optional)"]')?.value === name, client.name);
+    await page.waitForFunction(name => document.querySelector('input[role="combobox"]')?.value === name, client.name);
     assert.equal(await savedBooking.getByLabel(/^Price/).inputValue(), "18.75");
     assert.equal(await savedBooking.getByLabel(/^Length/).inputValue(), "30");
     assert.equal(await savedBooking.getByLabel("Category", { exact: true }).count(), 0);

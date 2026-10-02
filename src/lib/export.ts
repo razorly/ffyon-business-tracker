@@ -1,4 +1,3 @@
-import * as XLSX from "xlsx";
 import { invoke } from "@tauri-apps/api/core";
 import { isBrowserFixture, requireLocalAccess } from "./access";
 import { exportAll, isTauri, listClients, listTransactions, monthlyTotals, restoreAll, validateBackup } from "./db";
@@ -12,9 +11,13 @@ async function saveBytes(defaultName: string, filterName: string, ext: string, d
     if (!isBrowserFixture()) throw new Error("Export requires the paired desktop app.");
     const blob = new Blob([data as BlobPart]);
     const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
+    const url = URL.createObjectURL(blob);
+    a.href = url;
     a.download = defaultName;
+    document.body.appendChild(a);
     a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1_000);
     return true;
   }
   const path = await invoke<string | null>("protected_save_file", { defaultPath: defaultName, filters: [{ name: filterName, extensions: [ext] }] });
@@ -25,6 +28,7 @@ async function saveBytes(defaultName: string, filterName: string, ext: string, d
 }
 
 export async function exportSpreadsheet(from: string, to: string, bookType: "xlsx" | "csv") {
+  const XLSX = await import("xlsx");
   const txs = (await listTransactions({ from, to })).reverse();
   const rows = txs.map((t) => ({
     Date: ukDate(t.date),
@@ -43,7 +47,11 @@ export async function exportSpreadsheet(from: string, to: string, bookType: "xls
   const fileBase = `tanned-by-ffy-${from}-to-${to}`;
 
   if (bookType === "csv") {
-    const csv = XLSX.utils.sheet_to_csv(XLSX.utils.json_to_sheet(rows));
+    // CSV has no cell types: spreadsheet software may treat customer text as a formula.
+    const safeRows = rows.map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key,
+      typeof value === "string" && /^[\s\u0000-\u001f]*[=+\-@]/.test(value) ? `'${value}` : value,
+    ])));
+    const csv = XLSX.utils.sheet_to_csv(XLSX.utils.json_to_sheet(safeRows));
     return saveBytes(`${fileBase}.csv`, "CSV", "csv", csv);
   }
 
@@ -90,7 +98,7 @@ export async function exportSpreadsheet(from: string, to: string, bookType: "xls
 
 export async function saveBackup() {
   const data = await exportAll();
-  const stamp = new Date().toISOString().slice(0, 10);
+  const stamp = isoDate(new Date());
   return saveBytes(`tanned-by-ffy-backup-${stamp}.json`, "Tanned by Ffy backup", "json", JSON.stringify(data, null, 2));
 }
 
@@ -128,7 +136,8 @@ export function readAutoBackup(): AutoBackup | null {
   try {
     const raw = localStorage.getItem(AUTO_KEY);
     const parsed = raw ? (JSON.parse(raw) as AutoBackup) : null;
-    return parsed?.dir ? parsed : null;
+    return parsed && typeof parsed.dir === "string" && parsed.dir.trim()
+      ? { dir: parsed.dir, lastRun: typeof parsed.lastRun === "string" ? parsed.lastRun : null } : null;
   } catch {
     return null; // storage unavailable or corrupt — treat as off
   }
@@ -177,7 +186,7 @@ export async function runAutoBackup(force = false): Promise<string | null> {
 async function pruneBackups(dir: string) {
   try {
     const names = (await invoke<{ name: string; isFile: boolean }[]>("protected_read_dir", { path: dir }))
-      .filter((e) => e.isFile && e.name.startsWith(FILE_PREFIX) && e.name.endsWith(".json"))
+      .filter((e) => e.isFile && isAutomaticBackupName(e.name))
       .map((e) => e.name)
       .sort(); // the dated filenames sort oldest first
     for (const name of names.slice(0, Math.max(0, names.length - KEEP))) {
@@ -186,4 +195,11 @@ async function pruneBackups(dir: string) {
   } catch (e) {
     console.error("Couldn't tidy old backups", e); // the backup itself still worked
   }
+}
+
+function isAutomaticBackupName(name: string): boolean {
+  const match = /^ffyon-backup-(\d{4}-\d{2}-\d{2})\.json$/.exec(name);
+  if (!match || match[1].startsWith("0000-")) return false;
+  const date = new Date(`${match[1]}T00:00:00Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === match[1];
 }

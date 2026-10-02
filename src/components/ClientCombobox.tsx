@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useId, useMemo, useRef, useState } from "react";
 import { Plus, User } from "lucide-react";
 import type { Client } from "@/lib/db";
 import { Input } from "./ui";
@@ -13,14 +13,19 @@ export function ClientCombobox({
   clients,
   value,
   onChange,
+  placeholder = "Search or add a client (optional)",
+  required = false,
 }: {
   clients: Client[];
   value: ClientChoice;
   onChange: (v: ClientChoice) => void;
+  placeholder?: string;
+  required?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const listId = useId();
 
   const query = value.name.trim().toLowerCase();
   const matches = useMemo(
@@ -33,7 +38,8 @@ export function ClientCombobox({
     ...(query && !exact ? [{ id: null, name: value.name.trim() }] : []),
   ];
 
-  const choose = (o: ClientChoice) => {
+  const choose = (o: ClientChoice | undefined) => {
+    if (!o) return;
     onChange(o);
     setOpen(false);
   };
@@ -43,8 +49,16 @@ export function ClientCombobox({
       <Input
         ref={inputRef}
         value={value.name}
-        placeholder="Search or add a client (optional)"
-        onFocus={() => setOpen(true)}
+        placeholder={placeholder}
+        required={required}
+        role="combobox"
+        aria-autocomplete="list"
+        aria-expanded={open && options.length > 0}
+        aria-controls={listId}
+        aria-activedescendant={open && options.length > 0 ? `${listId}-${Math.min(active, options.length - 1)}` : undefined}
+        autoComplete="off"
+        maxLength={200}
+        onFocus={() => { setActive(0); setOpen(true); }}
         onBlur={() => setTimeout(() => setOpen(false), 120)}
         onChange={(e) => {
           const name = e.target.value;
@@ -54,6 +68,10 @@ export function ClientCombobox({
           setOpen(true);
         }}
         onKeyDown={(e) => {
+          if (e.key === "Escape" && open) {
+            e.preventDefault(); e.stopPropagation(); setOpen(false); return;
+          }
+          if (e.key === "ArrowDown" && !open) { e.preventDefault(); setOpen(true); setActive(0); return; }
           if (!open || options.length === 0) return;
           if (e.key === "ArrowDown") {
             e.preventDefault();
@@ -63,16 +81,20 @@ export function ClientCombobox({
             setActive((a) => Math.max(a - 1, 0));
           } else if (e.key === "Enter") {
             e.preventDefault();
-            choose(options[active]);
+            choose(options[Math.min(active, options.length - 1)]);
           }
         }}
       />
       {open && options.length > 0 && (
-        <ul className="absolute z-10 mt-1 max-h-56 w-full overflow-auto rounded-lg border border-line bg-surface p-1 shadow-lg">
+        <ul id={listId} role="listbox" aria-label="Matching clients" className="absolute z-10 mt-1 max-h-56 w-full overflow-auto rounded-lg border border-line bg-surface p-1 shadow-lg">
           {options.map((o, i) => (
-            <li key={o.id ?? "new"}>
+            <li key={o.id ?? "new"} role="none">
               <button
                 type="button"
+                role="option"
+                id={`${listId}-${i}`}
+                aria-selected={i === Math.min(active, options.length - 1)}
+                tabIndex={-1}
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => choose(o)}
                 onMouseEnter={() => setActive(i)}

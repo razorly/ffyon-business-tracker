@@ -15,9 +15,10 @@ import { useData, useLoad } from "@/lib/data";
 import { linkClientAccount } from "@/lib/sync";
 import { useAccess } from "@/components/AccessGate";
 import { isoDate, money, shortDate, timeLabel, ukDate } from "@/lib/format";
+import { useBusinessNow } from "@/lib/dates";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/Layout";
-import { Button, Card, ConfirmModal, EmptyState, Field, Input, Modal, Select, Textarea } from "@/components/ui";
+import { Button, Card, ConfirmModal, EmptyState, Field, Input, LoadError, Modal, Select, Textarea } from "@/components/ui";
 import { TransactionList } from "@/components/TransactionList";
 
 type SortKey = "name" | "total" | "recent";
@@ -25,7 +26,8 @@ type SortKey = "name" | "total" | "recent";
 export function Clients() {
   const access = useAccess();
   const { refresh, openNewEntry, openNewAppointment, openEditAppointment } = useData();
-  const [clients] = useLoad(listClients, [], []);
+  const today = isoDate(useBusinessNow());
+  const [clients, clientsLoading, clientsLoadError] = useLoad(listClients, [], []);
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<SortKey>("recent");
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -37,6 +39,7 @@ export function Clients() {
   const [linking, setLinking] = useState(false);
   const [accountId, setAccountId] = useState("");
   const [linkBusy, setLinkBusy] = useState(false);
+  const [linkError, setLinkError] = useState<string | null>(null);
   const [clientError, setClientError] = useState<string | null>(null);
 
   const visible = useMemo(() => {
@@ -53,18 +56,18 @@ export function Clients() {
   }, [clients, search, sort]);
 
   const selected = clients.find((c) => c.id === selectedId) ?? null;
-  const [history] = useLoad(
+  const [history, , historyError] = useLoad(
     () => (selectedId ? listTransactions({ clientId: selectedId }) : Promise.resolve([])),
     [selectedId],
     [],
   );
-  const [upcoming] = useLoad(
-    () => (selectedId ? upcomingForClient(selectedId, isoDate(new Date())) : Promise.resolve([])),
-    [selectedId],
+  const [upcoming, , upcomingError] = useLoad(
+    () => (selectedId ? upcomingForClient(selectedId, today) : Promise.resolve([])),
+    [selectedId, today],
     [],
   );
-  const [appointments] = useLoad(() => selectedId ? listAppointments({ clientId: selectedId }) : Promise.resolve([]), [selectedId], []);
-  const pastAppointments = appointments.filter((a) => a.date < isoDate(new Date()) || a.status !== "confirmed").sort((a, b) => b.date.localeCompare(a.date) || b.start_time.localeCompare(a.start_time)).slice(0, 12);
+  const [appointments, , appointmentsError] = useLoad(() => selectedId ? listAppointments({ clientId: selectedId }) : Promise.resolve([]), [selectedId], []);
+  const pastAppointments = appointments.filter((a) => a.date < today || a.status !== "confirmed").sort((a, b) => b.date.localeCompare(a.date) || b.start_time.localeCompare(a.start_time)).slice(0, 12);
 
   const totalRevenue = clients.reduce((s, c) => s + c.total_pence, 0);
 
@@ -75,6 +78,8 @@ export function Clients() {
           <Plus size={15} /> Add client
         </Button>
       </PageHeader>
+      <LoadError error={clientsLoadError || historyError || upcomingError || appointmentsError} onRetry={refresh} />
+      {clientsLoading && <p role="status" className="mb-3 text-sm text-muted">Loading clients…</p>}
       {clientError && <p role="alert" className="mb-4 text-sm text-bad">{clientError}</p>}
 
       <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-5">
@@ -82,13 +87,14 @@ export function Clients() {
           <div className="flex flex-wrap items-center justify-between gap-3 px-5 pt-4 pb-3">
             <div className="relative w-full min-w-0 sm:w-60">
               <Search size={15} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
-              <Input className="w-full rounded-full pl-8" placeholder="Search clients" value={search} onChange={(e) => setSearch(e.target.value)} />
+              <Input aria-label="Search clients" className="w-full rounded-full pl-8" placeholder="Search clients" value={search} onChange={(e) => setSearch(e.target.value)} />
             </div>
             <div className="flex flex-wrap items-center gap-1 text-[13px] text-muted">
               Sort
               {(["recent", "total", "name"] as SortKey[]).map((k) => (
                 <button
                   key={k}
+                  aria-pressed={sort === k}
                   onClick={() => setSort(k)}
                   className={cn(
                     "rounded-full px-2.5 py-1 font-medium cursor-pointer",
@@ -127,7 +133,7 @@ export function Clients() {
                       <div className="flex items-center gap-2.5">
                         <Avatar name={c.name} />
                         <div>
-                          <div className="font-medium">{c.name}{!!c.disabled && <span className="ml-2 text-xs font-normal text-muted">Disabled</span>}</div>
+                          <div className="font-medium"><button type="button" aria-pressed={selectedId === c.id} onClick={() => setSelectedId(c.id)} className="text-left hover:underline">{c.name}</button>{!!c.disabled && <span className="ml-2 text-xs font-normal text-muted">Disabled</span>}</div>
                           {c.phone && <div className="text-[12px] text-muted">{c.phone}</div>}
                         </div>
                       </div>
@@ -171,7 +177,7 @@ export function Clients() {
               </div>
               <div className="flex flex-wrap gap-2 px-5 pt-3">
                 {selected.disabled ? <Button size="sm" disabled={access.state !== "online"} onClick={async () => { try { await updateClient({ ...selected, disabled: 0 }); refresh(); toast.success("Client re-enabled"); } catch (e) { setClientError(e instanceof Error ? e.message : "Could not re-enable the client"); } }}><ShieldCheck size={14} /> Re-enable</Button> : null}
-                {!selected.account_id && selected.remote_id && <Button size="sm" disabled={access.state !== "online"} onClick={() => { setLinking(true); setAccountId(""); }}><Link2 size={14} /> Link website account</Button>}
+                {!selected.account_id && selected.remote_id && <Button size="sm" disabled={access.state !== "online"} onClick={() => { setLinking(true); setAccountId(""); setLinkError(null); }}><Link2 size={14} /> Link website account</Button>}
               </div>
               {selected.notes && <p className="mx-5 mt-3 break-words rounded-lg bg-surface-2 px-3 py-2 text-[13px] text-ink-2">{selected.notes}</p>}
               {selected.saved_address && selected.saved_postcode && <p className="mx-5 mt-3 whitespace-pre-line break-words text-[13px] text-ink-2"><MapPin size={13} className="mr-1 inline" />{selected.saved_address}<span className="block text-xs text-muted">{selected.saved_postcode}</span></p>}
@@ -186,7 +192,7 @@ export function Clients() {
                   size="sm"
                   disabled={access.state !== "online" || !!selected.disabled}
                   onClick={() =>
-                    openNewAppointment({ date: isoDate(new Date()), start_time: "09:00", clientId: selected.id })
+                    openNewAppointment({ date: today, start_time: "09:00", clientId: selected.id })
                   }
                 >
                   <CalendarPlus size={14} /> Book
@@ -275,11 +281,12 @@ export function Clients() {
         {deleteError && <p role="alert" className="mt-3 text-sm text-bad">{deleteError}</p>}
         <div className="mt-5 flex flex-wrap justify-end gap-2"><Button disabled={deleteBusy} onClick={() => setToDelete(null)}>Keep client</Button><Button variant="danger" disabled={deleteBusy || access.state !== "online"} onClick={async () => { if (!toDelete) return; setDeleteBusy(true); setDeleteError(""); try { await deleteClient(toDelete.id); setSelectedId(null); setToDelete(null); refresh(); toast.success("Client removed. Payments retained."); } catch (cause) { setDeleteError(cause instanceof Error ? cause.message : "Could not delete the client"); } finally { setDeleteBusy(false); } }}><Trash2 size={14} />{deleteBusy ? "Deleting..." : toDelete?.account_id ? "Delete account" : "Delete client"}</Button></div>
       </Modal>
-      <Modal open={linking && !!selected} onClose={() => setLinking(false)} title="Link website account">
-        <form className="space-y-4" onSubmit={async (e) => { e.preventDefault(); if (!selected || !accountId) return; setLinkBusy(true); try { await linkClientAccount(selected.id, accountId); refresh(); setLinking(false); toast.success("Website account linked"); } catch (cause) { setClientError(cause instanceof Error ? cause.message : "Could not link the account"); } finally { setLinkBusy(false); } }}>
+      <Modal open={linking && !!selected} onClose={() => { if (!linkBusy) setLinking(false); }} title="Link website account">
+        <form className="space-y-4" onSubmit={async (e) => { e.preventDefault(); if (!selected || !accountId || linkBusy) return; setLinkBusy(true); setLinkError(null); try { await linkClientAccount(selected.id, accountId); refresh(); setLinking(false); toast.success("Website account linked"); } catch (cause) { setLinkError(cause instanceof Error ? cause.message : "Could not link the account"); } finally { setLinkBusy(false); } }}>
           <p className="text-sm text-ink-2">Choose the existing website account belonging to {selected?.name}. Booking history is preserved.</p>
-          <Field label="Website account"><Select value={accountId} onChange={(e) => setAccountId(e.target.value)}><option value="">Select an account</option>{clients.filter((c) => c.account_id && c.id !== selected?.id).map((c) => <option key={c.id} value={c.account_id!}>{c.name}{c.email ? ` · ${c.email}` : ""}</option>)}</Select></Field>
-          <div className="flex justify-end gap-2"><Button type="button" onClick={() => setLinking(false)}>Cancel</Button><Button type="submit" variant="primary" disabled={linkBusy || !accountId || access.state !== "online"}><Link2 size={14} /> Link account</Button></div>
+          <Field label="Website account"><Select disabled={linkBusy} value={accountId} onChange={(e) => setAccountId(e.target.value)}><option value="">Select an account</option>{clients.filter((c) => c.account_id && c.id !== selected?.id).map((c) => <option key={c.id} value={c.account_id!}>{c.name}{c.email ? ` · ${c.email}` : ""}</option>)}</Select></Field>
+          {linkError && <p role="alert" className="text-sm text-bad">{linkError}</p>}
+          <div className="flex justify-end gap-2"><Button type="button" disabled={linkBusy} onClick={() => setLinking(false)}>Cancel</Button><Button type="submit" variant="primary" disabled={linkBusy || !accountId || access.state !== "online"}><Link2 size={14} /> Link account</Button></div>
         </form>
       </Modal>
     </>
@@ -335,10 +342,10 @@ function ClientForm({
   };
 
   return (
-    <Modal open={!!client} onClose={onClose} title={client?.id ? "Edit client" : "Add client"}>
-      <form onSubmit={submit} className="space-y-4">
+    <Modal open={!!client} onClose={() => { if (!busy) onClose(); }} title={client?.id ? "Edit client" : "Add client"}>
+      <form onSubmit={submit}><fieldset disabled={busy} className="space-y-4">
         <Field label="Name">
-          <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Sarah Jones" disabled={access.state !== "online"} />
+          <Input autoFocus required maxLength={200} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Sarah Jones" disabled={access.state !== "online"} />
         </Field>
         <Field label="Email (optional)"><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={access.state !== "online"} /></Field>
         <Field label="Phone (optional)">
@@ -358,7 +365,7 @@ function ClientForm({
             Save
           </Button>
         </div>
-      </form>
+      </fieldset></form>
     </Modal>
   );
 }

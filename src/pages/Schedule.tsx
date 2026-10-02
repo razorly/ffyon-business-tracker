@@ -8,7 +8,7 @@ import {
   endOfWeek,
   format,
   isSameMonth,
-  isToday,
+  parseISO,
   startOfMonth,
   startOfWeek,
 } from "date-fns";
@@ -18,8 +18,9 @@ import { useData, useLoad } from "@/lib/data";
 import { listBlocks } from "@/lib/sync";
 import { useAccess } from "@/components/AccessGate";
 import { isoDate, money, shortDate, timeLabel } from "@/lib/format";
+import { useBusinessNow } from "@/lib/dates";
 import { PageHeader } from "@/components/Layout";
-import { Button, Card, CardHeader, Segmented, Stat } from "@/components/ui";
+import { Button, Card, CardHeader, Input, LoadError, Segmented, Stat } from "@/components/ui";
 import { MonthGrid, TimeGrid } from "@/components/calendar";
 import { toast } from "sonner";
 
@@ -30,12 +31,14 @@ const WEEK = { weekStartsOn: 1 } as const; // weeks run Monday to Sunday
 export function Schedule() {
   const access = useAccess();
   const { openNewAppointment, openEditAppointment, refresh } = useData();
-  const [view, setView] = useState<View>("week");
-  const [anchor, setAnchor] = useState(() => new Date());
+  const now = useBusinessNow();
+  const today = isoDate(now);
+  const [view, setView] = useState<View>(() => window.matchMedia("(max-width: 639px)").matches ? "day" : "week");
+  const [anchor, setAnchor] = useState(() => now);
 
   const period = useMemo(() => periodFor(view, anchor), [view, anchor]);
-  const [rows] = useLoad(() => listAppointments({ from: period.from, to: period.to }), [period.from, period.to], []);
-  const [blocks] = useLoad(listBlocks, [], []);
+  const [rows, loading, loadError] = useLoad(() => listAppointments({ from: period.from, to: period.to }), [period.from, period.to], []);
+  const [blocks, , blocksError] = useLoad(listBlocks, [], []);
 
   // In month view the grid spills into neighbouring months — the totals stay on the month itself.
   const counted = rows.filter(
@@ -47,10 +50,12 @@ export function Schedule() {
   const untimed = counted.filter((appointment) => appointment.time_confirmed === 0);
 
   // Past bookings never marked paid. Not tied to the week on screen — it's a standing to-do list.
-  const [overdueRows] = useLoad(() => unpaidBefore(isoDate(new Date())), [], []);
+  const [overdueRows, , overdueError] = useLoad(() => unpaidBefore(today), [today], []);
   const overdue = overdueRows.filter((appointment) => appointment.price_pence !== 0);
 
-  const showsToday = period.days.some((d) => isToday(d));
+  const showsToday = today >= period.countFrom && today <= period.countTo;
+  const unavailable = rows.length === 0 && (loading || Boolean(loadError));
+  const placeholder = loadError ? "Unavailable" : "…";
   const openNew = (date: string, start_time: string) => {
     if (access.state !== "online") return toast.info("Reconnect to create a shared booking");
     openNewAppointment({ date, start_time });
@@ -71,7 +76,8 @@ export function Schedule() {
             <ChevronRight size={16} />
           </Button>
         </div>
-        {!showsToday && <Button onClick={() => setAnchor(new Date())}>Today</Button>}
+        <Input type="date" aria-label="Go to date" title="Go to date" className="w-36" value={isoDate(anchor)} onChange={(event) => { if (event.target.value) setAnchor(parseISO(event.target.value)); }} />
+        {!showsToday && <Button onClick={() => setAnchor(now)}>Today</Button>}
         <Segmented
           value={view}
           onChange={setView}
@@ -81,15 +87,18 @@ export function Schedule() {
             { value: "month", label: "Month" },
           ]}
         />
-        <Button variant="primary" disabled={access.state !== "online"} onClick={() => openNew(isoDate(showsToday ? new Date() : period.days[0]), "09:00")}>
+        <Button variant="primary" disabled={access.state !== "online"} onClick={() => openNew(isoDate(showsToday ? now : anchor), "09:00")}>
           <Plus size={15} /> Book
         </Button>
       </PageHeader>
 
+      <LoadError error={loadError || blocksError || overdueError} onRetry={refresh} />
+      {loading && <p role="status" className="mb-3 text-sm text-muted">Loading schedule…</p>}
+
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4">
-        <Stat label="Confirmed appointments" value={String(counted.length)} />
-        <Stat label="Paid" value={money(paid)} tone="good" hint="Counted in your money" />
-        <Stat label="Still to collect" value={money(owed)} hint="Not in your money until you mark it paid" />
+        <Stat label="Confirmed appointments" value={unavailable ? placeholder : String(counted.length)} />
+        <Stat label="Paid" value={unavailable ? placeholder : money(paid)} tone="good" hint="Counted in your money" />
+        <Stat label="Still to collect" value={unavailable ? placeholder : money(owed)} hint="Not in your money until you mark it paid" />
       </div>
 
       {untimed.length > 0 && <section className="mt-4 border-l-2 border-accent pl-3" aria-label="Appointments needing a confirmed time">
@@ -113,7 +122,7 @@ export function Schedule() {
           /></div>
         ) : (
           <div className={view === "week" ? "min-w-[640px] py-3 pr-3" : "py-3 pr-3"}>
-            <TimeGrid days={period.days} rows={rows} blocks={blocks} onOpen={openEditAppointment} onNew={openNew} />
+            <TimeGrid days={period.days} rows={rows} blocks={blocks} onOpen={openEditAppointment} onNew={openNew} onShowDay={(day) => { setAnchor(day); setView("day"); }} />
           </div>
         )}
       </Card>
@@ -133,6 +142,7 @@ function OwedCard({
   onOpen: (a: AppointmentRow) => void;
   onPaid: () => void;
 }) {
+  const [busy, setBusy] = useState<number | null>(null);
   const total = rows.reduce((s, r) => s + (r.price_pence ?? 0), 0);
   return (
     <Card className="mt-4">
@@ -160,14 +170,17 @@ function OwedCard({
             {a.price_pence != null ? (
               <Button
                 size="sm"
+                disabled={busy != null}
                 onClick={async () => {
+                  if (busy != null) return;
+                  setBusy(a.id);
                   try {
                     await markAppointmentPaid(a.id);
                     toast.success(`${money(a.price_pence!)} added to your money`);
                     onPaid();
                   } catch (e) {
                     toast.error(e instanceof Error ? e.message : "Couldn't record the payment");
-                  }
+                  } finally { setBusy(null); }
                 }}
               >
                 <BanknoteArrowDown size={14} /> Paid

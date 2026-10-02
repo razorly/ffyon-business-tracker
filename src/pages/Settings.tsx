@@ -14,7 +14,7 @@ import {
 } from "@/lib/db";
 import { useData, useLoad } from "@/lib/data";
 import { useInbox } from "@/lib/inbox";
-import { taxYear } from "@/lib/dates";
+import { taxYear, useBusinessNow } from "@/lib/dates";
 import { isoDate, money, parseAmount, penceToInput, ukDate } from "@/lib/format";
 import {
   chooseAutoBackupFolder,
@@ -47,7 +47,7 @@ import { PageHeader } from "@/components/Layout";
 import { SiteConnection } from "@/components/SiteConnection";
 import { SiteBusinessSettings } from "@/components/SiteBusinessSettings";
 import { LegacyIncomeReview } from "@/components/LegacyIncomeReview";
-import { Button, Card, CardHeader, ConfirmModal, Field, Input, Modal, Segmented, Select, Swatch } from "@/components/ui";
+import { Button, Card, CardHeader, ConfirmModal, Field, Input, LoadError, Modal, Segmented, Select, Swatch } from "@/components/ui";
 
 export function Settings() {
   return (
@@ -74,7 +74,7 @@ export function Settings() {
 function CategoriesCard({ type }: { type: TxType }) {
   const { refresh } = useData();
   const { dark } = useTheme();
-  const [cats] = useLoad(() => type === "income" ? listOtherIncomeCategories() : listCategories(type), [type], []);
+  const [cats, , loadError] = useLoad(() => type === "income" ? listOtherIncomeCategories() : listCategories(type), [type], []);
   const [editing, setEditing] = useState<Partial<Category> | null>(null);
   const [toDelete, setToDelete] = useState<{ cat: Category; uses: number } | null>(null);
 
@@ -91,6 +91,7 @@ function CategoriesCard({ type }: { type: TxType }) {
           </Button>
         }
       />
+      <div className="px-5"><LoadError error={loadError} onRetry={refresh} /></div>
       <ul className="divide-y divide-line px-2 pb-2">
         {cats.map((c) => (
           <li key={c.id} className="group flex items-center justify-between gap-2 rounded-lg px-3 py-2">
@@ -102,7 +103,7 @@ function CategoriesCard({ type }: { type: TxType }) {
                 </span>
               )}
             </span>
-            <span className="flex shrink-0 gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+            <span className="flex shrink-0 gap-0.5">
               <Button variant="ghost" size="icon" onClick={() => setEditing(c)} title={`Edit ${c.name}`} aria-label={`Edit ${c.name}`}>
                 <Pencil size={14} />
               </Button>
@@ -111,7 +112,7 @@ function CategoriesCard({ type }: { type: TxType }) {
                 size="icon"
                 aria-label={`Delete ${c.name}`}
                 title={`Delete ${c.name}`}
-                onClick={async () => setToDelete({ cat: c, uses: await categoryUsage(c.id) })}
+                onClick={async () => { try { setToDelete({ cat: c, uses: await categoryUsage(c.id) }); } catch (cause) { toast.error(cause instanceof Error ? cause.message : "Could not check this category's entries"); } }}
               >
                 <Trash2 size={14} />
               </Button>
@@ -176,7 +177,7 @@ function CategoryForm({
     e.preventDefault();
     if (!category || !name.trim() || busy) return;
     const defaultPence = category.type === "expense" && usual.trim() ? parseAmount(usual) : null;
-    if (category.type === "expense" && usual.trim() && defaultPence == null) return;
+    if (category.type === "expense" && usual.trim() && defaultPence == null) { setError("Enter a valid amount, such as 12.50, or leave it blank."); return; }
     setBusy(true);
     setError("");
     try {
@@ -219,6 +220,8 @@ function CategoryForm({
                 type="button"
                 disabled={busy}
                 title={p.name}
+                aria-label={p.name}
+                aria-pressed={colour === p.light}
                 onClick={() => setColour(p.light)}
                 className={cn(
                   "flex h-8 w-8 items-center justify-center rounded-full ring-offset-2 ring-offset-surface cursor-pointer",
@@ -250,7 +253,7 @@ function CategoryForm({
 type Preset = "thisTax" | "lastTax" | "thisYear" | "all" | "custom";
 
 function ExportCard() {
-  const now = new Date();
+  const now = useBusinessNow();
   const [preset, setPreset] = useState<Preset>("thisTax");
   const [custom, setCustom] = useState({ from: isoDate(new Date(now.getFullYear(), 0, 1)), to: isoDate(now) });
   const [busy, setBusy] = useState(false);
@@ -262,8 +265,10 @@ function ExportCard() {
     all: { from: "1900-01-01", to: "2999-12-31", label: "Everything" },
   };
   const range = preset === "custom" ? custom : ranges[preset];
+  const validRange = /^\d{4}-\d{2}-\d{2}$/.test(range.from) && /^\d{4}-\d{2}-\d{2}$/.test(range.to) && range.from <= range.to;
 
   const run = async (kind: "xlsx" | "csv") => {
+    if (busy || !validRange) return;
     setBusy(true);
     try {
       const saved = await exportSpreadsheet(range.from, range.to, kind);
@@ -281,7 +286,7 @@ function ExportCard() {
       <CardHeader title="Export" subtitle="For your accountant or Self Assessment tax return" />
       <div className="space-y-4 px-5 pb-5">
         <Field label="Period">
-          <Select value={preset} onChange={(e) => setPreset(e.target.value as Preset)}>
+          <Select disabled={busy} value={preset} onChange={(e) => setPreset(e.target.value as Preset)}>
             {Object.entries(ranges).map(([k, r]) => (
               <option key={k} value={k}>
                 {r.label}
@@ -293,21 +298,22 @@ function ExportCard() {
         {preset === "custom" && (
           <div className="grid grid-cols-2 gap-3">
             <Field label="From">
-              <Input type="date" value={custom.from} onChange={(e) => setCustom((c) => ({ ...c, from: e.target.value }))} />
+              <Input type="date" disabled={busy} value={custom.from} onChange={(e) => setCustom((c) => ({ ...c, from: e.target.value }))} />
             </Field>
             <Field label="To">
-              <Input type="date" value={custom.to} onChange={(e) => setCustom((c) => ({ ...c, to: e.target.value }))} />
+              <Input type="date" disabled={busy} value={custom.to} onChange={(e) => setCustom((c) => ({ ...c, to: e.target.value }))} />
             </Field>
           </div>
         )}
         <div className="flex gap-2">
-          <Button variant="primary" disabled={busy} onClick={() => run("xlsx")}>
+          <Button variant="primary" disabled={busy || !validRange} onClick={() => run("xlsx")}>
             <FileSpreadsheet size={15} /> Excel (.xlsx)
           </Button>
-          <Button disabled={busy} onClick={() => run("csv")}>
+          <Button disabled={busy || !validRange} onClick={() => run("csv")}>
             <Download size={15} /> CSV
           </Button>
         </div>
+        {!validRange && <p role="alert" className="text-xs text-bad">Choose both dates, with the end on or after the start.</p>}
         <p className="text-xs text-muted">
           The Excel file includes every transaction, a monthly summary with totals, and your client list.
         </p>
@@ -325,6 +331,8 @@ function BackupCard() {
   const [wipeText, setWipeText] = useState("");
   const [auto, setAuto] = useState<AutoBackup | null>(() => readAutoBackup());
   const [backingUp, setBackingUp] = useState(false);
+  const [wiping, setWiping] = useState(false);
+  const [wipeError, setWipeError] = useState("");
 
   const backUpNow = async () => {
     setBackingUp(true);
@@ -421,7 +429,7 @@ function BackupCard() {
         <div className="border-t border-line pt-4">
           <div className="text-[13px] font-medium">Start fresh</div>
           <p className="mt-0.5 text-xs text-muted">Delete all entries, appointments and clients. Services, other income and expense categories are kept.</p>
-          <Button variant="ghost" className="mt-2 -ml-2 text-bad" onClick={() => setConfirmWipe(true)}>
+          <Button variant="ghost" className="mt-2 -ml-2 text-bad" onClick={() => { setWipeText(""); setWipeError(""); setConfirmWipe(true); }}>
             <Trash2 size={15} /> Delete all data…
           </Button>
         </div>
@@ -446,23 +454,29 @@ function BackupCard() {
         }}
       />
 
-      <Modal open={confirmWipe} onClose={() => setConfirmWipe(false)} title="Delete all data?" width="max-w-sm">
+      <Modal open={confirmWipe} onClose={() => { if (!wiping) setConfirmWipe(false); }} title="Delete all data?" width="max-w-sm">
         <p className="text-sm text-ink-2">
           This permanently deletes every entry, appointment and client. Save a backup first if you might need it. Type <b>DELETE</b> to
           confirm.
         </p>
-        <Input className="mt-3" value={wipeText} onChange={(e) => setWipeText(e.target.value)} placeholder="DELETE" />
+        <Input aria-label="Type DELETE to confirm" disabled={wiping} className="mt-3" value={wipeText} onChange={(e) => setWipeText(e.target.value)} placeholder="DELETE" />
+        {wipeError && <p role="alert" className="mt-3 text-sm text-bad">{wipeError}</p>}
         <div className="mt-4 flex justify-end gap-2">
-          <Button onClick={() => setConfirmWipe(false)}>Cancel</Button>
+          <Button disabled={wiping} onClick={() => setConfirmWipe(false)}>Cancel</Button>
           <Button
             variant="danger"
-            disabled={wipeText !== "DELETE"}
+            disabled={wiping || wipeText !== "DELETE"}
             onClick={async () => {
-              await wipeAll();
-              toast.success("All data deleted");
-              setWipeText("");
-              setConfirmWipe(false);
-              refresh();
+              if (wiping || wipeText !== "DELETE") return;
+              setWiping(true); setWipeError("");
+              try {
+                await wipeAll();
+                toast.success("All data deleted");
+                setWipeText("");
+                setConfirmWipe(false);
+                refresh();
+              } catch (cause) { setWipeError(cause instanceof Error ? cause.message : "Could not delete the local data. Please retry."); }
+              finally { setWiping(false); }
             }}
           >
             Delete everything

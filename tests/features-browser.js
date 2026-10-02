@@ -105,10 +105,22 @@ export async function installDesktopFixture(page, records) {
     commands.push({ command, args });
     if (command === "access_status" || command === "access_check") return status();
     if (command === "db_select") return select(args.sql, args.params);
+    if (command === "db_read_batch") {
+      sqlite.run("BEGIN");
+      try { const result = args.statements.map(item => select(item.sql, item.params)); sqlite.run("COMMIT"); return result; }
+      catch (error) { sqlite.run("ROLLBACK"); throw error; }
+    }
     if (command === "db_execute") return execute(args.sql, args.params);
     if (command === "db_batch") {
       sqlite.run("BEGIN");
-      try { const result = args.statements.map(item => execute(item.sql, item.params)); sqlite.run("COMMIT"); return result; }
+      try {
+        const result = args.statements.map((item, index) => {
+          const result = execute(item.sql, item.params);
+          if (args.expectedRows?.[index] != null && result.rowsAffected !== args.expectedRows[index]) throw new Error("The record changed. Refresh before trying again.");
+          return result;
+        });
+        sqlite.run("COMMIT"); return result;
+      }
       catch (error) { sqlite.run("ROLLBACK"); throw error; }
     }
     if (command === "lookup_postcode") return { postcode: "SW1A 1AA", latitude: 51.501009, longitude: -0.141588 };
@@ -255,12 +267,12 @@ async function desktopFeatures(browser, url, output, evidence) {
       await newEntry.getByLabel(/^Date/).fill(appointmentDate);
       await newEntry.getByLabel(/^Amount/).fill("19.37");
       await newEntry.getByPlaceholder("Search or add a client (optional)").fill(clients[1].name);
-      await newEntry.getByRole("button", { name: clients[1].name, exact: true }).click();
+      await newEntry.getByRole("option", { name: clients[1].name, exact: true }).click();
       await capture(page, output, `admin-new-entry-appointment-choice-${viewport.width}.png`);
       await newEntry.getByRole("button", { name: "Appointment", exact: true }).click();
       await newEntry.waitFor({ state: "hidden" });
       await page.getByRole("heading", { name: "New appointment", exact: true }).waitFor();
-      await page.waitForFunction(name => document.querySelector('[placeholder="Search or add a client (optional)"]')?.value === name, clients[1].name);
+      await page.waitForFunction(name => document.querySelector('input[role="combobox"]')?.value === name, clients[1].name);
       assert.equal(await page.getByRole("dialog").count(), 1, "New entry must hand off to the existing booking form without stacked dialogs");
       assert.equal(await page.getByLabel(/^Date/).inputValue(), appointmentDate);
       assert.equal(await page.getByLabel(/^Service/).inputValue(), services[0].id);
@@ -305,7 +317,7 @@ async function desktopFeatures(browser, url, output, evidence) {
       await page.getByRole("button", { name: new RegExp(clients[2].name) }).first().click();
       await page.getByRole("heading", { name: "Appointment", exact: true }).waitFor();
       // The heading renders before the asynchronous form reset finishes.
-      await page.waitForFunction(name => document.querySelector('[placeholder="Search or add a client (optional)"]')?.value === name, clients[2].name);
+      await page.waitForFunction(name => document.querySelector('input[role="combobox"]')?.value === name, clients[2].name);
       assert.equal(await page.getByRole("button", { name: "Show map", exact: true }).count(), 0, "Salon bookings must not render map controls");
       assert.equal(await page.getByLabel("Home visit", { exact: true }).isChecked(), false);
       await capture(page, output, `admin-salon-booking-${viewport.width}.png`);
@@ -327,8 +339,8 @@ async function desktopFeatures(browser, url, output, evidence) {
       await page.locator('nav a[title="Schedule"]').click();
       await page.getByRole("button", { name: "Book", exact: true }).click();
       await page.getByRole("heading", { name: "New appointment", exact: true }).waitFor();
-      await page.getByPlaceholder("Search or add a client (optional)").fill("Retry New Guest");
-      await page.getByRole("button", { name: /Retry New Guest.*as a new client/ }).click();
+      await page.getByRole("combobox").first().fill("Retry New Guest");
+      await page.getByRole("option", { name: /Retry New Guest.*as a new client/ }).click();
       fixture.failNextAppointment();
       await page.getByRole("button", { name: "Book appointment", exact: true }).click();
       await page.getByText("409: Fixture slot no longer available", { exact: true }).waitFor();
@@ -345,7 +357,7 @@ async function desktopFeatures(browser, url, output, evidence) {
       await page.locator('nav a[title="Schedule"]').click();
       await page.getByRole("button", { name: new RegExp(clients[1].name) }).first().click();
       await page.getByRole("heading", { name: "Appointment", exact: true }).waitFor();
-      await page.waitForFunction(name => document.querySelector('[placeholder="Search or add a client (optional)"]')?.value === name, clients[1].name);
+      await page.waitForFunction(name => document.querySelector('input[role="combobox"]')?.value === name, clients[1].name);
       await page.getByRole("button", { name: "Mark paid", exact: true }).click();
       await page.getByRole("heading", { name: "Appointment", exact: true }).waitFor({ state: "hidden" });
       await page.getByRole("button", { name: new RegExp(clients[1].name) }).first().click();

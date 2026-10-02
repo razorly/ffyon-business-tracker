@@ -1,6 +1,6 @@
 /**
  * DEV-ONLY: an in-browser SQLite (sql.js) so the UI can be previewed in a normal
- * browser with `npm run dev`. The real app always uses the Tauri SQL plugin.
+ * browser with the explicit fixture flag. The real app uses guarded native SQL commands.
  * Schema is read straight from the Rust migrations so there's a single source of truth.
  */
 import initSqlJs from "sql.js";
@@ -13,6 +13,7 @@ export async function createDevDb(): Promise<Db> {
   if (!isBrowserFixture()) throw new Error("Disposable browser fixtures are disabled.");
   const SQL = await initSqlJs({ locateFile: () => wasmUrl });
   const db = new SQL.Database();
+  db.exec("PRAGMA foreign_keys=ON");
   // Migrations must use a Rust raw string (r#"…"#) so they are picked up here too.
   for (const m of rustSource.matchAll(/sql: r#"([\s\S]*?)"#/g)) db.exec(m[1]);
 
@@ -24,14 +25,26 @@ export async function createDevDb(): Promise<Db> {
     const id = db.exec("SELECT last_insert_rowid()")[0].values[0][0] as number;
     return { rowsAffected: db.getRowsModified(), lastInsertId: id };
   };
-  return {
-    async select<T>(sql: string, params?: unknown[]) {
-      const stmt = db.prepare(sql);
+  const select = <T>(sql: string, params?: unknown[]): T => {
+    const stmt = db.prepare(sql);
+    try {
       stmt.bind(bind(params));
       const rows: Record<string, unknown>[] = [];
       while (stmt.step()) rows.push(stmt.getAsObject());
-      stmt.free();
       return rows as T;
+    } finally { stmt.free(); }
+  };
+  return {
+    async select<T>(sql: string, params?: unknown[]) {
+      return select<T>(sql, params);
+    },
+    async readBatch<T extends unknown[]>(statements: Statement[]) {
+      db.exec("BEGIN");
+      try {
+        const result = statements.map((s) => select(s.sql, s.params)) as T;
+        db.exec("COMMIT");
+        return result;
+      } catch (error) { db.exec("ROLLBACK"); throw error; }
     },
     async execute(sql: string, params?: unknown[]) {
       return execute(sql, params);
@@ -39,7 +52,11 @@ export async function createDevDb(): Promise<Db> {
     async batch(statements: Statement[]) {
       db.exec("BEGIN");
       try {
-        const result = statements.map((s) => execute(s.sql, s.params));
+        const result = statements.map((s) => {
+          const result = execute(s.sql, s.params);
+          if (s.expectedRows !== undefined && result.rowsAffected !== s.expectedRows) throw new Error("The record changed. Refresh before trying again.");
+          return result;
+        });
         db.exec("COMMIT");
         return result;
       } catch (error) {
