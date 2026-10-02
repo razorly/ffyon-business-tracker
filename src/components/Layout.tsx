@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
-import { CalendarDays, CalendarHeart, Cloud, CloudOff, Heart, Inbox, LayoutDashboard, LoaderCircle, Plus, RefreshCw, Settings, Users } from "lucide-react";
+import { CalendarDays, CalendarHeart, Cloud, CloudOff, Inbox, LayoutDashboard, LoaderCircle, Plus, RefreshCw, Settings, Users } from "lucide-react";
 import { useData } from "@/lib/data";
 import { useInbox } from "@/lib/inbox";
 import { getSyncState, retryPendingMutation, subscribeSync, syncNow } from "@/lib/sync";
@@ -8,6 +8,7 @@ import { checkAccess } from "@/lib/access";
 import { cn } from "@/lib/utils";
 import { Button } from "./ui";
 import { useAccess } from "./AccessGate";
+import { BrandLogo } from "./BrandLogo";
 
 const nav = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -23,18 +24,10 @@ export function Layout() {
   const { requests, payments } = useInbox();
   const attention = new Set([...requests, ...payments].map(row => row.id)).size;
   return (
-    <div className="flex h-full">
+    <div className="app-layout flex h-full">
       <aside className="flex w-16 shrink-0 flex-col border-r border-line bg-surface px-2 py-6 sm:w-60 sm:px-4">
         <div className="mb-7 hidden px-2 pt-1 text-center sm:block">
-          <div className="relative inline-block font-display text-[40px] leading-[0.95] text-ink">
-            Ffyon
-            <Heart
-              size={18}
-              strokeWidth={2.5}
-              className="absolute -right-6 top-1 rotate-12 text-rose"
-              aria-hidden
-            />
-          </div>
+          <BrandLogo />
           <div className="eyebrow mt-1.5 text-[10px] text-ink-2">Business Tracker</div>
           <div className="mx-auto mt-3 h-px w-3/4 bg-rose" />
         </div>

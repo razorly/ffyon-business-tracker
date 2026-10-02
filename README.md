@@ -1,4 +1,4 @@
-# Ffyon Business Tracker
+# Tanned by Ffy
 
 A small desktop app for tracking income and outgoings for a tanning business. It runs on Mac and Windows.
 
@@ -13,7 +13,7 @@ A small desktop app for tracking income and outgoings for a tanning business. It
 
 Local financial entry and category deletion offers **Undo**. Shared appointment/account deletion is permanent privacy cleanup with no undo: it removes personal booking details while retaining anonymized recorded payments. Cancellation and disabling an account remain separate actions.
 
-The official app requires an approved admin device. Customers, services and bookings synchronize with the Ffyon website; income, expenses and private notes stay in the local SQLite database on each computer. A website customer account does not unlock the desktop app.
+The official app requires an approved admin device. Customers, services and bookings synchronize with the Tanned by Ffy website; income, expenses and private notes stay in the local SQLite database on each computer. A website customer account does not unlock the desktop app.
 
 See [Admin setup](docs/admin-setup.md) for Windows/macOS pairing, device access and recovery.
 
@@ -41,18 +41,18 @@ Repeating bookings are just ordinary appointments that know about each other. Ed
 
 ### The tray
 
-While Ffyon is running there's an icon in the system tray — the menu bar on a Mac. Clicking it brings the window back or puts it away again; the menu does the day's small jobs without it:
+While Tanned by Ffy is running there's an icon in the system tray — the menu bar on a Mac. Clicking it brings the window back or puts it away again; the menu does the day's small jobs without it:
 
 - **Today** — what's come in, what's gone out, and what's next in the diary.
 - **Quick add** — one line for each active service with a positive discounted price. Clicking one records a standalone payment at its current cached price, dated today, without creating an appointment. The message offers **Undo**, or **Add details** to put a client and a note on it. Archived services are not offered for new payments.
 - **Mark paid** — today's bookings and anything overdue. It's the same money moment as pressing Mark paid in the diary, undo included. A booking with no price yet opens instead of guessing one.
 - **Back up now** — once automatic backups have a folder.
 
-Closing the window asks, the first time, whether to leave Ffyon in the tray or close it properly, and remembers the answer. **Settings → Tray & shortcuts** changes it later. Leaving it running is what keeps the one-click entry and the shortcut available.
+Closing the window asks, the first time, whether to leave Tanned by Ffy in the tray or close it properly, and remembers the answer. **Settings → Tray & shortcuts** changes it later. Leaving it running is what keeps the one-click entry and the shortcut available.
 
 When the window is out of sight, anything done from the tray says so with a notification from the computer instead of a message in the app.
 
-Payment confirmations also update the Inbox badge and send a count-only desktop reminder, even when the window is open. Repeated syncs do not repeat the same reminder. **Settings > Tray & shortcuts > Desktop payment reminders** turns desktop reminders off without hiding Inbox items. Allow notifications for Ffyon in Windows or macOS notification settings. The app must be running (including in the tray/menu bar); reopening or resuming checks overdue bookings. Reminders follow the Europe/London business clock and never email customers. Payment records and reminder bookkeeping remain local to each approved computer.
+Payment confirmations also update the Inbox badge and send a count-only desktop reminder, even when the window is open. Repeated syncs do not repeat the same reminder. **Settings > Tray & shortcuts > Desktop payment reminders** turns desktop reminders off without hiding Inbox items. Allow notifications for Tanned by Ffy in Windows or macOS notification settings. The app must be running (including in the tray/menu bar); reopening or resuming checks overdue bookings. Reminders follow the Europe/London business clock and never email customers. Payment records and reminder bookkeeping remain local to each approved computer.
 
 ### Backups
 
@@ -74,7 +74,7 @@ Put the contents of `~/.ffyon-updater.key` in the repo's `TAURI_SIGNING_PRIVATE_
 
 A release only reaches people once it's **published** on GitHub — the workflow leaves it as a draft so you can test it first.
 
-The app downloads updates from public GitHub releases. Downloading an installer does not grant admin access: each installation must be approved through trusted owner setup or paired from an authorized device. Private connection credentials remain in Windows Credential Manager or macOS Keychain; server secrets remain in Sites. Updater signing keys stay in GitHub Actions secrets. The public source can be modified to build independent local software, but such modifications cannot authorize access to the Ffyon server.
+The app downloads updates from public GitHub releases. Downloading an installer does not grant admin access: each installation must be approved through trusted owner setup or paired from an authorized device. Private connection credentials remain in Windows Credential Manager or macOS Keychain; server secrets remain in Sites. Updater signing keys stay in GitHub Actions secrets. The public source can be modified to build independent local software, but such modifications cannot authorize access to the Tanned by Ffy server.
 
 ## Stack
 
@@ -104,7 +104,7 @@ A Mac app can't be built on Windows, so GitHub Actions builds it for free:
 
 1. Push this folder to a GitHub repo.
 2. On GitHub, open **Actions → Build apps → Run workflow**.
-3. After about 15 minutes, a draft **Release** appears with `Ffyon Business Tracker_x.y.z_universal.dmg`, which works on both Intel and Apple Silicon Macs, plus the Windows installers.
+3. After about 15 minutes, a draft **Release** appears with `Tanned by Ffy_x.y.z_universal.dmg`, which works on both Intel and Apple Silicon Macs, plus the Windows installers.
 
 The app isn't signed with an Apple developer certificate, so the first time it's opened on the Mac:
 **right-click the app → Open → Open**. If that doesn't work, go to **System Settings → Privacy & Security → "Open Anyway"**. After that it opens normally.

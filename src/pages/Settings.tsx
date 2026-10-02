@@ -503,7 +503,7 @@ function TrayCard() {
 
   return (
     <Card className="self-start">
-      <CardHeader title="Tray & shortcuts" subtitle={`Ffyon sits in the ${where} while it's running`} />
+      <CardHeader title="Tray & shortcuts" subtitle={`Tanned by Ffy sits in the ${where} while it's running`} />
       <div className="space-y-5 px-5 pb-5">
         <div>
           <div className="text-[13px] font-medium">Closing the window</div>
@@ -543,7 +543,7 @@ function TrayCard() {
             <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0 accent-accent" checked={remindersEnabled} onChange={event => setRemindersEnabled(event.target.checked)} />
             Desktop payment reminders
           </label>
-          {remindersEnabled && reminderResult === "blocked" && <p role="status" className="mt-2 text-xs text-muted">Notifications are blocked. Allow Ffyon notifications in Windows or macOS notification settings.</p>}
+          {remindersEnabled && reminderResult === "blocked" && <p role="status" className="mt-2 text-xs text-muted">Notifications are blocked. Allow Tanned by Ffy notifications in Windows or macOS notification settings.</p>}
           {remindersEnabled && reminderResult === "error" && <p role="status" className="mt-2 text-xs text-bad">Could not send the desktop reminder. Payment confirmations are still in Inbox.</p>}
         </div>
 
@@ -596,7 +596,7 @@ function AboutCard() {
 
   return (
     <Card>
-      <CardHeader title="About" subtitle="Ffyon Business Tracker" />
+      <CardHeader title="About" subtitle="Tanned by Ffy" />
       <div className="space-y-4 px-5 pb-5">
         <div className="rounded-2xl bg-surface-2 p-3.5">
           <div className="eyebrow text-[10px] text-ink-2">Installed version</div>

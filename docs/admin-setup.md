@@ -1,4 +1,4 @@
-# Ffyon Admin Setup
+# Tanned by Ffy Admin Setup
 
 ## Windows and macOS
 
@@ -10,7 +10,7 @@ The current release workflow signs updater packages but does not Apple-notarize 
 
 1. Choose **Set Up First Admin** and enter a recognizable device name.
 2. The app generates a private connection credential inside Windows Credential Manager or macOS Keychain. It displays only a public device ID and SHA-256 hash.
-3. In the Ffyon Site's runtime settings, set `FFYON_BOOTSTRAP_DEVICE_ID` to that device ID and `FFYON_BOOTSTRAP_TOKEN_HASH` to its hash. Keep these in hosted configuration, not source. Apply the configuration by publishing the saved site version.
+3. In the Tanned by Ffy Site's runtime settings, set `FFYON_BOOTSTRAP_DEVICE_ID` to that device ID and `FFYON_BOOTSTRAP_TOKEN_HASH` to its hash. Keep these in hosted configuration, not source. Apply the configuration by publishing the saved site version.
 4. Choose **Verify Connection** in the app. The server registers this device once and issues its authorization.
 5. Review services, prices, durations, opening hours and existing bookings before enabling online requests.
 
@@ -52,7 +52,7 @@ Income and expenses are local to each computer. Approval never records income; *
 
 The Inbox badge counts appointments needing either a decision or payment confirmation, counting each appointment once. Desktop reminders contain only a count, with no customer names, addresses or payment amounts. Successful reminders are remembered per approved device so repeated syncs/restarts do not repeat them; rescheduled appointments or payments explicitly undone can need another reminder. Check **Settings > Tray & shortcuts > Desktop payment reminders** to enable/disable them. The badge remains available when desktop reminders are disabled or blocked.
 
-On macOS, allow Ffyon in **System Settings > Notifications**; on Windows, allow it in **Settings > System > Notifications**. No new connection credentials are needed. Keep the app running in the menu bar/system tray for reminders, and open Inbox after resuming from sleep. Offline reminders use the last synchronized diary and the local payment records; financial records remain separate on each computer.
+On macOS, allow Tanned by Ffy in **System Settings > Notifications**; on Windows, allow it in **Settings > System > Notifications**. No new connection credentials are needed. Keep the app running in the menu bar/system tray for reminders, and open Inbox after resuming from sleep. Offline reminders use the last synchronized diary and the local payment records; financial records remain separate on each computer.
 
 **Other income** settings contain only non-treatment labels. Expense categories and their usual amounts remain separate. Reports and exports distinguish service payments, other income and unresolved legacy income. Existing payment amounts and saved labels are not repriced or renamed when the catalogue changes. Unlinked historical payment entries can be explicitly corrected using the editor's single grouped **Income type** selector; this does not create or pay an appointment. Payments linked to appointments keep their booked service attribution.
 

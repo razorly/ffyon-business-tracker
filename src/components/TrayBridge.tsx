@@ -93,7 +93,7 @@ export function TrayBridge() {
         await notifyFromTray("Added to today", `${service.name} — ${money(pence)}`);
       } catch (err) {
         console.error(err);
-        toast.error("Couldn't record that payment. Open Ffyon and try again.");
+        toast.error("Couldn't record that payment. Open Tanned by Ffy and try again.");
       } finally {
         adding.delete(serviceId);
       }
@@ -138,7 +138,7 @@ export function TrayBridge() {
           return toast.info("Choose a backup folder in Settings first");
         }
         toast.success("Backup saved to your folder");
-        await notifyFromTray("Ffyon backed up", "A fresh copy is in your backup folder");
+        await notifyFromTray("Tanned by Ffy backed up", "A fresh copy is in your backup folder");
       } catch (e) {
         console.error(e);
         toast.error("Couldn't write to that folder — check it in Settings");
@@ -190,9 +190,9 @@ export function TrayBridge() {
 
   const where = trayName();
   return (
-    <Modal open={asking} onClose={() => setAsking(false)} title="Keep Ffyon running?" width="max-w-sm">
+    <Modal open={asking} onClose={() => setAsking(false)} title="Keep Tanned by Ffy running?" width="max-w-sm">
       <p className="text-sm text-ink-2">
-        Ffyon can stay in the {where}, where a tan can be booked in with one click and {QUICK_KEYS_LABEL} opens a new
+        Tanned by Ffy can stay in the {where}, where a tan can be booked in with one click and {QUICK_KEYS_LABEL} opens a new
         entry from anywhere. Or it can close properly each time.
       </p>
       <p className="mt-2 text-xs text-muted">You can change this later in Settings.</p>

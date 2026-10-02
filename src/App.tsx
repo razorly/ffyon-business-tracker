@@ -7,6 +7,7 @@ import { runAutoBackup } from "@/lib/export";
 import { checkForUpdate } from "@/lib/update";
 import { ThemeProvider, useTheme } from "@/lib/theme";
 import { Layout } from "@/components/Layout";
+import { WindowFrame } from "@/components/WindowFrame";
 import { EntryDialog } from "@/components/EntryDialog";
 import { AppointmentDialog } from "@/components/AppointmentDialog";
 import { TrayBridge } from "@/components/TrayBridge";
@@ -65,7 +66,7 @@ export default function App() {
 function AppContent() {
   const { dark } = useTheme();
   return <>
-    <AccessGate><Shell /></AccessGate>
+    <WindowFrame><AccessGate><Shell /></AccessGate></WindowFrame>
     <Toaster position="bottom-right" theme={dark ? "dark" : "light"} style={{ zIndex: 40 }} richColors closeButton />
   </>;
 }

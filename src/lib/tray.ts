@@ -77,7 +77,7 @@ async function trayState(): Promise<TrayState> {
   const waiting = [...booked.filter((a) => a.transaction_id == null), ...[...overdue].reverse()].filter((appointment) => appointment.price_pence != null && appointment.price_pence > 0).slice(0, MAX_WAITING);
 
   return {
-    tooltip: [`Ffyon — ${moneyNeat(inToday)} in today`, next && `next ${timeLabel(next.start_time)}`]
+    tooltip: [`Tanned by Ffy — ${moneyNeat(inToday)} in today`, next && `next ${timeLabel(next.start_time)}`]
       .filter(Boolean)
       .join(" · "),
     lines: [takings, diary, ...(untimed ? [`${untimed} appointment${untimed === 1 ? "" : "s"} need${untimed === 1 ? "s" : ""} a time`] : [])],

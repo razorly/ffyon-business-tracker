@@ -4,24 +4,24 @@
 
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
-/* Brand: blush pink, deep chocolate, dusty rose — serif display + spaced caps */
+/* Tanned by Ffy: the customer site's warm cream, chocolate and rose palette. */
 :root {
   color-scheme: light;
-  --page: #f4d8ce;
-  --surface: #fdf3ef;
-  --surface-2: #f8e3db;
-  --ink: #4a2414;
-  --ink-2: #74483a;
-  --muted: #8f6a5c;
-  --border: rgba(74, 36, 20, 0.12);
-  --grid: #f0dbd2;
-  --axis: #ddc0b4;
-  --rose: #d9918a;
+  --page: #faf7f4;
+  --surface: #fff;
+  --surface-2: #f7e8e1;
+  --ink: #42291f;
+  --ink-2: #68574f;
+  --muted: #78645b;
+  --border: #e4d9d2;
+  --grid: #e4d9d2;
+  --axis: #cbb8ac;
+  --rose: #b66d63;
 
-  --accent: #4a2414;
-  --accent-hover: #5f3120;
-  --accent-ink: #fdf3ef;
-  --accent-soft: #f6d3c9;
+  --accent: #42291f;
+  --accent-hover: #654032;
+  --accent-ink: #fff;
+  --accent-soft: #f4dfd5;
 
   --good: #2c7a3a;
   --bad: #b3261e;
@@ -43,7 +43,7 @@
   --border: rgba(248, 225, 216, 0.1);
   --grid: #3a261d;
   --axis: #54392c;
-  --rose: #e0968d;
+  --rose: #e69b89;
 
   --accent: #eea69b;
   --accent-hover: #f4b8ae;
@@ -101,6 +101,112 @@ textarea,
 select,
 td {
   user-select: text;
+}
+
+.brand-logo {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-weight: 400;
+}
+
+.brand-logo > span {
+  position: relative;
+  margin-right: 10px;
+  font-size: 2rem;
+  line-height: 1.05;
+}
+
+.brand-logo-heart {
+  position: absolute;
+  right: -15px;
+  top: 0;
+  width: 12px;
+  height: 12px;
+  color: var(--rose);
+}
+
+.brand-logo small {
+  margin-top: 2px;
+  font-size: 1.15rem;
+  line-height: 1.2;
+}
+
+/* The title bar continues the surfaces below it, with no horizontal seam. */
+.window-frame {
+  --sidebar-width: 64px;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.window-titlebar {
+  position: relative;
+  z-index: 60;
+  display: flex;
+  flex-shrink: 0;
+  height: 36px;
+  background: var(--page);
+  color: var(--ink-2);
+  user-select: none;
+}
+
+.window-frame:has(.app-layout) .window-titlebar {
+  background: linear-gradient(to right,
+    var(--surface) 0, var(--surface) calc(var(--sidebar-width) - 1px),
+    var(--page) calc(var(--sidebar-width) - 1px), var(--page) 100%);
+}
+
+.window-frame:has(.app-layout) .window-titlebar::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  left: calc(var(--sidebar-width) - 1px);
+  width: 1px;
+  background: var(--border);
+  pointer-events: none;
+}
+
+.window-drag-region {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  padding-inline: 16px;
+}
+
+.window-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.window-titlebar[data-focused="false"] .window-title { opacity: 0.6; }
+.window-controls { display: flex; }
+.window-control {
+  display: flex;
+  width: 46px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+}
+.window-control:hover { background: var(--surface-2); }
+.window-control:focus-visible { outline: 2px solid var(--rose); outline-offset: -3px; }
+.window-close:hover { background: #c42b1c; color: white; }
+.window-content { flex: 1; min-height: 0; overflow: hidden; }
+
+/* macOS keeps its native traffic lights over the same themed surface. */
+.window-frame[data-platform="mac"] .window-drag-region { padding-left: 88px; }
+@media (min-width: 640px) {
+  .window-frame { --sidebar-width: 240px; }
 }
 
 .tabular {

@@ -48,7 +48,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || format('build-{0}', github.run_number) }}
-          releaseName: "Ffyon Business Tracker ${{ github.ref_type == 'tag' && github.ref_name || format('build {0}', github.run_number) }}"
+          releaseName: "Tanned by Ffy ${{ github.ref_type == 'tag' && github.ref_name || format('build {0}', github.run_number) }}"
           releaseBody: "Download the .dmg for Mac or the .msi / -setup.exe for Windows. Publish this release (not just save it) so installed copies are offered the update."
           releaseDraft: true
           prerelease: false

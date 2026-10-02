@@ -11,7 +11,7 @@ export interface AccessStatus {
 
 export const isDesktop = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 export const isBrowserFixture = () => import.meta.env.DEV && import.meta.env.VITE_FFYON_BROWSER_FIXTURE === "1";
-const DESKTOP_REQUIRED = "Admin connection requires the installed desktop app. Open Ffyon on Windows or macOS.";
+const DESKTOP_REQUIRED = "Admin connection requires the installed desktop app. Open Tanned by Ffy on Windows or macOS.";
 
 export async function getAccessStatus(): Promise<AccessStatus> {
   if (!isDesktop()) return { state: "locked", device_id: null, device_name: null, expires_at: null, error: DESKTOP_REQUIRED };
@@ -39,5 +39,5 @@ export async function requireLocalAccess() {
 
 export async function requireOnlineAccess() {
   const status = await getAccessStatus();
-  if (status.state !== "online") throw new Error("Shared changes require an online connection to Ffyon.");
+  if (status.state !== "online") throw new Error("Shared changes require an online connection to Tanned by Ffy.");
 }

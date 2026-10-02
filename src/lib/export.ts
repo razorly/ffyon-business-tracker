@@ -40,7 +40,7 @@ export async function exportSpreadsheet(from: string, to: string, bookType: "xls
   const income = txs.filter((t) => t.type === "income").reduce((s, t) => s + t.amount_pence, 0);
   const expense = txs.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount_pence, 0);
 
-  const fileBase = `ffyon-${from}-to-${to}`;
+  const fileBase = `tanned-by-ffy-${from}-to-${to}`;
 
   if (bookType === "csv") {
     const csv = XLSX.utils.sheet_to_csv(XLSX.utils.json_to_sheet(rows));
@@ -91,16 +91,16 @@ export async function exportSpreadsheet(from: string, to: string, bookType: "xls
 export async function saveBackup() {
   const data = await exportAll();
   const stamp = new Date().toISOString().slice(0, 10);
-  return saveBytes(`ffyon-backup-${stamp}.json`, "Ffyon backup", "json", JSON.stringify(data, null, 2));
+  return saveBytes(`tanned-by-ffy-backup-${stamp}.json`, "Tanned by Ffy backup", "json", JSON.stringify(data, null, 2));
 }
 
 /** Returns number of transactions restored, or null if cancelled. Throws on an invalid file. */
 export async function loadBackup(): Promise<number | null> {
   if (!isTauri()) throw new Error("Restore is only available in the desktop app.");
-  const path = await invoke<string | null>("protected_pick_file", { filters: [{ name: "Ffyon backup", extensions: ["json"] }] });
+  const path = await invoke<string | null>("protected_pick_file", { filters: [{ name: "Tanned by Ffy backup", extensions: ["json"] }] });
   if (!path) return null;
   const parsed = JSON.parse(await invoke<string>("protected_read_text_file", { path }));
-  if (!validateBackup(parsed)) throw new Error("That file isn't a Ffyon backup.");
+  if (!validateBackup(parsed)) throw new Error("That file isn't a Tanned by Ffy backup.");
 
   await restoreAll(parsed);
   return parsed.transactions.length;
@@ -115,6 +115,7 @@ export async function loadBackup(): Promise<number | null> {
  */
 const AUTO_KEY = "ffyon-autobackup";
 const KEEP = 10;
+// Preserve the existing automatic-backup family and retention across the rebrand.
 const FILE_PREFIX = "ffyon-backup-";
 
 export interface AutoBackup {

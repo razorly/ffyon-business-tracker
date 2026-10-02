@@ -5,6 +5,7 @@ import { checkAccess, connectOwner, getAccessStatus, onAccessChanged, pairDevice
 import { checkForUpdate } from "@/lib/update";
 import { quitApp } from "@/lib/tray";
 import { Button, Field, Input, Segmented } from "./ui";
+import { BrandLogo } from "./BrandLogo";
 
 const locked: AccessStatus = { state: "checking", device_id: null, device_name: null, expires_at: null, error: null };
 const AccessContext = createContext<AccessStatus>(locked);
@@ -69,7 +70,7 @@ function LockedScreen({ status, onStatus }: { status: AccessStatus; onStatus: (v
   return <main className="flex h-full min-h-[600px] items-center justify-center overflow-y-auto bg-page px-6 py-10">
     <div className="w-full max-w-lg">
       <div className="mb-8 text-center">
-        <div className="font-display text-[48px] leading-none">Ffyon</div>
+        <BrandLogo />
         <div className="eyebrow mt-3 text-muted">Business Tracker</div>
       </div>
       <div className="flex items-center gap-3 border-b border-line pb-4">

@@ -1,4 +1,4 @@
-# Ffyon Integration Contract v3
+# Tanned by Ffy Integration Contract v3
 
 This file is public. It contains no private credential or signing key.
 

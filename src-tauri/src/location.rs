@@ -118,7 +118,7 @@ pub async fn lookup_postcode(
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(12))
         .connect_timeout(Duration::from_secs(5))
-        .user_agent(concat!("FfyonBusinessTracker/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("TannedByFfyBusinessTracker/", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|_| "Postcode lookup is unavailable")?;
     access.require_authorized()?;

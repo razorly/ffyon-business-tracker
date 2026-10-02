@@ -1027,7 +1027,7 @@ export function validateBackup(data: unknown): data is Backup {
 
 export function normalizeBackup(data: unknown): Backup {
   const b = data as Backup;
-  if (!b || b.app !== "ffyon-business-tracker" || ![1, 2, 3, 4].includes(b.version) || !Array.isArray(b.categories) || !Array.isArray(b.clients) || !Array.isArray(b.transactions) || (b.appointments !== undefined && !Array.isArray(b.appointments))) throw new Error("That file isn't a supported Ffyon backup.");
+  if (!b || b.app !== "ffyon-business-tracker" || ![1, 2, 3, 4].includes(b.version) || !Array.isArray(b.categories) || !Array.isArray(b.clients) || !Array.isArray(b.transactions) || (b.appointments !== undefined && !Array.isArray(b.appointments))) throw new Error("That file isn't a supported Tanned by Ffy backup.");
   const positiveId = (n: unknown) => Number.isSafeInteger(n) && Number(n) > 0;
   const nullableId = (n: unknown) => n === null || positiveId(n);
   const str = (v: unknown) => typeof v === "string";

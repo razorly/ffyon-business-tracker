@@ -26,4 +26,4 @@ Version 0.5.4 adds the appointment option to New Entry and renames Requests to I
 
 No production database, customer account, booking, hosted Site setting or email was changed by validation. Map network access was deliberately stubbed in the feature browser run; this release does not change map handling. Native Windows/macOS OS notification delivery and macOS Keychain integration were not exercised on real approved devices. A Windows build does not produce or validate a Mac package. No installer was installed over the running business app.
 
-Allow Ffyon notifications in the operating system and keep the installed app running in the tray/menu bar. See [Admin setup](admin-setup.md) for macOS/Windows permissions and existing credential setup. No new connection secret or Site deployment is required.
+Allow Tanned by Ffy notifications in the operating system and keep the installed app running in the tray/menu bar. See [Admin setup](admin-setup.md) for macOS/Windows permissions and existing credential setup. No new connection secret or Site deployment is required.

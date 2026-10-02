@@ -425,7 +425,7 @@ impl AccessState {
         } else {
             Err(status
                 .error
-                .unwrap_or_else(|| "This computer must be approved before using Ffyon".into()))
+                .unwrap_or_else(|| "This computer must be approved before using Tanned by Ffy".into()))
         }
     }
 
@@ -498,7 +498,7 @@ impl AccessState {
         let response = request.send().await.map_err(|_| {
             (
                 false,
-                "Unable to reach the Ffyon site. Check the internet connection.".into(),
+                "Unable to reach the Tanned by Ffy site. Check the internet connection.".into(),
             )
         })?;
         let status = response.status();
@@ -858,7 +858,7 @@ pub fn handle_cli() -> bool {
         match state.prepare(
             args.get(2)
                 .cloned()
-                .unwrap_or_else(|| "Ffyon owner computer".into()),
+                .unwrap_or_else(|| "Tanned by Ffy owner computer".into()),
         ) {
             Ok(prepared) => println!("{}", serde_json::to_string(&prepared).unwrap()),
             Err(error) => {

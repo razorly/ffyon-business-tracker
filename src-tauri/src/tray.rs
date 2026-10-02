@@ -16,7 +16,7 @@ use tauri_plugin_notification::NotificationExt;
 
 pub const TRAY_ID: &str = "ffyon-tray";
 const MAIN_WINDOW: &str = "main";
-const DEFAULT_TOOLTIP: &str = "Ffyon Business Tracker";
+const DEFAULT_TOOLTIP: &str = "Tanned by Ffy";
 
 // What a click on the menu tells the front end to do.
 const EVT_NEW_ENTRY: &str = "tray://new-entry";
@@ -76,8 +76,8 @@ pub struct Prefs {
 fn build_menu<R: Runtime>(app: &AppHandle<R>, state: &TrayState) -> tauri::Result<Menu<R>> {
     let menu = Menu::new(app)?;
     if app.state::<crate::access::AccessState>().require_authorized().is_err() {
-        menu.append(&MenuItem::with_id(app, "open", "Connect Ffyon", true, None::<&str>)?)?;
-        menu.append(&MenuItem::with_id(app, "quit", "Quit Ffyon", true, None::<&str>)?)?;
+        menu.append(&MenuItem::with_id(app, "open", "Connect Tanned by Ffy", true, None::<&str>)?)?;
+        menu.append(&MenuItem::with_id(app, "quit", "Quit Tanned by Ffy", true, None::<&str>)?)?;
         return Ok(menu);
     }
 
@@ -94,7 +94,7 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>, state: &TrayState) -> tauri::Resul
         menu.append(&PredefinedMenuItem::separator(app)?)?;
     }
 
-    menu.append(&MenuItem::with_id(app, "open", "Open Ffyon", true, None::<&str>)?)?;
+    menu.append(&MenuItem::with_id(app, "open", "Open Tanned by Ffy", true, None::<&str>)?)?;
 
     if !state.quick_add.is_empty() {
         let sub = Submenu::with_id(app, "quick-add", "Quick add", true)?;
@@ -134,7 +134,7 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>, state: &TrayState) -> tauri::Resul
     if state.backup {
         menu.append(&MenuItem::with_id(app, "backup", "Back up now", true, None::<&str>)?)?;
     }
-    menu.append(&MenuItem::with_id(app, "quit", "Quit Ffyon", true, None::<&str>)?)?;
+    menu.append(&MenuItem::with_id(app, "quit", "Quit Tanned by Ffy", true, None::<&str>)?)?;
 
     Ok(menu)
 }
@@ -303,7 +303,7 @@ pub fn notify_payment_confirmation<R: Runtime>(app: AppHandle<R>, count: u32) ->
     } else {
         format!("{count} completed appointments need payment confirmation in Inbox.")
     };
-    app.notification().builder().title("Ffyon: confirm payments").body(body)
+    app.notification().builder().title("Tanned by Ffy: confirm payments").body(body)
         .show().map_err(|error| error.to_string())
 }
 
