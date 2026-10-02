@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Tanned by Ffy",
-  "version": "0.5.6",
+  "version": "0.5.7",
   "identifier": "com.ffyon.tracker",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -30,6 +30,14 @@
     "active": true,
     "targets": "all",
     "createUpdaterArtifacts": true,
+    "windows": {
+      "wix": {
+        "upgradeCode": "67e5bdeb-63ed-5152-8c5f-1966d074988b"
+      },
+      "nsis": {
+        "installerHooks": "installer/rebrand-hooks.nsh"
+      }
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
