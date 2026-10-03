@@ -14,8 +14,8 @@ const id="msg_"+randomUUID(), timestamp=String(Math.floor(Date.now()/1000));
 const payload=JSON.stringify({type:"email.sent",data:{email_id:randomUUID()}});
 const signature=createHmac("sha256",Buffer.from(secret.replace(/^whsec_/,""),"base64")).update(id+"."+timestamp+"."+payload).digest("base64");
 const outcomes=[];
-async function check(name,path,init,expected){const response=await fetch(origin+path,{...init,redirect:"manual",signal:AbortSignal.timeout(20000)});outcomes.push({name,status:response.status,expected});await response.arrayBuffer();if(response.status!==expected)throw new Error(name+" failed with "+response.status);}
-await check("public Site and automatic maintenance request","/?mail-retention-check="+Date.now(),{},200);
+async function check(name,path,init,expected){const response=await fetch(origin+path,{...init,redirect:"manual",signal:AbortSignal.timeout(30000)});outcomes.push({name,status:response.status,expected});await response.arrayBuffer();if(response.status!==expected)throw new Error(name+" failed with "+response.status);}
+await check("public Site and automatic maintenance request","/",{},200);
 await check("Mail requires approved device","/api/admin/v1/mail/unread",{},401);
 await check("unsigned webhook rejected","/api/webhooks/resend",{method:"POST",body:payload,headers:{"Content-Type":"application/json"}},401);
 await check("real signed webhook and migrated Mail database","/api/webhooks/resend",{method:"POST",body:payload,headers:{"Content-Type":"application/json","svix-id":id,"svix-timestamp":timestamp,"svix-signature":"v1,"+signature}},200);

@@ -27,6 +27,7 @@ const VAULT_SERVICE: &str = "com.ffyon.tracker.admin";
 const VAULT_ACCOUNT: &str = "device-v1";
 const LEASE_SECONDS: u64 = 86_400;
 const MAX_RESPONSE_BYTES: usize = 25_000_000;
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub fn now_seconds() -> u64 {
     SystemTime::now()
@@ -94,6 +95,7 @@ struct Inner {
     vault_ready: bool,
     deadline: Option<Instant>,
     require_online: bool,
+    connection_epoch: u64,
 }
 
 pub struct AccessState {
@@ -310,7 +312,7 @@ impl AccessState {
         let origin = fixture_origin().unwrap_or_else(|| SITE_ORIGIN.into());
         let client = Client::builder()
             .redirect(reqwest::redirect::Policy::none())
-            .timeout(Duration::from_secs(20))
+            .timeout(REQUEST_TIMEOUT)
             .connect_timeout(Duration::from_secs(10))
             .build()
             .expect("native HTTPS client configuration");
@@ -322,6 +324,7 @@ impl AccessState {
                 vault_ready,
                 deadline,
                 require_online,
+                connection_epoch: 0,
             }),
             client,
             origin,
@@ -467,13 +470,15 @@ impl AccessState {
         })
     }
 
+    fn request_credential(&self) -> Result<(Vault, u64), String> {
+        let inner = self.inner.lock().map_err(|_| "Credential storage is busy")?;
+        let credential = inner.vault.clone().ok_or_else(|| "Set up or pair this computer first".to_owned())?;
+        Ok((credential, inner.connection_epoch))
+    }
+
+    #[cfg(test)]
     fn credential(&self) -> Result<Vault, String> {
-        self.inner
-            .lock()
-            .map_err(|_| "Credential storage is busy")?
-            .vault
-            .clone()
-            .ok_or_else(|| "Set up or pair this computer first".into())
+        self.request_credential().map(|(credential, _)| credential)
     }
 
     fn require_current_admin(&self, credential: &Vault) -> Result<(), String> {
@@ -510,10 +515,13 @@ impl AccessState {
         if let Some(timeout) = timeout {
             request = request.timeout(timeout);
         }
-        let mut response = request.send().await.map_err(|_| {
+        let mut response = request.send().await.map_err(|error| {
+            let reason = if error.is_timeout() { "The request timed out." }
+                else if error.is_connect() { "The connection could not be opened." }
+                else { "The network request failed." };
             (
                 false,
-                "Unable to reach the Tanned by Ffy site. Check the internet connection.".into(),
+                format!("Unable to reach the Tanned by Ffy site. {reason} Check the internet connection."),
             )
         })?;
         let status = response.status();
@@ -554,18 +562,24 @@ impl AccessState {
     }
 
     fn failed(&self, revoked: bool, error: String) {
-        self.failed_for(None, revoked, error);
+        self.failed_for(None, None, revoked, error);
     }
 
-    fn failed_for(&self, credential: Option<&Vault>, revoked: bool, error: String) {
+    fn failed_for(&self, credential: Option<&Vault>, epoch: Option<u64>, revoked: bool, error: String) {
         if let Ok(mut inner) = self.inner.lock() {
             if credential.is_some_and(|credential| !inner.vault.as_ref().is_some_and(|vault|
                 vault.device_id == credential.device_id && vault.token == credential.token)) {
                 return;
             }
+            // A slow request must not undo a newer successful verification.
+            // Authoritative 401/403 responses still lock the current credential.
+            if !revoked && epoch.is_some_and(|epoch| epoch != inner.connection_epoch) {
+                return;
+            }
             inner.online = false;
             inner.error = Some(error);
             if revoked {
+                inner.connection_epoch = inner.connection_epoch.saturating_add(1);
                 inner.require_online = true;
                 inner.deadline = None;
                 let marker_result = self.persistence.mark_recheck();
@@ -583,7 +597,7 @@ impl AccessState {
         }
     }
 
-    fn receive_session(&self, credential: &Vault, response: Value) -> Result<(), String> {
+    fn receive_session(&self, credential: &Vault, response: Value, epoch: u64) -> Result<(), String> {
         let lease: SignedLease = serde_json::from_value(
             response
                 .get("lease")
@@ -597,6 +611,9 @@ impl AccessState {
             .inner
             .lock()
             .map_err(|_| "Credential storage is busy")?;
+        if inner.require_online && epoch != inner.connection_epoch {
+            return Err("Access changed during verification. Verify the connection again.".into());
+        }
         let vault = inner
             .vault
             .as_mut()
@@ -617,23 +634,24 @@ impl AccessState {
         inner.deadline = Some(Instant::now() + Duration::from_secs(expiry.saturating_sub(now)));
         inner.online = true;
         inner.error = None;
+        inner.connection_epoch = inner.connection_epoch.saturating_add(1);
         Ok(())
     }
 
     async fn verify(&self, bootstrap: bool) -> AccessStatus {
-        match self.credential() {
-            Ok(vault) => {
+        match self.request_credential() {
+            Ok((vault, epoch)) => {
                 let operation = if bootstrap { "bootstrap" } else { "session" };
                 let method = if bootstrap { Method::POST } else { Method::GET };
                 let body =
                     bootstrap.then(|| json!({"device_id": vault.device_id, "name": vault.name}));
                 match self.send(&vault, operation, method, body, None, None).await {
                     Ok(response) => {
-                        if let Err(error) = self.receive_session(&vault, response) {
-                            self.failed_for(Some(&vault), true, error);
+                        if let Err(error) = self.receive_session(&vault, response, epoch) {
+                            self.failed_for(Some(&vault), Some(epoch), true, error);
                         }
                     }
-                    Err((revoked, error)) => self.failed_for(Some(&vault), revoked, error),
+                    Err((revoked, error)) => self.failed_for(Some(&vault), Some(epoch), revoked, error),
                 }
             }
             Err(error) => self.failed(false, error),
@@ -744,7 +762,7 @@ pub async fn access_pair(
         return Err("Enter the 12-character pairing code".into());
     }
     state.prepare(name)?;
-    let vault = state.credential()?;
+    let (vault, epoch) = state.request_credential()?;
     match state
         .send(
             &vault,
@@ -756,9 +774,9 @@ pub async fn access_pair(
         )
         .await
     {
-        Ok(response) => state.receive_session(&vault, response)?,
+        Ok(response) => state.receive_session(&vault, response, epoch)?,
         Err((revoked, error)) => {
-            state.failed_for(Some(&vault), revoked, error.clone());
+            state.failed_for(Some(&vault), Some(epoch), revoked, error.clone());
             emit(&app, state.status());
             return Err(error);
         }
@@ -913,7 +931,7 @@ impl AdminOperation {
 
     fn request_timeout(&self) -> Option<Duration> {
         // Attachment metadata and the bounded CDN download happen sequentially server-side.
-        matches!(self, Self::MailAttachment { .. }).then(|| Duration::from_secs(30))
+        matches!(self, Self::MailAttachment { .. }).then_some(REQUEST_TIMEOUT)
     }
 
     fn validate_query(&self, query: Option<&HashMap<String, String>>) -> Result<(), String> {
@@ -969,7 +987,7 @@ pub async fn admin_request(
     {
         return Err("The request is too large".into());
     }
-    let vault = state.credential()?;
+    let (vault, epoch) = state.request_credential()?;
     match state
         .send(&vault, &operation.route(), method, body, query, operation.request_timeout())
         .await
@@ -980,7 +998,7 @@ pub async fn admin_request(
         },
         Err((revoked, error)) => {
             if revoked || error.starts_with("Unable to reach") {
-                state.failed_for(Some(&vault), revoked, error.clone());
+                state.failed_for(Some(&vault), Some(epoch), revoked, error.clone());
                 emit(&app, state.status());
                 crate::tray::refresh_locked(&app);
             }
@@ -1173,10 +1191,11 @@ mod tests {
     }
 
     #[test]
-    fn only_attachment_requests_extend_the_shared_request_timeout() {
+    fn attachment_downloads_keep_the_same_bounded_timeout_as_standard_requests() {
         let id = "3463ee1b-1429-4e4b-96fd-9b2f3f84d1e2";
         let attachment = AdminOperation::parse(&format!("mail/attachments/{id}/{id}")).unwrap();
-        assert_eq!(attachment.request_timeout(), Some(Duration::from_secs(30)));
+        assert_eq!(REQUEST_TIMEOUT, Duration::from_secs(30));
+        assert_eq!(attachment.request_timeout(), Some(REQUEST_TIMEOUT));
         for route in ["sync", "devices", "pairing", "clients", "clients/link", "appointments",
             "appointments/series", "services", "settings", "blocks", "import", "mail/conversations",
             "mail/send", "mail/reconcile", "mail/status", "mail/unread",
@@ -1339,6 +1358,37 @@ mod tests {
     }
 
     #[test]
+    fn a_stale_transport_failure_cannot_override_newer_online_verification() {
+        let (state, _, _) = offline_device();
+        let (credential, old_epoch) = state.request_credential().unwrap();
+        let response = json!({"lease": credential.lease});
+        state.receive_session(&credential, response, old_epoch).unwrap();
+        assert_eq!(state.status().state, "online");
+        state.failed_for(Some(&credential), Some(old_epoch), false, "Old request timed out".into());
+        assert_eq!(state.status().state, "online");
+        assert!(state.status().error.is_none());
+
+        let (current, current_epoch) = state.request_credential().unwrap();
+        state.failed_for(Some(&current), Some(current_epoch), false, "Current network failure".into());
+        assert_eq!(state.status().state, "offline", "A current failure still changes reachability");
+        assert_eq!(state.status().error.as_deref(), Some("Current network failure"));
+    }
+
+    #[test]
+    fn authoritative_revocation_locks_even_after_newer_verification_and_blocks_old_success() {
+        let (state, _, _) = offline_device();
+        let (credential, old_epoch) = state.request_credential().unwrap();
+        let response = json!({"lease": credential.lease});
+        state.receive_session(&credential, response.clone(), old_epoch).unwrap();
+        state.failed_for(Some(&credential), Some(old_epoch), true, "This device was revoked".into());
+        assert_eq!(state.status().state, "locked");
+        assert!(state.receive_session(&credential, response, old_epoch).is_err(), "An in-flight older session cannot restore revoked access");
+        state.failed_for(Some(&credential), Some(old_epoch), false, "Stale timeout".into());
+        assert_eq!(state.status().state, "locked");
+        assert_eq!(state.status().error.as_deref(), Some("Connect to verify admin access for this computer."));
+    }
+
+    #[test]
     fn a_stale_request_cannot_revoke_or_disconnect_a_replacement_credential() {
         let (state, _, _) = offline_device();
         let credential = state.credential().unwrap();
@@ -1348,7 +1398,7 @@ mod tests {
             inner.error = Some("Fresh connection".into());
             inner.online = true;
         }
-        state.failed_for(Some(&credential), true, "Old device revoked".into());
+        state.failed_for(Some(&credential), None, true, "Old device revoked".into());
         let inner = state.inner.lock().unwrap();
         assert_eq!(inner.error.as_deref(), Some("Fresh connection"));
         assert!(inner.online);
@@ -1398,13 +1448,13 @@ mod tests {
         assert!(state.require_authorized().is_err());
         let reopened = AccessState::with_persistence(store.clone(), key);
         assert!(reopened.require_authorized().is_err());
-        let credential = reopened.credential().unwrap();
+        let (credential, epoch) = reopened.request_credential().unwrap();
         let now = now_seconds();
         let (lease, _) = signed(
             json!({"version":1,"site_id":SITE_ID,"device_id":credential.device_id,"token_hash":hash_token(&credential.token),"issued_at":now,"expires_at":now+LEASE_SECONDS}),
         );
         reopened
-            .receive_session(&credential, json!({"lease":lease}))
+            .receive_session(&credential, json!({"lease":lease}), epoch)
             .unwrap();
         assert_eq!(reopened.status().state, "online");
         assert!(!store.requires_online());

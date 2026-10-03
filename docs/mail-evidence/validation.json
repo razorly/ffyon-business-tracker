@@ -1,15 +1,15 @@
 {
-  "recorded_at": "2026-10-03T00:33:57Z",
+  "recorded_at": "2026-10-03T07:27:00.5679940Z",
   "app_version": "0.5.8",
   "app_executable": "src-tauri/target/release/ffyon-tracker.exe",
-  "app_executable_sha256": "3ABAD8FD7E979AEEF969F9D2D51E9DD8A59BF9D8D166C24BBA409CE1063CE298",
+  "app_executable_sha256": "C8849ACD2C64CAEA75DD0C5F02A5839FEF2705937553CB6AB49FEC7E5EBB0CA9",
   "app_tests": {
-    "passed": 115,
+    "passed": 122,
     "failed": 0,
-    "mail_backend_tests_included": 42
+    "mail_backend_tests_included": 49
   },
   "native_tests": {
-    "passed": 40,
+    "passed": 42,
     "failed": 0
   },
   "site_checks": {
@@ -38,13 +38,16 @@
   "final_reviews": {
     "security": "no actionable security or data-loss findings",
     "ui": "deleted conversation rows and histories clear on both initial and paginated 404 responses",
-    "final_browser_suite": "passed at all recorded widths, including the paginated 404 regression"
+    "final_browser_suite": "passed at all recorded widths, including the paginated 404 regression",
+    "self_mail_threading": "fixed; full self-loop and forged/conflicting IDs covered by four regressions; no additional live mail",
+    "runtime_retention_coalescing": "three regressions plus actual workerd concurrent-request check passed",
+    "native_connection_recovery": "two stale-failure/revocation regressions passed; 30-second bounded requests"
   },
   "site": {
     "project_id": "appgprj_6abd6e180c8081918b5ec762c98ae90e",
-    "version": 21,
-    "source_commit": "30947e5d335b2001bae6988470e1db3d0703ade0",
-    "deployment_id": "appgdep_6ac04998c13c8191a9bc132db56a4dea",
+    "version": 23,
+    "source_commit": "82718c8f93093895fa20f1581a91860198e15a04",
+    "deployment_id": "appgdep_6ac0abe6d380819193bf78a46fab9d38",
     "status": "succeeded",
     "contact_url": "https://tannedbyffy.co.uk/help#contact",
     "contact_http_status": 200,
@@ -62,15 +65,19 @@
     "existing_server_api_key_reused": true,
     "receiving_mx_verified": true,
     "retention_days": 90,
-    "daily_cleanup_schedule_id": "Automation_27af120adf188191b2eb5451f258599f",
-    "daily_cleanup_time": "03:15 Europe/London",
-    "daily_cleanup_schedule_enabled": true,
-    "first_scheduled_occurrence": "not yet observed"
+    "codex_cleanup_task_id": "Automation_27af120adf188191b2eb5451f258599f",
+    "codex_cleanup_task_enabled": false,
+    "retention_trigger": "Site Worker traffic, signed email webhooks and authenticated Mail requests",
+    "shared_cleanup_throttle_seconds": 3600,
+    "local_unclaimed_lease_cooldown_seconds": 60,
+    "fully_idle_behavior": "Due cleanup runs on the next Site/app/mail request"
   },
   "live_public_checks": "passed; see live-public.json",
-  "real_emails_sent": 0,
-  "native_mail_roundtrip": "pending: Windows desktop locked",
-  "live_contact_screenshot": "unavailable: locked desktop prevented browser capture",
+  "real_emails_sent": 2,
+  "native_mail_roundtrip": "passed: compose, send, receive, reply delivery, unread/read state, Trash history and Restore; see native-mail.json for final-fix validation boundaries",
+  "live_contact_screenshot": "live-contact.png",
   "live_attachment_save": "not exercised; disposable fixtures passed",
-  "provider_account_screenshots": "kept locally and excluded from Git"
+  "provider_account_screenshots": "kept locally and excluded from Git",
+  "final_native_foreground_check": "User instructed finishing after Windows relocked; rebuilt process launched and exposed authorized Dashboard but final foreground Mail check was skipped",
+  "probe_timeout_note": "Two cache-busting public-page maintenance probes timed out. Normal public GET returned 200 in 1.88 seconds and the published contact page was verified in Chrome."
 }

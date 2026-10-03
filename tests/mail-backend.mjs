@@ -232,6 +232,60 @@ test('Mail backend security and delivery regressions', { skip: !available }, asy
       assert.equal(count('mail_conversations'), 3);
     });
 
+    await t.test('self-addressed sent copies and replies retain one conversation without losing incoming messages', async () => {
+      reset(); const address = 'hello@tannedbyffy.co.uk';
+      const original = await admin('mail/send', 'POST', send({ to: address })); assert.equal(original.status, 200);
+      const sent = rows("SELECT * FROM mail_messages WHERE direction='outbound'")[0], canonical = provider.sent.get(sent.resend_email_id).message_id;
+      const copyEmail = incoming({ from: 'Ffy <HELLO@TANNEDBYFFY.CO.UK>', to: [address], message_id: canonical, headers: {}, text: 'Self-addressed first copy' });
+      const copy = await importOne(copyEmail); assert.equal(copy.conversation_id, original.body.conversation_id, 'The first received copy has no reply headers');
+      const reply = await admin('mail/send', 'POST', send({ to: address, conversation_id: copy.conversation_id, reply_to_message_id: copy.id })); assert.equal(reply.status, 200);
+      const secondSent = rows("SELECT * FROM mail_messages WHERE direction='outbound' AND id<>'" + sent.id + "'")[0];
+      const replyPayload = provider.sends[1].payload;
+      assert.equal(replyPayload.headers['In-Reply-To'], canonical);
+      const replyCopyEmail = incoming({ from: address, to: [address], message_id: provider.sent.get(secondSent.resend_email_id).message_id, headers: { 'in-reply-to': replyPayload.headers['In-Reply-To'], references: replyPayload.headers.References }, text: 'Self-addressed reply copy' });
+      const replyCopy = await importOne(replyCopyEmail); assert.equal(replyCopy.conversation_id, original.body.conversation_id);
+      assert.equal(count('mail_conversations'), 1); assert.equal(count('mail_messages'), 4); assert.equal(provider.sends.length, 2);
+      assert.equal((await admin('mail/conversations')).body.conversations[0].unread_count, 2, 'Retain both incoming delivery copies');
+      assert.equal(sqlite.prepare('SELECT mail_message_id FROM mail_message_aliases WHERE message_id=?').get(canonical).mail_message_id, sent.id, 'An incoming copy cannot take over the outbound alias');
+      assert.equal((await webhook(copyEmail)).status, 200); assert.equal((await webhook(replyCopyEmail)).status, 200); assert.equal(count('mail_messages'), 4);
+    });
+
+    await t.test('a customer forging a sent own Message-ID cannot join the outgoing conversation or take over its aliases', async () => {
+      reset(); const original = await admin('mail/send', 'POST', send()); assert.equal(original.status, 200);
+      const sent = rows("SELECT * FROM mail_messages WHERE direction='outbound'")[0];
+      const aliases = rows('SELECT * FROM mail_message_aliases'); assert.equal(aliases.length, 2);
+      for (const alias of aliases) {
+        const forged = await importOne(incoming({ from: 'sarah@example.test', message_id: alias.message_id, headers: {} }));
+        assert.notEqual(forged.conversation_id, sent.conversation_id, 'Matching a customer participant alone is insufficient for own-ID threading');
+        assert.equal(sqlite.prepare('SELECT mail_message_id FROM mail_message_aliases WHERE message_id=?').get(alias.message_id).mail_message_id, sent.id);
+      }
+      const self = await admin('mail/send', 'POST', send({ to: 'hello@tannedbyffy.co.uk' })); assert.equal(self.status, 200);
+      const selfSent = sqlite.prepare('SELECT * FROM mail_messages WHERE id=?').get(self.body.message_id);
+      const forgedSelf = await importOne(incoming({ from: 'unrelated@example.test', message_id: selfSent.message_id, headers: {} })); assert.notEqual(forgedSelf.conversation_id, selfSent.conversation_id);
+    });
+
+    await t.test('self-copy identity cannot override conflicting references or merge duplicate inbound identities', async () => {
+      reset(); const address = 'hello@tannedbyffy.co.uk';
+      const first = await admin('mail/send', 'POST', send({ to: address })), second = await admin('mail/send', 'POST', send({ to: address }));
+      assert.equal(first.status, 200); assert.equal(second.status, 200);
+      const firstMessage = sqlite.prepare('SELECT * FROM mail_messages WHERE id=?').get(first.body.message_id), secondMessage = sqlite.prepare('SELECT * FROM mail_messages WHERE id=?').get(second.body.message_id);
+      const conflict = await importOne(incoming({ from: address, message_id: firstMessage.message_id, headers: { 'in-reply-to': secondMessage.message_id, references: secondMessage.message_id } }));
+      assert.notEqual(conflict.conversation_id, first.body.conversation_id); assert.notEqual(conflict.conversation_id, second.body.conversation_id);
+      const standaloneEmail = incoming({ from: address }), standalone = await importOne(standaloneEmail);
+      const duplicateInboundId = await importOne(incoming({ from: address, message_id: standaloneEmail.message_id, headers: {} }));
+      assert.notEqual(duplicateInboundId.conversation_id, standalone.conversation_id, 'Only an existing outbound message can establish self-copy identity');
+    });
+
+    await t.test('self-copy delivery recovers a missing canonical sent header before acknowledging a split history', async () => {
+      reset(); const address = 'hello@tannedbyffy.co.uk'; provider.failSentGet = Response.json({ name: 'service_unavailable' }, { status: 503 });
+      const original = await admin('mail/send', 'POST', send({ to: address })); assert.equal(original.status, 200);
+      const sent = rows("SELECT * FROM mail_messages WHERE direction='outbound'")[0];
+      const copyEmail = incoming({ from: address, message_id: provider.sent.get(sent.resend_email_id).message_id, headers: {} });
+      assert.equal((await webhook(copyEmail)).status, 503); assert.equal(count('mail_messages'), 1); assert.equal(count('mail_conversations'), 1);
+      provider.failSentGet = null;
+      assert.equal((await importOne(copyEmail)).conversation_id, original.body.conversation_id); assert.equal(count('mail_messages'), 2); assert.equal(count('mail_conversations'), 1);
+    });
+
     await t.test('conflicting References cannot merge separate conversations, even for the same participant', async () => {
       reset(); const firstEmail = incoming(), secondEmail = incoming();
       const first = await importOne(firstEmail), second = await importOne(secondEmail);
@@ -413,6 +467,37 @@ test('Mail backend security and delivery regressions', { skip: !available }, asy
       const before = provider.calls.length; await handlers.mail.recordBookingEmail(input);
       assert.equal(count('mail_messages'), 0); assert.equal(count('mail_conversations'), 0); assert.equal(provider.calls.length, before);
       const receipt = rows('SELECT * FROM mail_retired_operations')[0]; assert.equal(receipt.idempotency_key, input.id); assert.equal(JSON.stringify(receipt).includes('old-booking@example.test'), false);
+    });
+
+    await t.test('runtime retention coalesces parallel checks and skips redundant D1 roundtrips until the shared hourly deadline', async () => {
+      reset(); const now = Date.now(), prepare = db.prepare;
+      let claims = 0;
+      db.prepare = sql => { if (sql.startsWith('INSERT INTO mail_locks')) claims++; return prepare(sql); };
+      await Promise.all(Array.from({ length: 8 }, () => handlers.mail.maintainMailRetention(now)));
+      assert.equal(claims, 1);
+      await handlers.mail.maintainMailRetention(now + 3599999); assert.equal(claims, 1);
+      await handlers.mail.maintainMailRetention(now + 3600000); assert.equal(claims, 2);
+      assert.equal(provider.calls.length, 0);
+    });
+
+    await t.test('runtime retention respects another isolate lease and rechecks after its short local cooldown', async () => {
+      reset(); const now = Date.now(), prepare = db.prepare;
+      sqlite.prepare("INSERT INTO mail_locks(id,lease_until) VALUES('cleanup',?)").run(now + 120000);
+      let claims = 0, batches = 0;
+      db.prepare = sql => { if (sql.startsWith('INSERT INTO mail_locks')) claims++; return prepare(sql); };
+      const batch = db.batch; db.batch = async statements => { batches++; return batch(statements); };
+      await handlers.mail.maintainMailRetention(now); assert.equal(claims, 1); assert.equal(batches, 0);
+      await handlers.mail.maintainMailRetention(now + 59999); assert.equal(claims, 1);
+      await handlers.mail.maintainMailRetention(now + 60000); assert.equal(claims, 2); assert.equal(batches, 0);
+      await handlers.mail.maintainMailRetention(now + 120000); assert.equal(claims, 3); assert.equal(batches, 1);
+    });
+
+    await t.test('failed runtime retention clears its local cooldown and releases the shared lease for an immediate retry', async () => {
+      reset(); const now = Date.now(); db.fail = sql => sql.startsWith('DELETE FROM mail_messages');
+      await assert.rejects(handlers.mail.maintainMailRetention(now), /Fixture database unavailable/);
+      assert.equal(rows("SELECT lease_until FROM mail_locks WHERE id='cleanup'")[0].lease_until, 0);
+      await handlers.mail.maintainMailRetention(now);
+      assert.equal(rows("SELECT lease_until FROM mail_locks WHERE id='cleanup'")[0].lease_until, now + 3600000);
     });
 
     await t.test('cleanup rollback is atomic, releases a failed lease and concurrent checks use one hourly cleanup', async () => {

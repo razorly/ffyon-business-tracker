@@ -1,0 +1,28 @@
+{
+  "date": "2026-10-03",
+  "app_version": "0.5.8",
+  "mailbox": "hello@tannedbyffy.co.uk",
+  "test_subject": "Ffyon Mail verification 3 Oct 2026",
+  "real_emails_sent": 2,
+  "live_checks": {
+    "new_plain_text_email_sent": "passed",
+    "received_email_in_inbox": "passed",
+    "reply_sent_and_received": "passed",
+    "unread_inbox_and_mail_badges": "passed: both showed one unread conversation",
+    "read_from_inbox_link": "passed: both badges cleared",
+    "trash_retains_history_and_disables_reply": "passed",
+    "restore_preserves_history": "passed",
+    "appointments_and_finances": "no test changes"
+  },
+  "issues_found_and_fixed": {
+    "self_addressed_thread_split": "Fixed in Site source 82718c8f93093895fa20f1581a91860198e15a04. Four mocked regressions cover the complete self-loop, forged IDs, conflicting references and canonical-header recovery. Original live test copies predate the fix and remain in two histories; no additional emails were sent.",
+    "connection_recovery_race": "Older transport failures no longer override newer successful verification. Revocation still locks access and blocks an older successful response. Two native regressions passed; default request timeout is 30 seconds.",
+    "retention_database_overhead": "Runtime checks coalesce and use a local cooldown while retaining the authoritative shared D1 lease. Three regressions and a separate concurrent-request workerd check passed."
+  },
+  "final_native_executable_sha256": "C8849ACD2C64CAEA75DD0C5F02A5839FEF2705937553CB6AB49FEC7E5EBB0CA9",
+  "final_build_relaunch": "Started successfully; accessibility showed the authorized Dashboard and retained business records. Foreground visual and Mail-screen verification was blocked by Windows locking again; the user instructed finishing without another unlock.",
+  "native_screenshot": "native-mail-roundtrip.png",
+  "live_attachment_save": "Not exercised with a real attachment; disposable backend/browser fixtures passed.",
+  "installed_app_replaced": false,
+  "new_tag_created": false
+}
