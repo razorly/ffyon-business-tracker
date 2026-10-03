@@ -129,8 +129,12 @@ export function Modal({
     const dialog = panel.current;
     const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const root = dialog.parentElement;
+    // The custom window title bar stays usable, so a dialog never stops the window being moved, minimised or closed.
+    const chrome = document.querySelector(".window-titlebar");
+    const outsideChrome = (element: HTMLElement): HTMLElement[] => !chrome || !element.contains(chrome) ? [element]
+      : Array.from(element.children).filter((child): child is HTMLElement => child instanceof HTMLElement && child !== chrome).flatMap(outsideChrome);
     const siblings = Array.from(document.body.children).filter((element): element is HTMLElement => element instanceof HTMLElement && element !== root &&
-      (!element.querySelector('[role="dialog"]') || Boolean(element.compareDocumentPosition(root!) & Node.DOCUMENT_POSITION_FOLLOWING)));
+      (!element.querySelector('[role="dialog"]') || Boolean(element.compareDocumentPosition(root!) & Node.DOCUMENT_POSITION_FOLLOWING))).flatMap(outsideChrome);
     const previousInert = siblings.map((element) => element.inert);
     siblings.forEach((element) => { element.inert = true; });
     const focusable = () => Array.from(dialog.querySelectorAll<HTMLElement>('button, input, select, textarea, a[href], iframe, [tabindex]'))
@@ -171,7 +175,7 @@ export function Modal({
 
   if (!open) return null;
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4">
+    <div className="modal-root fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4">
       <div className="absolute inset-0 bg-[#2a1208]/45" onClick={onClose} />
       <div
         ref={panel}
@@ -179,7 +183,7 @@ export function Modal({
         aria-modal="true"
         aria-label={title}
         tabIndex={-1}
-        className={cn("relative flex max-h-[calc(100dvh-24px)] w-full min-w-0 flex-col rounded-3xl border border-line bg-surface shadow-2xl", width)}
+        className={cn("relative flex max-h-full w-full min-w-0 flex-col rounded-3xl border border-line bg-surface shadow-2xl", width)}
       >
         <div className="flex shrink-0 items-center justify-between gap-3 px-4 pt-4 sm:px-6 sm:pt-5">
           <h2 className="font-display text-[22px]">{title}</h2>

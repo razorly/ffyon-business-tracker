@@ -159,6 +159,9 @@ a:focus-visible,
   overflow: hidden;
 }
 
+/* Dialogs open below the title bar so the window controls stay reachable. */
+body:has(.window-titlebar) .modal-root { top: 36px; }
+
 .window-titlebar {
   position: relative;
   z-index: 60;
