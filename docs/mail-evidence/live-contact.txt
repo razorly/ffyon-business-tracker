@@ -1,0 +1,82 @@
+- link "Skip to content":
+  - /url: "#main"
+- banner:
+  - link "Tanned by Ffy home":
+    - /url: /
+    - text: Tanned
+    - generic: by Ffy
+  - navigation "Main navigation":
+    - link "Services":
+      - /url: /
+    - link "Sign in":
+      - /url: /auth
+- main:
+  - paragraph: Good to know
+  - heading "Your appointment, made simple" [level=1]
+  - paragraph: A few details to help you plan your visit.
+  - heading "Requesting an appointment" [level=2]
+  - paragraph: Choose a service, select a preferred date and time, then sign in to review and send your request. No payment is taken on this site.
+  - paragraph:
+    - text: A request is not a confirmed appointment. Check
+    - link "My appointments":
+      - /url: /appointments
+    - text: for the latest status. If you request a date without a time, a time still needs to be agreed.
+  - heading "Studio & home visits" [level=2]
+  - paragraph:
+    - text: The studio is in
+    - strong: LA3 2AS
+    - text: . For privacy, the full address is shared after your appointment is confirmed.
+  - paragraph: Home visits are available within 15 miles of LA3 2AS, subject to approval. The home-visit fee is £0.00 per appointment, added to your treatment price and shown before you send your request.
+  - heading "Choosing your treatment" [level=2]
+  - paragraph:
+    - text: See current treatments, descriptions, prices and durations on the
+    - link "services page":
+      - /url: /
+    - text: . For an express treatment, ask about the rinse time before planning your day. For a top-up, include when you last had your treatment.
+  - paragraph: Unsure which treatment to choose? Add a question to your request, including your preferred finish and any timing requirements.
+  - heading "Before and after your appointment" [level=3]
+  - paragraph: Preparation, rinse time and aftercare depend on your chosen treatment. Follow the instructions given by Ffy for the product used at your appointment.
+  - heading "Changes & cancellations" [level=2]
+  - paragraph: There is no cancellation charge. Please give at least 48 hours’ notice where possible so the time can be offered to someone else.
+  - paragraph:
+    - text: Open
+    - link "My appointments":
+      - /url: /appointments
+    - text: to cancel or request a different date or time. Cancelling releases your appointment immediately. Your original confirmed appointment stays in place while a change request is reviewed.
+  - paragraph: Use “Book again” in your history to request the same treatment. Current prices and availability apply.
+  - heading "Contact Ffy" [level=2]
+  - paragraph:
+    - text: Have a question about a spray tan, a home visit or an existing appointment? Email
+    - link "hello@tannedbyffy.co.uk":
+      - /url: mailto:hello@tannedbyffy.co.uk
+    - text: .
+  - paragraph:
+    - text: Ready to book?
+    - link "Choose your treatment":
+      - /url: /
+    - text: ", then select an available date and time. Your appointment is confirmed once Ffy accepts your request."
+  - paragraph:
+    - text: For changes or cancellations, use
+    - link "My appointments":
+      - /url: /appointments
+    - text: . Email us if you need help or cannot access your account.
+  - heading "Account & email help" [level=3]
+  - paragraph:
+    - text: Your contact email receives appointment updates. Your sign-in email lets you access your account and recover your password. Review both in
+    - link "My account":
+      - /url: /account
+    - text: .
+  - paragraph: If an expected email has not arrived, check your spam folder and the contact email in your account. You can always check your booking status in My appointments.
+- contentinfo:
+  - text: Tanned
+  - text: by Ffy
+  - navigation "Help and information":
+    - link "Booking help":
+      - /url: /help
+    - link "Contact":
+      - /url: /help#contact
+    - link "Your treatment":
+      - /url: /help#preparation
+    - link "Privacy":
+      - /url: /privacy
+  - generic: Prices in GBP · UK time

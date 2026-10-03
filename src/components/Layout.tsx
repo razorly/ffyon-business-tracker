@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
-import { CalendarDays, CalendarHeart, Cloud, CloudOff, Inbox, LayoutDashboard, LoaderCircle, Plus, RefreshCw, Settings, Users } from "lucide-react";
+import { CalendarDays, CalendarHeart, Cloud, CloudOff, Inbox, LayoutDashboard, LoaderCircle, Mail, Plus, RefreshCw, Settings, Users } from "lucide-react";
 import { useData } from "@/lib/data";
 import { useInbox } from "@/lib/inbox";
 import { getSyncState, retryPendingMutation, subscribeSync, syncNow } from "@/lib/sync";
@@ -14,6 +14,7 @@ const nav = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
   { to: "/schedule", label: "Schedule", icon: CalendarHeart },
   { to: "/inbox", label: "Inbox", icon: Inbox },
+  { to: "/mail", label: "Mail", icon: Mail },
   { to: "/monthly", label: "Monthly", icon: CalendarDays },
   { to: "/clients", label: "Clients", icon: Users },
   { to: "/settings", label: "Settings", icon: Settings },
@@ -21,8 +22,9 @@ const nav = [
 
 export function Layout() {
   const { openNewEntry } = useData();
-  const { requests, payments } = useInbox();
-  const attention = new Set([...requests, ...payments].map(row => row.id)).size;
+  const { requests, payments, mail } = useInbox();
+  const appointments = new Set([...requests, ...payments].map(row => row.id)).size;
+  const attention = appointments + mail.unread_count;
   return (
     <div className="app-layout flex h-full">
       <aside className="flex w-16 shrink-0 flex-col border-r border-line bg-surface px-2 py-6 sm:w-60 sm:px-4">
@@ -43,7 +45,7 @@ export function Layout() {
               to={to}
               end={to === "/"}
               title={label}
-              aria-label={to === "/inbox" && attention ? `Inbox, ${attention} appointment${attention === 1 ? "" : "s"} needing attention` : label}
+              aria-label={to === "/inbox" && attention ? `Inbox, ${attention} ${mail.unread_count ? "item" : "appointment"}${attention === 1 ? "" : "s"} needing attention` : to === "/mail" && mail.unread_count ? `Mail, ${mail.unread_count} unread conversation${mail.unread_count === 1 ? "" : "s"}` : label}
               className={({ isActive }) =>
                 cn(
                   "relative flex items-center gap-3 rounded-full px-3 py-2.5 text-[14.5px] font-medium transition-colors sm:px-4",
@@ -51,7 +53,7 @@ export function Layout() {
                 )
               }
             >
-              <Icon size={17} className="shrink-0" /><span className="hidden sm:inline">{label}</span>{to === "/inbox" && attention > 0 && <span data-testid="inbox-badge" className="absolute right-0 top-0 rounded-full bg-accent px-1.5 py-0.5 text-[11px] text-accent-ink sm:static sm:ml-auto sm:px-2">{attention}</span>}
+              <Icon size={17} className="shrink-0" /><span className="hidden sm:inline">{label}</span>{((to === "/inbox" && attention > 0) || (to === "/mail" && mail.unread_count > 0)) && <span data-testid={to === "/mail" ? "mail-badge" : "inbox-badge"} className="absolute right-0 top-0 rounded-full bg-accent px-1.5 py-0.5 text-[11px] text-accent-ink sm:static sm:ml-auto sm:px-2">{to === "/mail" ? mail.unread_count : attention}</span>}
             </NavLink>
           ))}
         </nav>

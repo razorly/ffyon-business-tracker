@@ -1,0 +1,71 @@
+{
+  "evidence": [
+    {
+      "width": 1280,
+      "inboxBadges": true,
+      "exactReadArrivalRace": true,
+      "olderHistory": true,
+      "retentionPrunesCachedOlderMessages": true,
+      "purgedConversationClearsCache": true,
+      "safeText": true,
+      "attachmentBasenameAndBounds": true,
+      "ambiguousRetryOneSend": true,
+      "threadedReply": true,
+      "utf8BodyBoundLeavesDraftEditable": true,
+      "doubleSubmitOneSend": true,
+      "pendingComposeCloseRetry": true,
+      "responsiveListDetail": true,
+      "pendingFailedLabels": true,
+      "reconcileRetryAndMoreAvailable": true,
+      "reversibleTrashDisablesReplyUntilRestore": true
+    },
+    {
+      "width": 375,
+      "inboxBadges": true,
+      "exactReadArrivalRace": true,
+      "olderHistory": true,
+      "retentionPrunesCachedOlderMessages": true,
+      "purgedConversationClearsCache": true,
+      "safeText": true,
+      "attachmentBasenameAndBounds": true,
+      "ambiguousRetryOneSend": true,
+      "threadedReply": true,
+      "utf8BodyBoundLeavesDraftEditable": true,
+      "doubleSubmitOneSend": true,
+      "pendingComposeCloseRetry": true,
+      "responsiveListDetail": true,
+      "pendingFailedLabels": true,
+      "reconcileRetryAndMoreAvailable": true,
+      "reversibleTrashDisablesReplyUntilRestore": true
+    },
+    {
+      "width": 320,
+      "inboxBadges": true,
+      "exactReadArrivalRace": true,
+      "olderHistory": true,
+      "retentionPrunesCachedOlderMessages": true,
+      "purgedConversationClearsCache": true,
+      "safeText": true,
+      "attachmentBasenameAndBounds": true,
+      "ambiguousRetryOneSend": true,
+      "threadedReply": true,
+      "utf8BodyBoundLeavesDraftEditable": true,
+      "doubleSubmitOneSend": true,
+      "pendingComposeCloseRetry": true,
+      "responsiveListDetail": true,
+      "pendingFailedLabels": true,
+      "reconcileRetryAndMoreAvailable": true,
+      "reversibleTrashDisablesReplyUntilRestore": true
+    },
+    {
+      "unavailableMailPreservesBookingInboxAndAccept": true
+    },
+    {
+      "olderPage404ClearsCachedConversation": true,
+      "cursorRequestOnly": true,
+      "privateHistoryAndReplyEditorRemoved": true,
+      "cachedConversationRowAndPreviewRemoved": true
+    }
+  ],
+  "boundary": "Loopback app plus disposable SQLite/native/mail fixtures. No real email, Resend, WebView2 or file writes."
+}

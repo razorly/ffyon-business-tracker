@@ -42,5 +42,7 @@ dist-ssr
 /backups/
 /test-results/
 /playwright-report/
+# Provider account screenshots are local setup evidence, not public source.
+/docs/mail-evidence/*.jpg
 /.codex/
 /.agents/

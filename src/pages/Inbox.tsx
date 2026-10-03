@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
-import { Check, CircleCheck, Clock, Inbox, LoaderCircle, MapPin, RefreshCw, X } from "lucide-react";
+import { Check, CircleCheck, Clock, Inbox, LoaderCircle, Mail, MapPin, RefreshCw, X } from "lucide-react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { decideReschedule } from "@/lib/sync";
 import { listPaymentConfirmations, markAppointmentPaid, setAppointmentStatus, type AppointmentRow } from "@/lib/db";
 import { useData } from "@/lib/data";
 import { useInbox } from "@/lib/inbox";
+import { mailTime } from "@/lib/mail";
 import { money, parseAmount, penceToInput, shortDate, timeLabel } from "@/lib/format";
 import { useAccess } from "@/components/AccessGate";
 import { PageHeader } from "@/components/Layout";
@@ -14,7 +16,8 @@ import { RemoteAppointmentMap } from "@/components/RemoteAppointmentMap";
 export function InboxPage() {
   const access = useAccess();
   const { refresh, openEditAppointment } = useData();
-  const { requests, payments, loading, error: loadError } = useInbox();
+  const { requests, payments, loading, error: loadError, mail, mailLoading, mailError, refreshMail } = useInbox();
+  const emailSummary = mailError ? "email check unavailable" : mailLoading && mail.unread_count === 0 ? "checking email…" : `${mail.unread_count} unread email conversation${mail.unread_count === 1 ? "" : "s"}`;
   const [busy, setBusy] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const decide = async (row: AppointmentRow, approve: boolean) => {
@@ -45,11 +48,16 @@ export function InboxPage() {
     } finally { setBusy(null); }
   };
   return <>
-    <PageHeader title="Inbox" subtitle={`${requests.length} request${requests.length === 1 ? "" : "s"} · ${payments.length} payment${payments.length === 1 ? "" : "s"} to confirm`} />
+    <PageHeader title="Inbox" subtitle={`${requests.length} request${requests.length === 1 ? "" : "s"} · ${payments.length} payment${payments.length === 1 ? "" : "s"} to confirm · ${emailSummary}`} />
     {access.state !== "online" && <p className="mb-4 rounded-lg border border-line bg-surface px-4 py-3 text-sm text-ink-2">You're offline. Reconnect to accept, reject or approve a new time.</p>}
     {error && <p role="alert" className="mb-4 text-sm text-bad">{error}</p>}
     {loadError && <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 text-sm text-bad">{loadError}<Button onClick={refresh}><RefreshCw size={14} /> Retry</Button></div>}
-    {!loadError && !loading && requests.length === 0 && payments.length === 0 && <EmptyState icon={<Inbox size={20} />} title="All caught up" />}
+    {!loadError && !loading && !mailLoading && !mailError && requests.length === 0 && payments.length === 0 && mail.unread_count === 0 && <EmptyState icon={<Inbox size={20} />} title="All caught up" />}
+    <section aria-labelledby="email-heading" className="mb-7">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><h2 id="email-heading" className="font-display text-[24px]">Email <span className="font-sans text-sm text-muted">{mail.unread_count} unread</span></h2><Link to="/mail" className="text-sm text-ink-2 underline underline-offset-4">Open Mail</Link></div>
+      {mailError && <div role="status" className="mb-3 flex flex-wrap items-center gap-2 text-sm text-ink-2"><span className="min-w-0 flex-1 break-words">Mail is temporarily unavailable. {mailError}</span><Button size="sm" disabled={access.state !== "online" || mailLoading} onClick={refreshMail}>Retry email</Button></div>}
+      <Card>{mailLoading && mail.conversations.length === 0 ? <div role="status" className="flex items-center gap-2 px-5 py-6 text-sm text-muted"><LoaderCircle size={16} className="animate-spin" /> Checking email</div> : mail.conversations.length === 0 ? <div className="px-5 py-5 text-sm text-muted">{mailError ? "Appointment requests and payments are still available below." : "No unread email"}</div> : <ul className="divide-y divide-line">{mail.conversations.map(conversation => <li key={conversation.id}><Link to={`/mail/${encodeURIComponent(conversation.id)}`} className="flex min-w-0 items-start gap-3 px-5 py-4 hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-accent"><Mail size={17} className="mt-1 shrink-0 text-rose" /><div className="min-w-0 flex-1"><div className="flex flex-wrap justify-between gap-x-3 gap-y-1"><span className="break-words font-medium">{conversation.participant_name || conversation.participant_email}</span><time dateTime={conversation.last_message_at} className="text-xs text-muted">{mailTime(conversation.last_message_at)}</time></div><p className="mt-1 break-words text-sm font-medium">{conversation.subject || "(No subject)"}</p><p className="mt-1 line-clamp-2 break-words text-xs text-ink-2">{conversation.preview}</p></div></Link></li>)}</ul>}</Card>
+    </section>
     <section aria-labelledby="requests-heading" className="mb-7">
     <h2 id="requests-heading" className="mb-3 font-display text-[24px]">Requests <span className="font-sans text-sm text-muted">{requests.length}</span></h2>
     <Card>

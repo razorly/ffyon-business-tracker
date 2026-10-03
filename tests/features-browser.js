@@ -126,6 +126,9 @@ export async function installDesktopFixture(page, records) {
     if (command === "lookup_postcode") return { postcode: "SW1A 1AA", latitude: 51.501009, longitude: -0.141588 };
     if (command === "open_appointment_directions") return null;
     if (command === "admin_request") {
+      if (args.operation === "mail/unread" && args.method === "GET") return { conversations: [], unread_count: 0 };
+      if (args.operation === "mail/status" && args.method === "GET") return { configured: false, sender_address: "", receiving_addresses: [] };
+      if (args.operation === "mail/conversations" && args.method === "GET") return { conversations: [], next_cursor: null };
       if (args.operation === "sync") return { snapshot: { ...records, cursor }, changes: [], cursor, has_more: false };
       if (args.operation === "devices") return { devices: [{ id: "feature-fixture", name: "Feature fixture", created_at: now, last_seen_at: now, revoked_at: null }] };
       mutations.push({ operation: args.operation, method: args.method, body: args.body });

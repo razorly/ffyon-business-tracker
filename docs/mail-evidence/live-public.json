@@ -1,0 +1,27 @@
+{
+  "time": "2026-10-03T00:07:53.496Z",
+  "outcomes": [
+    {
+      "name": "public Site and automatic maintenance request",
+      "status": 200,
+      "expected": 200
+    },
+    {
+      "name": "Mail requires approved device",
+      "status": 401,
+      "expected": 401
+    },
+    {
+      "name": "unsigned webhook rejected",
+      "status": 401,
+      "expected": 401
+    },
+    {
+      "name": "real signed webhook and migrated Mail database",
+      "status": 200,
+      "expected": 200
+    }
+  ],
+  "emails_sent": 0,
+  "mail_rows_written": 0
+}

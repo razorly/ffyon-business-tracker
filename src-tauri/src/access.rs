@@ -493,6 +493,7 @@ impl AccessState {
         method: Method,
         body: Option<Value>,
         query: Option<HashMap<String, String>>,
+        timeout: Option<Duration>,
     ) -> Result<Value, (bool, String)> {
         let url = format!("{}/api/admin/v1/{operation}", self.origin);
         let mut request = self
@@ -505,6 +506,9 @@ impl AccessState {
         }
         if let Some(query) = query {
             request = request.query(&query);
+        }
+        if let Some(timeout) = timeout {
+            request = request.timeout(timeout);
         }
         let mut response = request.send().await.map_err(|_| {
             (
@@ -623,7 +627,7 @@ impl AccessState {
                 let method = if bootstrap { Method::POST } else { Method::GET };
                 let body =
                     bootstrap.then(|| json!({"device_id": vault.device_id, "name": vault.name}));
-                match self.send(&vault, operation, method, body, None).await {
+                match self.send(&vault, operation, method, body, None, None).await {
                     Ok(response) => {
                         if let Err(error) = self.receive_session(&vault, response) {
                             self.failed_for(Some(&vault), true, error);
@@ -748,6 +752,7 @@ pub async fn access_pair(
             Method::POST,
             Some(json!({"code": normalized, "device_id": vault.device_id, "name": vault.name})),
             None,
+            None,
         )
         .await
     {
@@ -785,26 +790,80 @@ pub fn access_disconnect(
     Ok(status)
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum AdminOperation {
     Sync,
     Devices,
     Pairing,
     Clients,
-    #[serde(rename = "clients/link")]
     ClientsLink,
     Appointments,
-    #[serde(rename = "appointments/series")]
     AppointmentSeries,
     Services,
     Settings,
     Blocks,
     Import,
+    MailConversations,
+    MailConversation(uuid::Uuid),
+    MailConversationRead(uuid::Uuid),
+    MailConversationTrash(uuid::Uuid),
+    MailConversationRestore(uuid::Uuid),
+    MailSend,
+    MailReconcile,
+    MailStatus,
+    MailUnread,
+    MailAttachment { message: uuid::Uuid, attachment: uuid::Uuid },
+}
+
+fn route_uuid(value: &str) -> Result<uuid::Uuid, &'static str> {
+    if value.len() != 36 { return Err("Invalid mail identifier"); }
+    let id = uuid::Uuid::parse_str(value).map_err(|_| "Invalid mail identifier")?;
+    if !id.hyphenated().to_string().eq_ignore_ascii_case(value) {
+        return Err("Invalid mail identifier");
+    }
+    Ok(id)
+}
+
+impl<'de> Deserialize<'de> for AdminOperation {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let operation = String::deserialize(deserializer)?;
+        Self::parse(&operation).map_err(serde::de::Error::custom)
+    }
 }
 
 impl AdminOperation {
-    fn route(&self) -> &str {
+    fn parse(operation: &str) -> Result<Self, &'static str> {
+        if operation.len() > 128 { return Err("That admin operation is not available"); }
+        Ok(match operation {
+            "sync" => Self::Sync,
+            "devices" => Self::Devices,
+            "pairing" => Self::Pairing,
+            "clients" => Self::Clients,
+            "clients/link" => Self::ClientsLink,
+            "appointments" => Self::Appointments,
+            "appointments/series" => Self::AppointmentSeries,
+            "services" => Self::Services,
+            "settings" => Self::Settings,
+            "blocks" => Self::Blocks,
+            "import" => Self::Import,
+            "mail/conversations" => Self::MailConversations,
+            "mail/send" => Self::MailSend,
+            "mail/reconcile" => Self::MailReconcile,
+            "mail/status" => Self::MailStatus,
+            "mail/unread" => Self::MailUnread,
+            _ => match operation.split('/').collect::<Vec<_>>().as_slice() {
+                ["mail", "conversations", id] => Self::MailConversation(route_uuid(id)?),
+                ["mail", "conversations", id, "read"] => Self::MailConversationRead(route_uuid(id)?),
+                ["mail", "conversations", id, "trash"] => Self::MailConversationTrash(route_uuid(id)?),
+                ["mail", "conversations", id, "restore"] => Self::MailConversationRestore(route_uuid(id)?),
+                ["mail", "attachments", message, attachment] => Self::MailAttachment {
+                    message: route_uuid(message)?, attachment: route_uuid(attachment)?,
+                },
+                _ => return Err("That admin operation is not available"),
+            },
+        })
+    }
+
+    fn route(&self) -> String {
         match self {
             Self::Sync => "sync",
             Self::Devices => "devices",
@@ -817,7 +876,18 @@ impl AdminOperation {
             Self::Settings => "settings",
             Self::Blocks => "blocks",
             Self::Import => "import",
+            Self::MailConversations => "mail/conversations",
+            Self::MailConversation(id) => return format!("mail/conversations/{id}"),
+            Self::MailConversationRead(id) => return format!("mail/conversations/{id}/read"),
+            Self::MailConversationTrash(id) => return format!("mail/conversations/{id}/trash"),
+            Self::MailConversationRestore(id) => return format!("mail/conversations/{id}/restore"),
+            Self::MailSend => "mail/send",
+            Self::MailReconcile => "mail/reconcile",
+            Self::MailStatus => "mail/status",
+            Self::MailUnread => "mail/unread",
+            Self::MailAttachment { message, attachment } => return format!("mail/attachments/{message}/{attachment}"),
         }
+        .into()
     }
     fn permits(&self, method: &Method) -> bool {
         match self {
@@ -834,6 +904,42 @@ impl AdminOperation {
             }
             Self::Settings => method == Method::PUT,
             Self::Blocks => method == Method::POST || method == Method::DELETE,
+            Self::MailConversations | Self::MailConversation(_) | Self::MailStatus
+            | Self::MailUnread | Self::MailAttachment { .. } => method == Method::GET,
+            Self::MailConversationRead(_) | Self::MailConversationTrash(_) | Self::MailConversationRestore(_)
+            | Self::MailSend | Self::MailReconcile => method == Method::POST,
+        }
+    }
+
+    fn request_timeout(&self) -> Option<Duration> {
+        // Attachment metadata and the bounded CDN download happen sequentially server-side.
+        matches!(self, Self::MailAttachment { .. }).then(|| Duration::from_secs(30))
+    }
+
+    fn validate_query(&self, query: Option<&HashMap<String, String>>) -> Result<(), String> {
+        let Some(query) = query.filter(|query| !query.is_empty()) else { return Ok(()); };
+        match self {
+            Self::MailConversations | Self::MailConversation(_) => {
+                for (key, value) in query {
+                    let valid = match key.as_str() {
+                        "filter" => matches!(self, Self::MailConversations)
+                            && matches!(value.as_str(), "all" | "unread" | "sent" | "trash"),
+                        "limit" => !value.is_empty() && value.len() <= 3 && value.bytes().all(|byte| byte.is_ascii_digit())
+                            && value.parse::<u32>().is_ok_and(|limit| (1..=100).contains(&limit)),
+                        // Cursors are opaque to the desktop; reqwest percent-encodes the value.
+                        "cursor" => !value.is_empty() && value.len() <= 512
+                            && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'),
+                        _ => false,
+                    };
+                    if !valid { return Err("Invalid mail conversation query".into()); }
+                }
+                Ok(())
+            },
+            Self::MailConversationRead(_) | Self::MailConversationTrash(_) | Self::MailConversationRestore(_) | Self::MailSend
+            | Self::MailReconcile | Self::MailStatus | Self::MailUnread | Self::MailAttachment { .. } => {
+                Err("Query parameters are not available for this mail operation".into())
+            },
+            _ => Ok(()),
         }
     }
 }
@@ -856,6 +962,7 @@ pub async fn admin_request(
     if !operation.permits(&method) {
         return Err("That method is not available for this admin operation".into());
     }
+    operation.validate_query(query.as_ref())?;
     if body
         .as_ref()
         .is_some_and(|body| body.to_string().len() > 2_000_000)
@@ -864,7 +971,7 @@ pub async fn admin_request(
     }
     let vault = state.credential()?;
     match state
-        .send(&vault, operation.route(), method, body, query)
+        .send(&vault, &operation.route(), method, body, query, operation.request_timeout())
         .await
     {
         Ok(response) => {
@@ -1038,6 +1145,143 @@ mod tests {
     }
 
     #[test]
+    fn mail_operations_have_only_known_routes_and_http_methods() {
+        let id = "3463ee1b-1429-4e4b-96fd-9b2f3f84d1e2";
+        let attachment = "c42f7a59-8359-42b6-8ab1-5452c2ac7e86";
+        for (route, allowed) in [
+            ("mail/conversations".to_owned(), Method::GET),
+            (format!("mail/conversations/{id}"), Method::GET),
+            (format!("mail/conversations/{id}/read"), Method::POST),
+            (format!("mail/conversations/{id}/trash"), Method::POST),
+            (format!("mail/conversations/{id}/restore"), Method::POST),
+            ("mail/send".to_owned(), Method::POST),
+            ("mail/reconcile".to_owned(), Method::POST),
+            ("mail/status".to_owned(), Method::GET),
+            ("mail/unread".to_owned(), Method::GET),
+            (format!("mail/attachments/{id}/{attachment}"), Method::GET),
+        ] {
+            let operation = serde_json::from_value::<AdminOperation>(json!(route)).unwrap();
+            assert_eq!(operation.route(), route);
+            for method in [Method::GET, Method::POST, Method::PATCH, Method::PUT, Method::DELETE, Method::HEAD, Method::OPTIONS] {
+                assert_eq!(operation.permits(&method), method == allowed, "{route} {method}");
+            }
+            let url = reqwest::Url::parse(&format!("{SITE_ORIGIN}/api/admin/v1/{}", operation.route())).unwrap();
+            assert_eq!(url.origin().ascii_serialization(), SITE_ORIGIN);
+            assert_eq!(url.path(), format!("/api/admin/v1/{route}"));
+            assert!(url.query().is_none() && url.fragment().is_none());
+        }
+    }
+
+    #[test]
+    fn only_attachment_requests_extend_the_shared_request_timeout() {
+        let id = "3463ee1b-1429-4e4b-96fd-9b2f3f84d1e2";
+        let attachment = AdminOperation::parse(&format!("mail/attachments/{id}/{id}")).unwrap();
+        assert_eq!(attachment.request_timeout(), Some(Duration::from_secs(30)));
+        for route in ["sync", "devices", "pairing", "clients", "clients/link", "appointments",
+            "appointments/series", "services", "settings", "blocks", "import", "mail/conversations",
+            "mail/send", "mail/reconcile", "mail/status", "mail/unread",
+            &format!("mail/conversations/{id}"), &format!("mail/conversations/{id}/read"),
+            &format!("mail/conversations/{id}/trash"), &format!("mail/conversations/{id}/restore")] {
+            assert_eq!(AdminOperation::parse(route).unwrap().request_timeout(), None, "{route}");
+        }
+    }
+
+    #[test]
+    fn mail_route_identifiers_cannot_inject_paths_origins_or_queries() {
+        let id = "3463ee1b-1429-4e4b-96fd-9b2f3f84d1e2";
+        for route in [
+            "https://evil.example/mail/send".to_owned(), "//evil.example/mail/send".to_owned(),
+            "mail/send?url=https://evil.example".to_owned(), "mail/status#fragment".to_owned(),
+            "mail/conversations/../devices".to_owned(), "mail/conversations/%2e%2e".to_owned(),
+            format!("mail/conversations/{id}/../send"), format!("mail/conversations/{id}?read=true"),
+            format!("mail/conversations/{id}/read/"), format!("mail/conversations/{id}%2fread"),
+            format!("mail/conversations/{{{id}}}"), format!("mail/conversations/urn:uuid:{id}"),
+            format!("mail/conversations/{}", id.replace('-', "")),
+            format!("mail/attachments/{id}/../../devices"), format!("mail/attachments/{id}/{id}/open"),
+            "mail/conversations/not-a-uuid".to_owned(), "mail/delete".to_owned(),
+        ] {
+            assert!(serde_json::from_value::<AdminOperation>(json!(route)).is_err(), "{route}");
+        }
+        let uppercase = format!("mail/conversations/{}", id.to_uppercase());
+        assert_eq!(AdminOperation::parse(&uppercase).unwrap().route(), format!("mail/conversations/{id}"));
+    }
+
+    #[test]
+    fn mail_queries_are_bounded_and_cannot_override_attachment_or_message_routes() {
+        fn query(key: &str, value: &str) -> HashMap<String, String> {
+            HashMap::from([(key.into(), value.into())])
+        }
+        let cursor = URL_SAFE_NO_PAD.encode(br#"{"at":"2026-10-03T00:00:00.000Z","id":"3463ee1b-1429-4e4b-96fd-9b2f3f84d1e2"}"#);
+        let operation = AdminOperation::MailConversations;
+        for filter in ["all", "unread", "sent", "trash"] { assert!(operation.validate_query(Some(&query("filter", filter))).is_ok()); }
+        for limit in ["1", "40", "100"] { assert!(operation.validate_query(Some(&query("limit", limit))).is_ok()); }
+        assert!(operation.validate_query(Some(&query("cursor", &cursor))).is_ok());
+        assert!(operation.validate_query(None).is_ok());
+        assert!(operation.validate_query(Some(&HashMap::new())).is_ok());
+        for (key, value) in [
+            ("filter", "archive"), ("limit", "0"), ("limit", "101"), ("limit", "-1"),
+            ("limit", "1.5"), ("limit", "1e2"), ("limit", "00001"), ("limit", ""),
+            ("cursor", ""), ("cursor", "a&filter=sent"), ("cursor", "../devices"),
+            ("cursor", "a\n"), ("cursor", "YWJj="), ("url", "https://evil.example"),
+        ] { assert!(operation.validate_query(Some(&query(key, value))).is_err(), "{key}={value}"); }
+        assert!(operation.validate_query(Some(&query("cursor", &"a".repeat(513)))).is_err());
+        let id = "3463ee1b-1429-4e4b-96fd-9b2f3f84d1e2";
+        for route in [format!("mail/conversations/{id}/read"), format!("mail/conversations/{id}/trash"),
+            format!("mail/conversations/{id}/restore"),
+            format!("mail/attachments/{id}/{id}"), "mail/send".into(), "mail/reconcile".into(),
+            "mail/status".into(), "mail/unread".into()] {
+            assert!(AdminOperation::parse(&route).unwrap().validate_query(Some(&query("cursor", &cursor))).is_err());
+        }
+        let request = Client::new().get(format!("{SITE_ORIGIN}/api/admin/v1/mail/conversations"))
+            .query(&query("cursor", &cursor)).build().unwrap();
+        assert_eq!(request.url().origin().ascii_serialization(), SITE_ORIGIN);
+        assert_eq!(request.url().path(), "/api/admin/v1/mail/conversations");
+        assert_eq!(request.url().query_pairs().collect::<HashMap<_, _>>().get("cursor").unwrap(), &cursor);
+    }
+
+    #[test]
+    fn mail_history_queries_allow_only_bounded_pagination() {
+        let operation = AdminOperation::parse("mail/conversations/3463ee1b-1429-4e4b-96fd-9b2f3f84d1e2").unwrap();
+        let cursor = URL_SAFE_NO_PAD.encode(br#"{"at":"2026-10-03T00:00:00.000Z","id":"3463ee1b-1429-4e4b-96fd-9b2f3f84d1e2"}"#);
+        let query = HashMap::from([("limit".into(), "50".into()), ("cursor".into(), cursor)]);
+        assert!(operation.validate_query(Some(&query)).is_ok());
+        assert!(operation.validate_query(None).is_ok());
+        for (key, value) in [("limit", "1"), ("limit", "100"), ("cursor", "YWJj")] {
+            assert!(operation.validate_query(Some(&HashMap::from([(key.into(), value.into())]))).is_ok());
+        }
+        for (key, value) in [("filter", "all"), ("filter", "trash"), ("limit", "0"), ("limit", "101"),
+            ("limit", "-1"), ("limit", "1.5"), ("cursor", ""),
+            ("cursor", "a&filter=sent"), ("cursor", "../devices"), ("cursor", "YWJj="), ("offset", "1")] {
+            assert!(operation.validate_query(Some(&HashMap::from([(key.into(), value.into())]))).is_err(), "{key}={value}");
+        }
+        assert!(operation.validate_query(Some(&HashMap::from([("cursor".into(), "a".repeat(513))]))).is_err());
+    }
+
+    #[test]
+    fn mail_trash_and_restore_require_post_and_cannot_override_the_conversation() {
+        let id = "3463ee1b-1429-4e4b-96fd-9b2f3f84d1e2";
+        for action in ["trash", "restore"] {
+            let route = format!("mail/conversations/{id}/{action}");
+            let operation = AdminOperation::parse(&route).unwrap();
+            assert_eq!(operation.route(), route);
+            assert!(operation.permits(&Method::POST));
+            assert!(!operation.permits(&Method::GET));
+            assert!(!operation.permits(&Method::DELETE));
+            assert!(operation.validate_query(None).is_ok());
+            assert!(operation.validate_query(Some(&HashMap::from([("id".into(), id.into())]))).is_err());
+            assert!(operation.validate_query(Some(&HashMap::from([("filter".into(), "trash".into())]))).is_err());
+            for invalid in [format!("mail/conversations/../{action}"),
+                format!("mail/conversations/{id}%2fother/{action}"),
+                format!("mail/conversations/{id}/{action}?id={id}"),
+                format!("mail/conversations/{id}/{action}/permanent")] {
+                assert!(AdminOperation::parse(&invalid).is_err(), "{invalid}");
+            }
+        }
+        assert!(AdminOperation::parse(&format!("mail/conversations/{id}/delete")).is_err());
+        assert!(AdminOperation::parse(&format!("mail/conversations/{id}/purge")).is_err());
+    }
+
+    #[test]
     fn fresh_download_is_locked_and_setup_returns_only_metadata() {
         let store = Arc::new(MemoryPersistence::default());
         let state = AccessState::with_persistence(store.clone(), vec![0; 32]);
@@ -1075,6 +1319,22 @@ mod tests {
         let (state, _, _) = offline_device();
         let credential = state.credential().unwrap();
         state.inner.lock().unwrap().vault = None;
+        assert!(state.require_current_admin(&credential).is_err());
+    }
+
+    #[test]
+    fn mail_response_access_gate_rejects_changed_tokens_and_lost_online_access() {
+        let (state, _, _) = offline_device();
+        let credential = state.credential().unwrap();
+        state.inner.lock().unwrap().online = true;
+        assert!(state.require_current_admin(&credential).is_ok());
+        state.inner.lock().unwrap().online = false;
+        assert!(state.require_current_admin(&credential).is_err());
+        {
+            let mut inner = state.inner.lock().unwrap();
+            inner.online = true;
+            inner.vault.as_mut().unwrap().token = "cd".repeat(32);
+        }
         assert!(state.require_current_admin(&credential).is_err());
     }
 

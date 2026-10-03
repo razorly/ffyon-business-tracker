@@ -1,0 +1,11 @@
+{
+  "evidence": [
+    {
+      "olderPage404ClearsCachedConversation": true,
+      "cursorRequestOnly": true,
+      "privateHistoryAndReplyEditorRemoved": true,
+      "cachedConversationRowAndPreviewRemoved": true
+    }
+  ],
+  "boundary": "Loopback app plus disposable SQLite/native/mail fixtures. No real email, Resend, WebView2 or file writes."
+}

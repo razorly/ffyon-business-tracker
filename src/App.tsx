@@ -14,6 +14,7 @@ import { TrayBridge } from "@/components/TrayBridge";
 import { AccessGate } from "@/components/AccessGate";
 import { SyncBridge } from "@/components/SyncBridge";
 const InboxPage = lazy(() => import("@/pages/Inbox").then(module => ({ default: module.InboxPage })));
+const MailPage = lazy(() => import("@/pages/Mail").then(module => ({ default: module.MailPage })));
 const Dashboard = lazy(() => import("@/pages/Dashboard").then(module => ({ default: module.Dashboard })));
 const Schedule = lazy(() => import("@/pages/Schedule").then(module => ({ default: module.Schedule })));
 const Monthly = lazy(() => import("@/pages/Monthly").then(module => ({ default: module.Monthly })));
@@ -44,6 +45,7 @@ function Shell() {
               <Route index element={<Page><Dashboard /></Page>} />
               <Route path="schedule" element={<Page><Schedule /></Page>} />
               <Route path="inbox" element={<Page><InboxPage /></Page>} />
+              <Route path="mail/:conversationId?" element={<Page><MailPage /></Page>} />
               <Route path="requests" element={<Navigate to="/inbox" replace />} />
               <Route path="monthly" element={<Page><Monthly /></Page>} />
               <Route path="clients" element={<Page><Clients /></Page>} />

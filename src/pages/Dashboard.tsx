@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import { format, subMonths } from "date-fns";
-import { BanknoteArrowDown, CalendarHeart, ChevronRight, Inbox, MapPin, Plus, PoundSterling, Receipt, Sparkles, Users, Wallet } from "lucide-react";
+import { BanknoteArrowDown, CalendarHeart, ChevronRight, Inbox, Mail, MapPin, Plus, PoundSterling, Receipt, Sparkles, Users, Wallet } from "lucide-react";
 import { distinctClients, incomeTotals, listAppointments, listTransactions, monthlyTotals, unpaidBefore, type MonthTotal } from "@/lib/db";
 import { useData, useLoad } from "@/lib/data";
 import { lastMonths, monthRange, taxYear, useBusinessNow } from "@/lib/dates";
@@ -20,7 +20,7 @@ import { TransactionList } from "@/components/TransactionList";
 export function Dashboard() {
   const { openNewEntry, openNewAppointment, openEditAppointment, refresh } = useData();
   const access = useAccess();
-  const { requests, payments, error: inboxError, loading: inboxLoading } = useInbox();
+  const { requests, payments, error: inboxError, loading: inboxLoading, mail, mailLoading, mailError } = useInbox();
   const { dark } = useTheme();
   const now = useBusinessNow();
   const today = isoDate(now);
@@ -69,7 +69,7 @@ export function Dashboard() {
         </Card>
         <Card>
           <CardHeader title="Needs your attention" />
-          <div className="space-y-3 px-5 pb-4 text-sm">{inboxError ? <p className="text-bad">Inbox is unavailable. Retry above.</p> : inboxLoading && requests.length === 0 && payments.length === 0 ? <p role="status" className="text-muted">Loading Inbox…</p> : <><p className="flex items-center gap-2"><Inbox size={15} className="text-muted" />{requests.length} booking request{requests.length === 1 ? "" : "s"}</p><p className="flex items-center gap-2"><BanknoteArrowDown size={15} className="text-muted" />{payments.length} payment{payments.length === 1 ? "" : "s"} to confirm</p></>}<Link to="/inbox" className="inline-flex items-center gap-2 font-medium text-ink-2 hover:underline">Open Inbox<ChevronRight size={14} /></Link></div>
+          <div className="space-y-3 px-5 pb-4 text-sm">{inboxError ? <p className="text-bad">Inbox is unavailable. Retry above.</p> : inboxLoading && requests.length === 0 && payments.length === 0 ? <p role="status" className="text-muted">Loading Inbox…</p> : <><p className="flex items-center gap-2"><Inbox size={15} className="text-muted" />{requests.length} booking request{requests.length === 1 ? "" : "s"}</p><p className="flex items-center gap-2"><BanknoteArrowDown size={15} className="text-muted" />{payments.length} payment{payments.length === 1 ? "" : "s"} to confirm</p></>}<p className="flex items-center gap-2"><Mail size={15} className="shrink-0 text-muted" />{mailError ? "Email check unavailable" : mailLoading && mail.unread_count === 0 ? "Checking email…" : `${mail.unread_count} unread email conversation${mail.unread_count === 1 ? "" : "s"}`}</p><Link to="/inbox" className="inline-flex items-center gap-2 font-medium text-ink-2 hover:underline">Open Inbox<ChevronRight size={14} /></Link></div>
         </Card>
       </div>
 

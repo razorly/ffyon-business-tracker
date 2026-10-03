@@ -1,0 +1,76 @@
+{
+  "recorded_at": "2026-10-03T00:33:57Z",
+  "app_version": "0.5.8",
+  "app_executable": "src-tauri/target/release/ffyon-tracker.exe",
+  "app_executable_sha256": "3ABAD8FD7E979AEEF969F9D2D51E9DD8A59BF9D8D166C24BBA409CE1063CE298",
+  "app_tests": {
+    "passed": 115,
+    "failed": 0,
+    "mail_backend_tests_included": 42
+  },
+  "native_tests": {
+    "passed": 40,
+    "failed": 0
+  },
+  "site_checks": {
+    "bridge_passed": 383,
+    "authentication_passed": 28,
+    "calendar": "passed",
+    "reset_email": "passed",
+    "mail_runtime": "passed",
+    "typescript": "passed",
+    "lint": "passed with existing warnings"
+  },
+  "builds": {
+    "app_frontend": "passed",
+    "app_native_release_no_bundle": "passed",
+    "site_production": "passed"
+  },
+  "production_dependency_vulnerabilities": {
+    "app": 0,
+    "site": 0
+  },
+  "browser_fixture_widths": [
+    1280,
+    375,
+    320
+  ],
+  "final_reviews": {
+    "security": "no actionable security or data-loss findings",
+    "ui": "deleted conversation rows and histories clear on both initial and paginated 404 responses",
+    "final_browser_suite": "passed at all recorded widths, including the paginated 404 regression"
+  },
+  "site": {
+    "project_id": "appgprj_6abd6e180c8081918b5ec762c98ae90e",
+    "version": 21,
+    "source_commit": "30947e5d335b2001bae6988470e1db3d0703ade0",
+    "deployment_id": "appgdep_6ac04998c13c8191a9bc132db56a4dea",
+    "status": "succeeded",
+    "contact_url": "https://tannedbyffy.co.uk/help#contact",
+    "contact_http_status": 200,
+    "contact_mailto_verified": true,
+    "favicon_http_status": 200
+  },
+  "configuration": {
+    "sender_and_receiving_address": "hello@tannedbyffy.co.uk",
+    "webhook_url": "https://tannedbyffy.co.uk/api/webhooks/resend",
+    "webhook_events": [
+      "email.received",
+      "email.sent"
+    ],
+    "resend_domain_verified": true,
+    "existing_server_api_key_reused": true,
+    "receiving_mx_verified": true,
+    "retention_days": 90,
+    "daily_cleanup_schedule_id": "Automation_27af120adf188191b2eb5451f258599f",
+    "daily_cleanup_time": "03:15 Europe/London",
+    "daily_cleanup_schedule_enabled": true,
+    "first_scheduled_occurrence": "not yet observed"
+  },
+  "live_public_checks": "passed; see live-public.json",
+  "real_emails_sent": 0,
+  "native_mail_roundtrip": "pending: Windows desktop locked",
+  "live_contact_screenshot": "unavailable: locked desktop prevented browser capture",
+  "live_attachment_save": "not exercised; disposable fixtures passed",
+  "provider_account_screenshots": "kept locally and excluded from Git"
+}
