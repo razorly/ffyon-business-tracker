@@ -6,8 +6,8 @@ import { useAccess } from "@/components/AccessGate";
 import { PageHeader } from "@/components/Layout";
 import { Button, Card, ConfirmModal, EmptyState, Field, Input, Modal, Segmented, Textarea } from "@/components/ui";
 import { useInbox } from "@/lib/inbox";
-import { downloadMailAttachment, getMail, getMailStatus, listMail, mailTime, markMailRead, reconcileMail, restoreMail, sendMail, trashMail,
-  MAIL_ATTACHMENT_LIMIT, safeAttachmentName, type MailAttachment, type MailDetail, type MailFilter, type MailList, type MailMessage, type MailSend, type MailSendResult, type MailStatus } from "@/lib/mail";
+import { downloadMailAttachment, getMail, getMailStatus, listMail, mailIsThisYear, mailShortTime, mailTime, markMailRead, reconcileMail, restoreMail, sendMail, trashMail,
+  MAIL_ATTACHMENT_LIMIT, safeAttachmentName, type MailAttachment, type MailConversation, type MailDetail, type MailFilter, type MailList, type MailMessage, type MailSend, type MailSendResult, type MailStatus } from "@/lib/mail";
 import { cn } from "@/lib/utils";
 
 const EMPTY_LIST: MailList = { conversations: [], next_cursor: null };
@@ -46,7 +46,9 @@ export function MailPage() {
   const [checking, setChecking] = useState(false);
   const checkingBusy = useRef(false);
   const [checkError, setCheckError] = useState<string | null>(null);
-  const [moreMailAvailable, setMoreMailAvailable] = useState(false);
+  // Non-zero while the provider has older mail left to import; each check that
+  // still reports more sets a fresh value so the automatic follow-up re-arms.
+  const [moreMailAvailable, setMoreMailAvailable] = useState(0);
   const heading = useRef<HTMLHeadingElement>(null);
   const history = useRef<HTMLDivElement>(null);
   const historyConversation = useRef<string | null>(null);
@@ -173,13 +175,19 @@ export function MailPage() {
     finally { if (listEpoch.current === epoch) { moreBusy.current = false; setMoreLoading(false); } }
   };
 
+  // One control both imports from the provider and reloads the lists, even when the import fails.
   const checkMail = async () => {
     if (!online || checkingBusy.current) return;
     checkingBusy.current = true; setChecking(true); setCheckError(null);
-    try { const result = await reconcileMail(); setMoreMailAvailable(!!result.more_available); refreshMail(); toast.success(result.more_available ? "Mail updated; older email is still available" : "Mail checked"); }
+    try { const result = await reconcileMail(); setMoreMailAvailable(result.more_available ? Date.now() : 0); }
     catch (error) { setCheckError(errorText(error)); }
-    finally { checkingBusy.current = false; setChecking(false); }
+    finally { checkingBusy.current = false; setChecking(false); refreshMail(); }
   };
+  useEffect(() => {
+    if (!moreMailAvailable || !online) return;
+    const timer = setTimeout(() => void checkMail(), 60_000);
+    return () => clearTimeout(timer);
+  }, [moreMailAvailable, online]);
   const sent = (result: MailSendResult) => {
     setComposeOpen(false); setFilter("all"); refreshMail();
     navigate(`/mail/${encodeURIComponent(result.conversation_id)}`);
@@ -187,9 +195,8 @@ export function MailPage() {
   };
   const sendEnabled = online && !!status?.configured && !!status.sender_address;
 
-  const changeTrash = async (restore: boolean) => {
-    const id = visibleDetail?.conversation.id;
-    if (!id || !online || actionBusyRef.current) return;
+  const changeTrash = async (id: string, restore: boolean) => {
+    if (!online || actionBusyRef.current) return;
     actionBusyRef.current = true; setActionBusy(true); setActionError(null);
     try {
       await (restore ? restoreMail(id) : trashMail(id));
@@ -200,73 +207,108 @@ export function MailPage() {
         else { setDetail(null); navigate("/mail"); }
       }
       refreshMail();
-      toast.success(restore ? "Conversation restored" : "Conversation moved to Trash");
-    } catch (error) { if (currentId.current === id) setActionError({ id, restore, message: errorText(error) }); }
+      if (restore) toast.success("Conversation restored");
+      else toast.success("Moved to Trash", { action: { label: "Undo", onClick: () => void changeTrash(id, true) } });
+    } catch (error) {
+      if (currentId.current === id) setActionError({ id, restore, message: errorText(error) });
+      else toast.error(`${restore ? "Couldn't restore" : "Couldn't move to Trash"}: ${errorText(error)}`);
+    }
     finally { actionBusyRef.current = false; setActionBusy(false); }
   };
 
+  const receiving = status?.receiving_addresses.join(", ") || "";
+  const trashed = !!visibleDetail?.conversation.trashed_at;
   return <>
-    <PageHeader title="Mail" subtitle={status?.sender_address ? `Business email · ${status.sender_address}` : "Business email"}>
-      <Button disabled={!online || checking} onClick={() => void checkMail()}>{checking ? <LoaderCircle size={14} className="animate-spin" /> : <RefreshCw size={14} />} Check for mail</Button>
+    <PageHeader title="Mail" subtitle={status?.sender_address || "Business email"}>
+      <Button size="icon" className="h-9 w-9" aria-label="Check for mail" title="Check for mail" disabled={!online || checking} onClick={() => void checkMail()}><RefreshCw size={15} className={cn(checking && "animate-spin")} /></Button>
       <Button variant="primary" disabled={!sendEnabled} onClick={() => setComposeOpen(true)}><Plus size={14} /> New email</Button>
     </PageHeader>
-    <p className="mb-4 text-xs leading-relaxed text-muted">Emails are automatically deleted after 90 days. Trash can be restored before then.</p>
-    {!online && <p role="status" className="mb-4 rounded-xl border border-line bg-surface px-4 py-3 text-sm text-ink-2">You're offline. Reconnect to load email, send messages and download attachments.</p>}
-    {statusError && <MailError title="Could not check mail settings" error={statusError} onRetry={() => setStatusRevision(value => value + 1)} disabled={!online} />}
-    {status && !status.configured && <p role="status" className="mb-4 rounded-xl border border-line bg-surface px-4 py-3 text-sm text-ink-2">Business email is not configured yet. Sending will become available when the business sender is connected.</p>}
-    {status?.receiving_configured === false && <p role="status" className="mb-4 rounded-xl border border-line bg-surface px-4 py-3 text-sm text-ink-2">Incoming email setup is incomplete. Existing conversations remain available.</p>}
-    {!!status?.receiving_addresses.length && <p className="mb-4 break-words text-xs text-muted">{status.receiving_configured === false ? "Business addresses" : "Receiving at"} {status.receiving_addresses.join(", ")}</p>}
-    {checkError && <MailError title="Could not check for mail" error={checkError} onRetry={() => void checkMail()} disabled={!online || checking} />}
-    {moreMailAvailable && <p role="status" className="mb-4 text-sm text-ink-2">More older email is available. Check for mail again in a minute to continue importing it.</p>}
-    <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(230px,0.9fr)_minmax(0,1.6fr)]">
+    {!online && <Notice>You're offline. Reconnect to load and send email.</Notice>}
+    {statusError && <MailError title="Couldn't load mail settings" error={statusError} onRetry={() => setStatusRevision(value => value + 1)} disabled={!online} />}
+    {status && !status.configured && <Notice>Sending isn't set up yet.</Notice>}
+    {status?.receiving_configured === false && <Notice>Incoming email isn't fully set up yet.</Notice>}
+    {checkError && <MailError title="Couldn't check for mail" error={checkError} onRetry={() => void checkMail()} disabled={!online || checking} />}
+    {!!moreMailAvailable && <Notice>Older email is still importing. Mail checks again automatically.</Notice>}
+    <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(240px,0.85fr)_minmax(0,1.6fr)] lg:items-start">
       <section aria-label="Email conversations" className={cn("min-w-0", conversationId && "hidden lg:block")}>
-        <div className="mb-3 flex min-w-0 flex-wrap items-center justify-between gap-2"><Segmented<MailFilter> className="max-w-full [&>button]:px-2" value={filter} options={[{ value: "all", label: "All" }, { value: "unread", label: "Unread" }, { value: "sent", label: "Sent" }, { value: "trash", label: "Trash" }]} onChange={setFilter} /><Button size="icon" aria-label="Refresh conversations" title="Refresh conversations" disabled={!online || listLoading} onClick={refreshMail}><RefreshCw size={14} /></Button></div>
-        {listError && <MailError title="Could not load conversations" error={listError} onRetry={refreshMail} disabled={!online || listLoading} />}
-        <Card>
-          {listLoading && !visibleList.conversations.length ? <Loading label="Loading conversations" /> : !visibleList.conversations.length ? <EmptyState icon={<Mail size={20} />} title={!online ? "Connect to view mail" : listError ? "Mail unavailable" : filter === "unread" ? "No unread conversations" : filter === "sent" ? "No sent email yet" : filter === "trash" ? "Trash is empty" : "No email yet"} /> : <ul className="divide-y divide-line overflow-hidden rounded-3xl">
-            {visibleList.conversations.map(conversation => <li key={conversation.id}><Link to={`/mail/${encodeURIComponent(conversation.id)}`} aria-current={conversationId === conversation.id ? "page" : undefined} className={cn("block min-w-0 px-4 py-4 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent", conversationId === conversation.id ? "bg-accent-soft" : "hover:bg-surface-2")}>
-              <div className="flex items-start gap-2"><span className={cn("min-w-0 flex-1 break-words text-sm", conversation.unread_count > 0 ? "font-semibold" : "font-medium")}>{conversation.participant_name || conversation.participant_email}</span>{conversation.unread_count > 0 && <span aria-label={`${conversation.unread_count} unread message${conversation.unread_count === 1 ? "" : "s"}`} className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-accent" />}</div>
-              <p className={cn("mt-1 break-words text-sm", conversation.unread_count > 0 && "font-medium")}>{conversation.subject || "(No subject)"}</p>
-              <p className="mt-1 line-clamp-2 break-words text-xs leading-relaxed text-ink-2">{conversation.preview}</p>
-              <div className="mt-2 flex flex-wrap justify-between gap-2 text-[11px] text-muted"><time dateTime={conversation.last_message_at}>{mailTime(conversation.last_message_at)}</time><span>{conversation.message_count > 1 && `${conversation.message_count} messages`}{conversation.message_count > 1 && conversation.direction === "outbound" && " · "}{conversation.direction === "outbound" && "Outgoing"}</span></div>
-            </Link></li>)}
+        <Segmented<MailFilter> className="mb-3 max-w-full [&>button]:px-2 sm:[&>button]:px-3" value={filter} options={[{ value: "all", label: "All" }, { value: "unread", label: "Unread" }, { value: "sent", label: "Sent" }, { value: "trash", label: "Trash" }]} onChange={setFilter} />
+        {listError && <MailError title="Couldn't load conversations" error={listError} onRetry={refreshMail} disabled={!online || listLoading} />}
+        <Card className="overflow-hidden">
+          {listLoading && !visibleList.conversations.length ? <Loading label="Loading conversations" /> : !visibleList.conversations.length ? <EmptyState icon={<Mail size={20} />} title={!online ? "Connect to view mail" : listError ? "Mail unavailable" : filter === "unread" ? "No unread email" : filter === "sent" ? "No sent email yet" : filter === "trash" ? "Trash is empty" : "No email yet"}>{filter === "all" && online && !listError && receiving && <p className="px-4 [overflow-wrap:anywhere]">Customers can email {receiving}</p>}</EmptyState> : <ul className="divide-y divide-line">
+            {visibleList.conversations.map(conversation => <ConversationRow key={conversation.id} conversation={conversation} selected={conversationId === conversation.id} />)}
           </ul>}
-          {visibleList.next_cursor && <div className="border-t border-line p-3 text-center"><Button size="sm" disabled={!online || listLoading || moreLoading} onClick={() => void loadMore()}>{moreLoading && <LoaderCircle size={14} className="animate-spin" />} Load more</Button></div>}
+          {visibleList.next_cursor && <div className="border-t border-line p-2 text-center"><Button size="sm" variant="ghost" disabled={!online || listLoading || moreLoading} onClick={() => void loadMore()}>{moreLoading && <LoaderCircle size={14} className="animate-spin" />} Load more</Button></div>}
         </Card>
+        <p className="mt-3 text-center text-xs text-muted">Emails are deleted after 90 days.</p>
       </section>
       <section aria-label="Conversation" className={cn("min-w-0", !conversationId && "hidden lg:block")}>
-        {conversationId && <Button size="sm" className="mb-3 lg:hidden" onClick={() => navigate("/mail")}><ArrowLeft size={14} /> All conversations</Button>}
-        {detailError && <MailError title="Could not load this conversation" error={detailError} onRetry={refreshMail} disabled={!online || detailLoading} />}
-        {readError && <MailError title="Could not mark displayed messages as read" error={readError} onRetry={() => void readDisplayed()} disabled={!online} />}
-        {actionError && actionError.id === conversationId && <MailError title={actionError.restore ? "Could not restore this conversation" : "Could not move this conversation to Trash"} error={actionError.message} onRetry={() => void changeTrash(actionError.restore)} disabled={!online || actionBusy} />}
-        {!conversationId ? <Card><EmptyState icon={<Mail size={20} />} title="Choose a conversation"><p>Read customer email and reply here.</p></EmptyState></Card> : !visibleDetail ? <Card>{detailLoading ? <Loading label="Loading conversation" /> : <EmptyState icon={<Mail size={20} />} title={online ? "Conversation unavailable" : "Connect to view this conversation"} />}</Card> : <>
-          <Card><div className="border-b border-line px-5 py-4"><h2 ref={heading} tabIndex={-1} className="break-words font-display text-[25px] outline-none">{visibleDetail.conversation.subject || "(No subject)"}</h2><p className="mt-1 break-all text-sm text-ink-2">{visibleDetail.conversation.participant_name && <span className="mr-2">{visibleDetail.conversation.participant_name}</span>}{visibleDetail.conversation.participant_email}</p><div className="mt-3 flex flex-wrap items-center gap-2"><Button size="sm" disabled={!online || actionBusy} onClick={() => void changeTrash(!!visibleDetail.conversation.trashed_at)}>{actionBusy ? <LoaderCircle size={14} className="animate-spin" /> : visibleDetail.conversation.trashed_at ? <RotateCcw size={14} /> : <Trash2 size={14} />}{visibleDetail.conversation.trashed_at ? "Restore conversation" : "Move to Trash"}</Button>{visibleDetail.conversation.trashed_at && <span className="text-xs text-muted">In Trash</span>}</div></div>
-            {detailLoading && <p role="status" className="px-5 pt-3 text-xs text-muted">Refreshing conversation…</p>}
-            {visibleDetail.next_cursor && <div className="border-b border-line p-3 text-center"><Button size="sm" disabled={!online || detailLoading || earlierLoading} onClick={() => void loadEarlier()}>{earlierLoading && <LoaderCircle size={14} className="animate-spin" />} Load earlier messages</Button></div>}
-            <div ref={history} tabIndex={0} aria-label="Message history" className="max-h-[60vh] min-w-0 divide-y divide-line overflow-y-auto focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent">{visibleDetail.messages.map(message => <Message key={message.id} message={message} online={online} />)}</div>
-            {!visibleDetail.messages.length && <p className="px-5 py-6 text-sm text-muted">No messages in this conversation yet.</p>}
-          </Card>
-          <div className="mt-4"><MailEditor key={visibleDetail.conversation.id} detail={visibleDetail} sender={status?.sender_address || ""} enabled={sendEnabled && !visibleDetail.conversation.trashed_at} onSent={sent} /></div>
-        </>}
+        {conversationId && <Button size="sm" variant="ghost" className="-ml-2 mb-2 lg:hidden" onClick={() => navigate("/mail")}><ArrowLeft size={14} /> All conversations</Button>}
+        {detailError && <MailError title="Couldn't load this conversation" error={detailError} onRetry={refreshMail} disabled={!online || detailLoading} />}
+        {readError && <MailError title="Couldn't mark as read" error={readError} onRetry={() => void readDisplayed()} disabled={!online} />}
+        {actionError && actionError.id === conversationId && <MailError title={actionError.restore ? "Couldn't restore" : "Couldn't move to Trash"} error={actionError.message} onRetry={() => void changeTrash(actionError.id, actionError.restore)} disabled={!online || actionBusy} />}
+        {!conversationId ? <Card><EmptyState icon={<Mail size={20} />} title="Select a conversation" /></Card> : !visibleDetail ? <Card>{detailLoading ? <Loading label="Loading conversation" /> : <EmptyState icon={<Mail size={20} />} title={online ? "Conversation unavailable" : "Connect to view this conversation"} />}</Card> : <Card className="overflow-hidden">
+          <div className="flex items-start gap-3 border-b border-line px-5 py-4">
+            <div className="min-w-0 flex-1">
+              <h2 ref={heading} tabIndex={-1} className="font-display text-[23px] leading-tight outline-none [overflow-wrap:anywhere]">{visibleDetail.conversation.subject || "(No subject)"}</h2>
+              <p className="mt-1 flex flex-wrap gap-x-2 text-sm text-ink-2">{visibleDetail.conversation.participant_name && <span className="min-w-0 font-medium text-ink [overflow-wrap:anywhere]">{visibleDetail.conversation.participant_name}</span>}<span className="min-w-0 [overflow-wrap:anywhere]">{visibleDetail.conversation.participant_email}</span></p>
+            </div>
+            {!trashed && <Button variant="ghost" size="icon" className="-mr-2 shrink-0" aria-label="Move to Trash" title="Move to Trash" disabled={!online || actionBusy} onClick={() => void changeTrash(visibleDetail.conversation.id, false)}>{actionBusy ? <LoaderCircle size={15} className="animate-spin" /> : <Trash2 size={15} />}</Button>}
+          </div>
+          <div ref={history} tabIndex={0} aria-label="Message history" className="max-h-[55vh] min-w-0 overflow-y-auto focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent">
+            {visibleDetail.next_cursor && <div className="border-b border-line p-2 text-center"><Button size="sm" variant="ghost" disabled={!online || detailLoading || earlierLoading} onClick={() => void loadEarlier()}>{earlierLoading && <LoaderCircle size={14} className="animate-spin" />} Load earlier messages</Button></div>}
+            {visibleDetail.messages.length ? <div className="divide-y divide-line">{visibleDetail.messages.map(message => <Message key={message.id} message={message} conversation={visibleDetail.conversation} business={status?.sender_address || ""} online={online} />)}</div> : <p className="px-5 py-6 text-sm text-muted">No messages yet.</p>}
+          </div>
+          {trashed ? <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-5 py-4">
+            <p className="text-sm text-ink-2">This conversation is in Trash.</p>
+            <Button size="sm" aria-label="Restore conversation" disabled={!online || actionBusy} onClick={() => void changeTrash(visibleDetail.conversation.id, true)}>{actionBusy ? <LoaderCircle size={14} className="animate-spin" /> : <RotateCcw size={14} />} Restore</Button>
+          </div> : <MailEditor key={visibleDetail.conversation.id} detail={visibleDetail} sender={status?.sender_address || ""} enabled={sendEnabled} onSent={sent} />}
+        </Card>}
       </section>
     </div>
     <MailEditor modal open={composeOpen} onClose={() => setComposeOpen(false)} sender={status?.sender_address || ""} enabled={sendEnabled} onSent={sent} />
   </>;
 }
 
+function Notice({ children }: { children: React.ReactNode }) {
+  return <p role="status" className="mb-3 rounded-xl border border-line bg-surface px-4 py-2.5 text-sm text-ink-2">{children}</p>;
+}
 function Loading({ label }: { label: string }) {
   return <div role="status" className="flex items-center gap-2 px-5 py-10 text-sm text-muted"><LoaderCircle size={16} className="animate-spin" /> {label}</div>;
 }
 function MailError({ title, error, onRetry, disabled }: { title: string; error: string; onRetry: () => void; disabled?: boolean }) {
-  return <div role="alert" className="mb-3 flex min-w-0 flex-wrap items-center gap-2 rounded-xl border border-bad/30 bg-surface px-4 py-3 text-sm text-bad"><span className="min-w-0 flex-1 break-words">{title}: {error}</span><Button size="sm" disabled={disabled} onClick={onRetry}>Retry</Button></div>;
+  return <div role="alert" className="mb-3 flex min-w-0 flex-wrap items-center gap-2 rounded-xl border border-bad/30 bg-surface px-4 py-2.5 text-sm text-bad"><span className="min-w-0 flex-1 break-words">{title}: {error}</span><Button size="sm" disabled={disabled} onClick={onRetry}>Retry</Button></div>;
 }
-function Message({ message, online }: { message: MailMessage; online: boolean }) {
-  return <article aria-label={`${message.direction === "outbound" ? "Outgoing" : "Received"} message`} className="min-w-0 px-5 py-5">
-    <div className="flex flex-wrap items-start justify-between gap-2 text-xs"><div className="min-w-0"><p className="break-all font-medium">{message.status === "sent" ? "Sent by " : "From "}{message.from_address}</p><p className="mt-1 break-all text-muted">To {message.to_addresses.join(", ")}</p>{message.cc_addresses.length > 0 && <p className="mt-1 break-all text-muted">Cc {message.cc_addresses.join(", ")}</p>}</div><time dateTime={message.created_at} className="text-muted">{mailTime(message.created_at, true)}</time></div>
-    {message.status === "pending" && <p role="status" className="mt-2 text-xs font-medium text-ink-2">Sending not confirmed</p>}
-    {message.status === "failed" && <p role="status" className="mt-2 text-xs font-medium text-bad">Not sent</p>}
-    <p className="mt-4 whitespace-pre-wrap break-words text-sm leading-relaxed [overflow-wrap:anywhere]">{message.text_body || "(No message text)"}</p>
-    {message.attachments.length > 0 && <div className="mt-4 flex flex-col gap-2" aria-label="Attachments">{message.attachments.map(attachment => <Attachment key={attachment.id} messageId={message.id} attachment={attachment} online={online} />)}</div>}
+
+function ConversationRow({ conversation, selected }: { conversation: MailConversation; selected: boolean }) {
+  const unread = conversation.unread_count > 0;
+  return <li><Link to={`/mail/${encodeURIComponent(conversation.id)}`} aria-current={selected ? "page" : undefined} className={cn("relative block min-w-0 px-4 py-3 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent", selected ? "bg-accent-soft" : "hover:bg-surface-2")}>
+    {unread && <span aria-hidden className="absolute left-[6px] top-[19px] h-1.5 w-1.5 rounded-full bg-accent" />}
+    <div className="flex min-w-0 items-baseline gap-1.5">
+      <span className={cn("min-w-0 truncate text-sm", unread ? "font-semibold" : "font-medium")}>{conversation.participant_name || conversation.participant_email}</span>
+      {conversation.message_count > 1 && <span className="shrink-0 text-xs text-muted">{conversation.message_count}<span className="sr-only"> messages</span></span>}
+      <time dateTime={conversation.last_message_at} title={mailTime(conversation.last_message_at, true)} className={cn("ml-auto shrink-0 pl-2 text-xs", unread ? "font-semibold text-ink" : "text-muted")}>{mailShortTime(conversation.last_message_at)}</time>
+    </div>
+    <p className={cn("mt-0.5 truncate text-sm", unread ? "font-medium text-ink" : "text-ink-2")}>{conversation.subject || "(No subject)"}</p>
+    <p className="mt-0.5 truncate text-xs text-muted">{conversation.direction === "outbound" && "You: "}{conversation.preview}</p>
+    {unread && <span className="sr-only">{conversation.unread_count} unread</span>}
+  </Link></li>;
+}
+
+function Message({ message, conversation, business, online }: { message: MailMessage; conversation: MailConversation; business: string; online: boolean }) {
+  const outbound = message.direction === "outbound";
+  const from = outbound ? "You" : conversation.participant_name && message.from_address.toLowerCase() === conversation.participant_email.toLowerCase() ? conversation.participant_name : message.from_address;
+  // Received mail addressed only to the main business address needs no "to" line.
+  const to = !outbound && message.to_addresses.length === 1 && message.to_addresses[0].toLowerCase() === business.toLowerCase() ? "" : message.to_addresses.join(", ");
+  return <article aria-label={`${outbound ? "Outgoing" : "Received"} message`} className={cn("min-w-0 px-5 py-4", outbound && "bg-surface-2/60")}>
+    <div className="flex items-baseline justify-between gap-3">
+      <span className="min-w-0 truncate text-sm font-medium" title={message.from_address}>{from}</span>
+      <time dateTime={message.created_at} title={mailTime(message.created_at, true)} className="shrink-0 text-xs text-muted">{mailTime(message.created_at, !mailIsThisYear(message.created_at))}</time>
+    </div>
+    {(to || message.cc_addresses.length > 0) && <p className="mt-0.5 text-xs text-muted [overflow-wrap:anywhere]">{to && `to ${to}`}{to && message.cc_addresses.length > 0 && " · "}{message.cc_addresses.length > 0 && `cc ${message.cc_addresses.join(", ")}`}</p>}
+    {message.status === "pending" && <p role="status" className="mt-1 text-xs font-medium text-ink-2">Sending not confirmed</p>}
+    {message.status === "failed" && <p role="status" className="mt-1 text-xs font-medium text-bad">Not sent</p>}
+    <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-relaxed [overflow-wrap:anywhere]">{message.text_body || "(No message text)"}</p>
+    {message.attachments.length > 0 && <div className="mt-3 flex flex-wrap gap-2" aria-label="Attachments">{message.attachments.map(attachment => <Attachment key={attachment.id} messageId={message.id} attachment={attachment} online={online} />)}</div>}
   </article>;
 }
 function Attachment({ messageId, attachment, online }: { messageId: string; attachment: MailAttachment; online: boolean }) {
@@ -275,6 +317,7 @@ function Attachment({ messageId, attachment, online }: { messageId: string; atta
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const tooLarge = attachment.size > MAIL_ATTACHMENT_LIMIT;
+  const size = attachment.size >= 1024 * 1024 ? `${(attachment.size / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.ceil(attachment.size / 1024))} KB`;
   const download = async () => {
     if (busyRef.current || !online || tooLarge) return;
     busyRef.current = true; setBusy(true); setError(null); setSaved(false);
@@ -282,7 +325,12 @@ function Attachment({ messageId, attachment, online }: { messageId: string; atta
     catch (cause) { setError(errorText(cause)); }
     finally { busyRef.current = false; setBusy(false); }
   };
-  return <div><Button className="h-auto max-w-full justify-start py-2 text-left" size="sm" disabled={!online || busy || tooLarge} onClick={() => void download()}>{busy ? <LoaderCircle size={14} className="shrink-0 animate-spin" /> : <Download size={14} className="shrink-0" />}<span className="min-w-0 break-all">{safeAttachmentName(attachment.filename)} <span className="text-xs text-muted">({attachment.size >= 1024 * 1024 ? `${(attachment.size / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.ceil(attachment.size / 1024))} KB`})</span></span></Button>{saved && <p role="status" className="mt-1 text-xs text-good">Attachment saved</p>}{tooLarge && <p className="mt-1 text-xs text-muted">Downloads are limited to 15 MB.</p>}{error && <p role="alert" className="mt-1 break-words text-xs text-bad">Could not save attachment: {error}. Select the attachment to retry.</p>}</div>;
+  return <div className="min-w-0 max-w-full">
+    <Button className="h-auto max-w-full py-1.5 text-left" size="sm" title={tooLarge ? "Too large to download" : "Save attachment"} disabled={!online || busy || tooLarge} onClick={() => void download()}>{busy ? <LoaderCircle size={14} className="shrink-0 animate-spin" /> : <Download size={14} className="shrink-0" />}<span className="min-w-0 break-all">{safeAttachmentName(attachment.filename)}</span><span className="shrink-0 text-xs text-muted">{size}</span></Button>
+    {saved && <p role="status" className="mt-1 text-xs text-good">Saved</p>}
+    {tooLarge && <p className="mt-1 text-xs text-muted">Over the 15 MB limit</p>}
+    {error && <p role="alert" className="mt-1 break-words text-xs text-bad">Couldn't save: {error}</p>}
+  </div>;
 }
 
 function MailEditor({ detail, modal = false, open = false, onClose, sender, enabled, onSent }: {
@@ -305,37 +353,61 @@ function MailEditor({ detail, modal = false, open = false, onClose, sender, enab
   const recipient = detail ? latestIncoming?.from_address || detail.conversation.participant_email : to.trim();
   const replySubject = detail ? (/^re:/i.test(detail.conversation.subject) ? detail.conversation.subject : `Re: ${detail.conversation.subject || "Your email"}`).slice(0, 998) : subject.trim();
   const valid = !!recipient && !!replySubject && !!text.trim();
+  const clear = () => { attempt.current = null; setLocked(false); setTo(""); setSubject(""); setText(""); setError(null); };
   const submit = async () => {
     if (busyRef.current || !canSend || (!attempt.current && !valid)) return;
     const payload = attempt.current || {
       idempotency_key: crypto.randomUUID(), to: recipient, subject: replySubject, text: text.trim(),
       ...(detail ? { conversation_id: detail.conversation.id, ...(replyTarget ? { reply_to_message_id: replyTarget.id } : {}) } : {}),
     };
-    if (new TextEncoder().encode(JSON.stringify(payload)).length > 65_536) { setError("This message is too large. Please shorten it before sending."); return; }
+    if (new TextEncoder().encode(JSON.stringify(payload)).length > 65_536) { setError("This message is too large to send. Please shorten it."); return; }
     busyRef.current = true; setBusy(true); setError(null);
     attempt.current = payload;
     setLocked(true);
     try {
       const result = await sendMail(attempt.current);
-      if (result.status === "pending") { setError("This email is still being sent. Retry to check its progress using the same message."); return; }
-      if (!result.conversation_id || !result.message_id) throw new Error("The server did not confirm the send. Retry the same message to check it.");
+      if (result.status === "pending") { setError("This email is still being sent. Retry to check on it."); return; }
+      if (!result.conversation_id || !result.message_id) throw new Error("Sending wasn't confirmed. Retry to check it.");
       attempt.current = null; setLocked(false); setTo(""); setSubject(""); setText("");
       onSent(result);
     } catch (cause) { setError(errorText(cause)); }
     finally { busyRef.current = false; setBusy(false); }
   };
-  const form = <form onSubmit={event => { event.preventDefault(); void submit(); }} className="min-w-0 space-y-4">
-    <p className="break-all text-xs text-muted">From {sender || "the configured business sender"}</p>
-    {detail ? <p className="break-all text-sm text-ink-2">Reply to <span className="font-medium text-ink">{recipient}</span></p> : <>
-      <Field label="To"><Input type="email" required maxLength={254} autoComplete="off" value={to} readOnly={locked} disabled={busy} onChange={event => setTo(event.target.value)} placeholder="customer@example.com" /></Field>
-      <Field label="Subject"><Input required maxLength={200} value={subject} readOnly={locked} disabled={busy} onChange={event => setSubject(event.target.value)} /></Field>
-    </>}
-    <Field label={detail ? "Reply message" : "Message"}><Textarea aria-label={detail ? "Reply message" : "Message"} required maxLength={50_000} rows={detail ? 5 : 8} value={text} readOnly={locked} disabled={busy} onChange={event => setText(event.target.value)} placeholder={detail ? "Write your reply…" : "Write your message…"} /></Field>
+  const onSubmit = (event: React.FormEvent) => { event.preventDefault(); void submit(); };
+  const sendShortcut = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); }
+  };
+  const notes = <>
     {error && <p role="alert" className="break-words text-sm text-bad">{error}</p>}
-    {locked && !busy && <p className="text-xs leading-relaxed text-ink-2">The send was not yet confirmed. Retry keeps the original message and avoids sending a second copy. {modal ? "Your draft is kept when you close this editor while remaining in Mail." : "Retry this message before leaving the conversation."}</p>}
-    {detail?.conversation.trashed_at ? <p className="text-xs text-ink-2">Restore this conversation before replying.</p> : !enabled && <p className="text-xs text-ink-2">Connect to the business mail service to send.</p>}
-    {enabled && detail && !replyTarget && <p className="text-xs text-ink-2">This conversation has no reply header yet. Refresh it or compose a new email.</p>}
-    <div className="flex flex-wrap justify-end gap-2">{(text || to || subject || locked) && <Button disabled={busy} onClick={() => { if (locked) setDiscardOpen(true); else { setTo(""); setSubject(""); setText(""); setError(null); } }}>Discard draft</Button>}{modal && <Button disabled={busy} onClick={onClose}>Keep draft & close</Button>}<Button type="submit" variant="primary" disabled={!canSend || busy || (!locked && !valid)}>{busy ? <LoaderCircle size={14} className="animate-spin" /> : <Send size={14} />}{busy ? "Sending…" : locked ? "Retry send" : detail ? "Send reply" : "Send email"}</Button></div>
-  </form>;
-  return <>{modal ? <Modal open={open} onClose={() => { if (!busyRef.current) onClose?.(); }} title="New email" width="max-w-lg">{form}</Modal> : <Card><div className="px-5 py-5"><h3 className="mb-4 font-display text-[22px]">Reply</h3>{form}</div></Card>}<ConfirmModal open={discardOpen} title="Discard this draft?" confirmLabel="Discard draft" message="The previous email may already have been sent. Discarding this draft cannot recall it. Check the conversation before composing another." onClose={() => setDiscardOpen(false)} onConfirm={() => { attempt.current = null; setLocked(false); setTo(""); setSubject(""); setText(""); setError(null); }} /></>;
+    {locked && !busy && <p className="text-xs leading-relaxed text-ink-2">Not confirmed yet. Retry sends the same email, so it won't arrive twice.</p>}
+    {modal && !enabled && <p className="text-xs text-ink-2">Sending is unavailable right now.</p>}
+    {enabled && detail && !replyTarget && <p className="text-xs text-ink-2">Replies aren't available for this conversation yet.</p>}
+  </>;
+  const actions = <div className="flex flex-wrap items-center justify-end gap-2">
+    {(text || to || subject || locked) && <Button variant="ghost" disabled={busy} onClick={() => { if (locked) setDiscardOpen(true); else clear(); }}>Discard</Button>}
+    <Button type="submit" variant="primary" title="Send (Ctrl+Enter)" disabled={!canSend || busy || (!locked && !valid)}>{busy ? <LoaderCircle size={14} className="animate-spin" /> : <Send size={14} />}{busy ? "Sending…" : locked ? "Retry send" : detail ? "Send reply" : "Send email"}</Button>
+  </div>;
+  const discard = <ConfirmModal open={discardOpen} title="Discard this draft?" confirmLabel="Discard" message="This email may already have been sent. Discarding won't recall it." onClose={() => setDiscardOpen(false)} onConfirm={clear} />;
+  if (!modal) return <>
+    <form onSubmit={onSubmit} className="min-w-0 space-y-3 border-t border-line px-5 py-4">
+      <Textarea aria-label="Reply message" required maxLength={50_000} rows={3} value={text} readOnly={locked} disabled={busy} onChange={event => { setText(event.target.value); setError(null); }} onKeyDown={sendShortcut} placeholder={`Reply to ${recipient}…`} />
+      {notes}
+      {actions}
+    </form>
+    {discard}
+  </>;
+  // Closing keeps the draft (and any unconfirmed send) until it is sent or discarded.
+  return <>
+    <Modal open={open} onClose={() => { if (!busyRef.current) onClose?.(); }} title="New email" width="max-w-lg">
+      <form onSubmit={onSubmit} className="min-w-0 space-y-4">
+        {sender && <p className="break-all text-xs text-muted">From {sender}</p>}
+        <Field label="To"><Input type="email" required autoFocus maxLength={254} autoComplete="off" value={to} readOnly={locked} disabled={busy} onChange={event => { setTo(event.target.value); setError(null); }} placeholder="customer@example.com" /></Field>
+        <Field label="Subject"><Input required maxLength={200} value={subject} readOnly={locked} disabled={busy} onChange={event => { setSubject(event.target.value); setError(null); }} /></Field>
+        <Field label="Message"><Textarea aria-label="Message" required maxLength={50_000} rows={8} value={text} readOnly={locked} disabled={busy} onChange={event => { setText(event.target.value); setError(null); }} onKeyDown={sendShortcut} placeholder="Write your message…" /></Field>
+        {notes}
+        {actions}
+      </form>
+    </Modal>
+    {discard}
+  </>;
 }

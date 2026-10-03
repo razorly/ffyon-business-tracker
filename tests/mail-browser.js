@@ -149,9 +149,9 @@ async function groupedLegacyLink(browser, output) {
     await until(page,async()=>await list.getByText('71 messages',{exact:true}).count()===1);
     const statusCalls=mail.requests.filter(request=>request.operation==='mail/status').length;
     const listCalls=mail.requests.filter(request=>request.operation==='mail/conversations').length;
-    await page.getByRole('button',{name:'Refresh conversations',exact:true}).click();
+    await page.getByRole('button',{name:'Check for mail',exact:true}).click();
     await until(page,()=>mail.requests.filter(request=>request.operation==='mail/conversations').length>listCalls);
-    assert.equal(mail.requests.filter(request=>request.operation==='mail/status').length,statusCalls,'Refreshing conversations does not refetch unchanged Mail configuration');
+    assert.equal(mail.requests.filter(request=>request.operation==='mail/status').length,statusCalls,'Checking for mail does not refetch unchanged Mail configuration');
     await capture(page,output,'grouped-conversation.png');
     return {flow:'grouped-legacy-link',canonicalRoute:true,oneConversationRow:true,messageCount:true};
   } finally {await page.close();mail.fixture.close();}
@@ -235,7 +235,7 @@ async function flow(browser, width, output) {
     await editor.getByRole("alert").filter({ hasText: "still being sent" }).waitFor();
     await until(page, () => mail.sendIds.size === 2);
     assert.equal(mail.sends.length, 3, "Synchronous double submit must produce one new server call");
-    await editor.getByRole("button", { name: "Keep draft & close", exact: true }).click();
+    await editor.getByRole("button", { name: "Close", exact: true }).click();
     await page.getByRole("button", { name: "New email", exact: true }).click();
     assert.equal(await editor.getByLabel("Message", { exact: true }).inputValue(), "This is a disposable compose fixture.");
     await editor.getByRole("button", { name: "Retry send", exact: true }).click();
@@ -255,7 +255,7 @@ async function flow(browser, width, output) {
     await page.getByText("Sending not confirmed", { exact: true }).waitFor();
     await page.getByText("Not sent", { exact: true }).waitFor();
     assert.equal(await page.getByRole("button", { name: "Send reply", exact: true }).isDisabled(), true, "A pending/failed-only conversation must not invent a reply anchor");
-    await page.getByText(/More older email is available/).waitFor();
+    await page.getByText(/Older email is still importing/).waitFor();
     if (width < 1024) await page.getByRole("button", { name: "All conversations", exact: true }).click();
     else await page.locator('nav a[title="Mail"]').click();
     await page.getByRole("link").filter({ hasText: "Tan question" }).click();
@@ -265,15 +265,15 @@ async function flow(browser, width, output) {
     await page.getByRole("button", { name: "Trash", exact: true }).click();
     await page.getByRole("link").filter({ hasText: "Tan question" }).click();
     await page.getByRole("button", { name: "Restore conversation", exact: true }).waitFor();
-    await page.getByLabel("Reply message", { exact: true }).fill("A valid reply must stay disabled in Trash.");
-    assert.equal(await page.getByRole("button", { name: "Send reply", exact: true }).isDisabled(), true);
-    await page.getByText("Restore this conversation before replying.", { exact: true }).waitFor();
-    await page.getByText("Emails are automatically deleted after 90 days. Trash can be restored before then.", { exact: true }).waitFor();
+    await page.getByText("This conversation is in Trash.", { exact: true }).waitFor();
+    assert.equal(await page.getByLabel("Reply message", { exact: true }).count(), 0, "Trash offers Restore instead of a reply editor");
+    assert.equal(await page.getByText("Emails are deleted after 90 days.", { exact: true }).count(), 1);
     await page.locator("main").evaluate(panel => { panel.scrollTop = 0; });
     await capture(page, output, `trash-${width}.png`);
     await page.getByRole("button", { name: "Restore conversation", exact: true }).click();
     await until(page, () => !mail.threads[0].trashed_at);
     await page.getByRole("button", { name: "Move to Trash", exact: true }).waitFor();
+    await page.getByLabel("Reply message", { exact: true }).fill("Replies work again after Restore.");
     await until(page, async () => !await page.getByRole("button", { name: "Send reply", exact: true }).isDisabled());
     assert.equal(mail.fixture.records.appointments.length, 1, "Moving and restoring mail cannot remove customer bookings");
     assert.equal(mail.fixture.records.appointments[0].status, "pending");

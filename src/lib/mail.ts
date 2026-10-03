@@ -82,6 +82,20 @@ export function mailTime(value: string, full = false) {
   return new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", day: "numeric", month: "short", ...(full ? { year: "numeric" as const } : {}), hour: "2-digit", minute: "2-digit" }).format(date);
 }
 
+const londonDay = (date: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
+/** Compact list time: "14:05" today, "3 Oct" this year, "3 Oct 2025" otherwise. */
+export function mailShortTime(value: string, now = new Date()) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "";
+  const day = londonDay(date), today = londonDay(now);
+  if (day === today) return new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit" }).format(date);
+  return new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", day: "numeric", month: "short", ...(day.slice(0, 4) === today.slice(0, 4) ? {} : { year: "numeric" as const }) }).format(date);
+}
+export function mailIsThisYear(value: string, now = new Date()) {
+  const date = new Date(value);
+  return !Number.isFinite(date.getTime()) || londonDay(date).slice(0, 4) === londonDay(now).slice(0, 4);
+}
+
 export const MAIL_ATTACHMENT_LIMIT = 15 * 1024 * 1024;
 export function safeAttachmentName(value: string) {
   const base = value.split(/[\\/]/).pop()?.replace(/[\u0000-\u001f\u007f<>:"|?*]/g, "_").replace(/[. ]+$/g, "").slice(0, 180) || "attachment";
