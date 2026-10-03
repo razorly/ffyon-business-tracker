@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { addDays, parseISO } from "date-fns";
 import { toast } from "sonner";
 import { BanknoteArrowDown, CalendarOff, Check, Clock, MapPin, Repeat, Trash2, Undo2, UserX, X } from "lucide-react";
@@ -38,6 +38,7 @@ import { cn } from "@/lib/utils";
 import { ClientCombobox, type ClientChoice } from "./ClientCombobox";
 import { EntryModeSwitch } from "./EntryModeSwitch";
 import { RemoteAppointmentMap } from "./RemoteAppointmentMap";
+import { TimeOffForm } from "./TimeOffForm";
 
 const DURATIONS = [15, 20, 30, 45, 60, 75, 90, 120];
 const DEFAULT_DURATION = 30;
@@ -60,6 +61,11 @@ export function AppointmentDialog() {
   const access = useAccess();
   const { appointment, closeAppointment: onClose, switchAppointmentToEntry, refresh } = useData();
   const { open, editing, draft } = appointment;
+  const [bookingMode, setBookingMode] = useState<"appointment" | "timeOff">("appointment");
+  const [timeOffVisited, setTimeOffVisited] = useState(false);
+  const bookingTabsId = useId();
+  const allowTimeOff = !editing && Boolean(draft?.fromSchedule);
+  const showTimeOff = allowTimeOff && bookingMode === "timeOff";
 
   const [date, setDate] = useState("");
   const [start, setStart] = useState("09:00");
@@ -95,6 +101,8 @@ export function AppointmentDialog() {
   useEffect(() => {
     if (!open) return;
     let alive = true;
+    setBookingMode("appointment");
+    setTimeOffVisited(false);
     setLoadedFor(null);
     setError(null);
     setDeleting(null);
@@ -344,7 +352,22 @@ export function AppointmentDialog() {
     ? editing.discount_percent : priceIsDefault ? selectedService?.discount_percent ?? 0 : 0;
 
   return (
-    <Modal open={open} onClose={() => { if (!busy) onClose(); }} title={editing ? "Appointment" : "New appointment"} width="max-w-lg">
+    <Modal open={open} onClose={() => { if (!busy) onClose(); }} title={editing ? "Appointment" : showTimeOff ? "Add time off" : "New appointment"} width="max-w-lg">
+      {allowTimeOff && <div role="tablist" aria-label="Booking type" className="mb-4 flex w-full rounded-full bg-surface-2 p-1">
+        {(["appointment", "timeOff"] as const).map((mode) => <button key={mode} type="button" role="tab" id={`${bookingTabsId}-${mode}-tab`} aria-controls={`${bookingTabsId}-${mode}-panel`} aria-selected={bookingMode === mode} tabIndex={bookingMode === mode ? 0 : -1} disabled={busy}
+          onClick={() => { setBookingMode(mode); if (mode === "timeOff") setTimeOffVisited(true); }}
+          onKeyDown={(event) => {
+            if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+            event.preventDefault();
+            const next = event.key === "Home" ? "appointment" : event.key === "End" ? "timeOff" : mode === "appointment" ? "timeOff" : "appointment";
+            setBookingMode(next); if (next === "timeOff") setTimeOffVisited(true);
+            document.getElementById(`${bookingTabsId}-${next}-tab`)?.focus();
+          }}
+          className={cn("flex-1 rounded-full px-3.5 py-1.5 text-[13px] font-medium transition-colors cursor-pointer disabled:opacity-50", bookingMode === mode ? "bg-accent text-accent-ink shadow-sm" : "text-ink-2 hover:text-ink")}>
+          {mode === "appointment" ? "Appointment" : "Time off"}
+        </button>)}
+      </div>}
+      <div hidden={showTimeOff} role={allowTimeOff ? "tabpanel" : undefined} id={`${bookingTabsId}-appointment-panel`} aria-labelledby={allowTimeOff ? `${bookingTabsId}-appointment-tab` : undefined}>
       {!ready && !error && <p role="status" className="mb-3 text-sm text-muted">Loading appointment details…</p>}
       {!ready && error && <p role="alert" className="mb-3 text-sm text-bad">{error}</p>}
       <form onSubmit={submit}>
@@ -493,6 +516,10 @@ export function AppointmentDialog() {
         </div>
         </fieldset>
       </form>
+      </div>
+      {open && allowTimeOff && <div hidden={!showTimeOff} role="tabpanel" id={`${bookingTabsId}-timeOff-panel`} aria-labelledby={`${bookingTabsId}-timeOff-tab`}>
+        {timeOffVisited && <TimeOffForm initialDate={ready ? date : draft?.date} initialStart={ready ? start : draft?.start_time} online={!offline} onClose={onClose} onBusyChange={setBusy} onSaved={() => { refresh(); onClose(); }} />}
+      </div>}
 
       <Modal open={deleting != null} onClose={() => { if (!busy) setDeleting(null); }} title="Delete appointment?" width="max-w-sm">
         <div className="text-sm text-ink-2">

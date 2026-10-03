@@ -161,6 +161,17 @@ export async function installDesktopFixture(page, records) {
         else throw new Error("Expected a fixture service");
         const saved = records.services.find(item => item.id === value.id);
         saved.booking_price_pence = Math.round(saved.price_pence * (100 - (saved.discount_percent ?? 0)) / 100);
+      } else if (args.operation === "blocks") {
+        if (args.method === "DELETE") {
+          const ids = new Set(value.blocks?.map(block => block.id) ?? [value.id]);
+          records.blocks = records.blocks.filter(block => !ids.has(block.id));
+        } else if (value.end_date) {
+          const from = Date.parse(`${value.date}T${value.start_time}:00Z`), to = Date.parse(`${value.end_date}T${value.end_time}:00Z`);
+          for (let day = Math.floor(from / 86400000) * 86400000; day < to; day += 86400000) {
+            const start = Math.max(day, from), end = Math.min(day + 86400000, to);
+            records.blocks.push({ id: crypto.randomUUID(), period_id: value.id, date: new Date(day).toISOString().slice(0, 10), start_time: new Date(start).toISOString().slice(11, 16), duration_min: (end - start) / 60000, label: value.label, revision: 1 });
+          }
+        } else records.blocks.push({ ...value, revision: 1 });
       } else if (args.operation === "clients") {
         if (args.method === "POST") records.clients.push({ ...value, account_id: null, merged_into: null, disabled: false, revision: 1, updated_at: now });
         else if (args.method === "DELETE") {

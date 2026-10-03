@@ -10,6 +10,8 @@ export interface AppointmentDraft {
   serviceId?: string;
   /** Opened from New entry, so the form can switch back to income or expense. */
   fromEntry?: boolean;
+  /** Schedule bookings can also reserve a time-off period in the same dialog. */
+  fromSchedule?: boolean;
 }
 
 interface DataCtx {

@@ -60,7 +60,7 @@ export function Schedule() {
   const placeholder = loadError ? "Unavailable" : "…";
   const openNew = (date: string, start_time: string) => {
     if (access.state !== "online") return toast.info("Reconnect to create a shared booking");
-    openNewAppointment({ date, start_time });
+    openNewAppointment({ date, start_time, fromSchedule: true });
   };
 
   const step = (dir: 1 | -1) =>

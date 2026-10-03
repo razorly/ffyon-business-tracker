@@ -5,7 +5,7 @@ import { getAppointment, getDb, listAppointments, listClients, type AppointmentR
 export interface CloudClient { id: string; account_id: string | null; name: string; email: string; phone: string; saved_address: string; saved_postcode: string; disabled: boolean; revision: number; updated_at: string; merged_into?: string | null }
 export interface CloudService { id: string; name: string; description: string; duration_min: number; price_pence: number; discount_percent: number; booking_price_pence: number; active: boolean; revision: number }
 export interface CloudAppointment { id: string; client_id: string; service_id: string | null; service_name: string; date: string; start_time: string; time_confirmed: boolean; duration_min: number; price_pence: number; base_price_pence: number; discount_percent: number; is_remote: boolean; visit_address: string; visit_postcode: string; notes: string; status: AppointmentStatus; revision: number; proposed_date: string | null; proposed_start_time: string | null; proposed_time_confirmed: boolean | null; series_id: string | null; created_at: string; updated_at: string }
-export interface CloudBlock { id: string; date: string; start_time: string; duration_min: number; label: string; revision: number }
+export interface CloudBlock { id: string; date: string; start_time: string; duration_min: number; label: string; revision: number; period_id?: string | null }
 export interface BusinessSettings { home_visit_fee_pence: number; home_visit_radius_miles: number; studio_postcode: string; studio_address: string; contact_email: string; contact_email_enabled: boolean; booking_enabled: boolean; timezone: "Europe/London"; slot_minutes: 30; horizon_days: 90; opening_hours: { weekday: number; open: string; close: string }[]; admin_notifications_enabled: boolean; admin_notification_email: string; revision: number }
 export interface Device { id: string; name: string; created_at: string; last_seen_at: string | null; revoked_at: string | null }
 export interface CloudSnapshot { clients: CloudClient[]; appointments: CloudAppointment[]; services: CloudService[]; blocks: CloudBlock[]; settings: BusinessSettings; cursor: number }
@@ -413,6 +413,10 @@ export async function archiveService(id: string, revision: number) {
 }
 export const updateCloudSettings = (settings: BusinessSettings) => mutate("settings", "PUT", { ...settings });
 export const createBlock = (block: Omit<CloudBlock, "id" | "revision">) => mutate("blocks", "POST", { id: crypto.randomUUID(), ...block });
+export const createTimeOff = (period: { date: string; start_time: string; end_date: string; end_time: string; label: string }) => mutate("blocks", "POST", { id: crypto.randomUUID(), ...period });
+export const deleteTimeOff = (blocks: CloudBlock[]) => blocks.length === 1 && !blocks[0].period_id
+  ? deleteBlock(blocks[0])
+  : mutate("blocks", "DELETE", { period_id: blocks[0].period_id, blocks: blocks.map(({ id, revision }) => ({ id, revision })) });
 export const deleteBlock = (block: Pick<CloudBlock, "id" | "revision">) => mutate("blocks", "DELETE", { ...block });
 export const createPairingCode = () => adminRequest<{ code: string; expires_at: number }>("pairing", "POST", { operation_id: crypto.randomUUID() });
 export async function listDevices() { return (await adminRequest<{ devices: Device[] }>("devices", "GET")).devices; }

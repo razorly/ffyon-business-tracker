@@ -1,16 +1,18 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Archive, Bell, CalendarOff, Check, Pencil, Plus, RotateCcw, Save, Trash2, Upload } from "lucide-react";
+import { Archive, Bell, Check, Pencil, Plus, RotateCcw, Save, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { listAppointments, type AppointmentRow } from "@/lib/db";
 import { useData } from "@/lib/data";
-import { durationLabel, isoDate, money, parseAmount, penceToInput, timeLabel, timeToMin, ukDate } from "@/lib/format";
+import { durationLabel, money, parseAmount, penceToInput, timeLabel, timeToMin, ukDate } from "@/lib/format";
 import {
-  createBlock, deleteBlock, getImportPreview, getSyncState, importLegacyRecords, listBlocks, listCloudSettings, listNotificationStatus,
+  deleteTimeOff, getImportPreview, getSyncState, importLegacyRecords, listBlocks, listCloudSettings, listNotificationStatus,
   listServices, saveService, serviceDiscountPrice, subscribeSync, updateCloudSettings,
 } from "@/lib/sync";
 import { useAccess } from "@/components/AccessGate";
 import { Button, Card, CardHeader, Field, Input, Modal, Textarea } from "@/components/ui";
 import { VisitSettingsCard } from "@/components/VisitSettingsCard";
+import { timeOffPeriodLabel, timeOffPeriods } from "@/lib/time-off";
+import { TimeOffDialog } from "./TimeOffForm";
 
 type Service = Awaited<ReturnType<typeof listServices>>[number];
 type Block = Awaited<ReturnType<typeof listBlocks>>[number];
@@ -290,10 +292,11 @@ function TimeOffCard({ blocks, online, loaded, onSaved }: { blocks: Block[]; onl
   const [busyId, setBusyId] = useState<string | null>(null);
   const [showPast, setShowPast] = useState(false);
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-  const upcoming = blocks.filter((block) => showPast || block.date >= today).sort((a, b) => `${a.date}${a.start_time}`.localeCompare(`${b.date}${b.start_time}`));
-  const remove = async (block: Block) => {
-    setBusyId(block.id);
-    try { await deleteBlock(block); toast.success("Time off removed"); onSaved(); }
+  const periods = timeOffPeriods(blocks);
+  const upcoming = periods.filter((period) => showPast || period.end.date >= today);
+  const remove = async (period: typeof periods[number]) => {
+    setBusyId(period.id);
+    try { await deleteTimeOff(period.blocks); toast.success("Time off removed"); onSaved(); }
     catch (cause) { toast.error(failureMessage(cause)); onSaved(); }
     finally { setBusyId(null); }
   };
@@ -303,43 +306,11 @@ function TimeOffCard({ blocks, online, loaded, onSaved }: { blocks: Block[]; onl
       <div className="px-5 pb-5"><OnlineNotice online={online} />
         {!loaded && <p className="py-3 text-sm text-muted">Loading time off...</p>}
         {loaded && !upcoming.length && <p className="py-3 text-sm text-muted">No {showPast ? "" : "upcoming "}time off.</p>}
-        <ul className="divide-y divide-line">{upcoming.map((block) => <li key={block.id} className="flex items-center justify-between gap-3 py-3"><div className="min-w-0"><p className="break-words text-sm font-medium">{block.label}</p><p className="mt-1 text-xs text-muted">{ukDate(block.date)} · {timeLabel(block.start_time)} · {durationLabel(block.duration_min)}</p></div><Button variant="ghost" size="icon" disabled={!online || busyId !== null} title={`Remove ${block.label}`} aria-label={`Remove ${block.label}`} onClick={() => void remove(block)}><Trash2 size={14} /></Button></li>)}</ul>
-        {blocks.some((block) => block.date < today) && <label className="mt-3 flex items-center gap-2 text-xs text-ink-2"><input type="checkbox" checked={showPast} onChange={(event) => setShowPast(event.target.checked)} className="accent-accent" /> Show past time off</label>}
+        <ul className="divide-y divide-line">{upcoming.map((period) => <li key={period.id} className="flex items-center justify-between gap-3 py-3"><div className="min-w-0"><p className="break-words text-sm font-medium">{period.label}</p><p className="mt-1 text-xs text-muted">{timeOffPeriodLabel(period)}</p></div><Button variant="ghost" size="icon" disabled={!online || busyId !== null} title={`Remove ${period.label}`} aria-label={`Remove ${period.label}`} onClick={() => void remove(period)}><Trash2 size={14} /></Button></li>)}</ul>
+        {periods.some((period) => period.end.date < today) && <label className="mt-3 flex items-center gap-2 text-xs text-ink-2"><input type="checkbox" checked={showPast} onChange={(event) => setShowPast(event.target.checked)} className="accent-accent" /> Show past time off</label>}
       </div>
-      {open && <TimeOffForm online={online} onClose={() => setOpen(false)} onSaved={() => { setOpen(false); onSaved(); }} />}
+      {open && <TimeOffDialog online={online} onClose={() => setOpen(false)} onSaved={() => { setOpen(false); onSaved(); }} />}
     </Card>
-  );
-}
-
-function TimeOffForm({ online, onClose, onSaved }: { online: boolean; onClose: () => void; onSaved: () => void }) {
-  const [date, setDate] = useState(isoDate(new Date()));
-  const [start, setStart] = useState("09:00");
-  const [duration, setDuration] = useState("480");
-  const [label, setLabel] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const durationMin = Number(duration);
-  const valid = /^\d{4}-\d{2}-\d{2}$/.test(date) && /^\d{2}:\d{2}$/.test(start) && Number.isInteger(durationMin) && durationMin > 0 && timeToMin(start) + durationMin <= 1440 && label.trim().length > 0 && label.trim().length <= 100;
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!valid || !online || busy) return;
-    setBusy(true);
-    setError("");
-    try { await createBlock({ date, start_time: start, duration_min: durationMin, label: label.trim() }); toast.success("Time off added"); onSaved(); }
-    catch (cause) { setError(failureMessage(cause)); }
-    finally { setBusy(false); }
-  };
-  return (
-    <Modal open onClose={() => { if (!busy) onClose(); }} title="Add time off">
-      <form onSubmit={submit} className="max-h-[calc(100dvh-140px)] space-y-4 overflow-y-auto">
-        <Field label="Label"><Input autoFocus required maxLength={100} value={label} onChange={(event) => setLabel(event.target.value)} placeholder="Holiday, lunch or personal time" /></Field>
-        <Field label="Date"><Input type="date" required value={date} onChange={(event) => setDate(event.target.value)} /></Field>
-        <div className="grid grid-cols-2 gap-3"><Field label="Start time"><Input type="time" required value={start} onChange={(event) => setStart(event.target.value)} /></Field><Field label="Duration (minutes)"><Input type="number" required min={1} max={1440} step={1} value={duration} onChange={(event) => setDuration(event.target.value)} /></Field></div>
-        {timeToMin(start) + durationMin > 1440 && <p className="text-xs text-bad">Time off must finish on the same day. Add a separate block for each day.</p>}
-        {error && <p className="text-sm text-bad" role="alert">{error}</p>}
-        <div className="flex justify-end gap-2"><Button type="button" disabled={busy} onClick={onClose}>Cancel</Button><Button variant="primary" type="submit" disabled={!valid || !online || busy}><CalendarOff size={14} />{busy ? "Saving..." : "Add time off"}</Button></div>
-      </form>
-    </Modal>
   );
 }
 
