@@ -13,11 +13,11 @@ import { AppointmentDialog } from "@/components/AppointmentDialog";
 import { TrayBridge } from "@/components/TrayBridge";
 import { AccessGate } from "@/components/AccessGate";
 import { SyncBridge } from "@/components/SyncBridge";
-const InboxPage = lazy(() => import("@/pages/Inbox").then(module => ({ default: module.InboxPage })));
+const TodoPage = lazy(() => import("@/pages/Todo").then(module => ({ default: module.TodoPage })));
 const MailPage = lazy(() => import("@/pages/Mail").then(module => ({ default: module.MailPage })));
 const Dashboard = lazy(() => import("@/pages/Dashboard").then(module => ({ default: module.Dashboard })));
 const Schedule = lazy(() => import("@/pages/Schedule").then(module => ({ default: module.Schedule })));
-const Monthly = lazy(() => import("@/pages/Monthly").then(module => ({ default: module.Monthly })));
+const Finances = lazy(() => import("@/pages/Finances").then(module => ({ default: module.Finances })));
 const Clients = lazy(() => import("@/pages/Clients").then(module => ({ default: module.Clients })));
 const Settings = lazy(() => import("@/pages/Settings").then(module => ({ default: module.Settings })));
 
@@ -44,10 +44,13 @@ function Shell() {
             <Route element={<Layout />}>
               <Route index element={<Page><Dashboard /></Page>} />
               <Route path="schedule" element={<Page><Schedule /></Page>} />
-              <Route path="inbox" element={<Page><InboxPage /></Page>} />
+              <Route path="todo" element={<Page><TodoPage /></Page>} />
               <Route path="mail/:conversationId?" element={<Page><MailPage /></Page>} />
-              <Route path="requests" element={<Navigate to="/inbox" replace />} />
-              <Route path="monthly" element={<Page><Monthly /></Page>} />
+              <Route path="finances" element={<Page><Finances /></Page>} />
+              {/* Older names and bookmarks */}
+              <Route path="inbox" element={<Navigate to="/todo" replace />} />
+              <Route path="requests" element={<Navigate to="/todo" replace />} />
+              <Route path="monthly" element={<Navigate to="/finances" replace />} />
               <Route path="clients" element={<Page><Clients /></Page>} />
               <Route path="settings" element={<Page><Settings /></Page>} />
             </Route>

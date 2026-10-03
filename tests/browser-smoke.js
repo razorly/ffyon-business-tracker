@@ -144,14 +144,14 @@ async function approvedDesktopSmoke(browser, url, output, evidence) {
       };
     });
     await page.goto(url, { waitUntil: "networkidle" });
-    await page.locator('nav a[title="Requests"]').click();
+    await page.locator('nav a[title="To do"]').click();
     await page.getByRole("button", { name: "Acceptance Customer", exact: true }).waitFor();
     await assertBusinessViewport(page);
     const details = await page.getByRole("button", { name: "Acceptance Customer", exact: true }).evaluate(element => element.parentElement.getBoundingClientRect().width);
     assert.ok(details >= 160, `Request details must not be squeezed beside actions: ${details}px`);
     await capture(page, output, `admin-requests-${viewport.width}.png`);
     await page.evaluate(() => window.__ffyonMockSetState("offline"));
-    await page.getByText("You're offline. Reconnect to accept, reject or approve a new time.", { exact: true }).waitFor();
+    await page.getByText("You're offline. Reconnect to accept or reject booking requests. Payments can still be confirmed.", { exact: true }).waitFor();
     assert.equal(await page.getByRole("button", { name: "Accept", exact: true }).first().isDisabled(), true);
     assert.equal(await page.getByRole("button", { name: "Reject", exact: true }).first().isDisabled(), true);
     await capture(page, output, `admin-offline-requests-${viewport.width}.png`);
@@ -160,9 +160,9 @@ async function approvedDesktopSmoke(browser, url, output, evidence) {
     await page.getByRole("button", { name: "Acceptance Customer", exact: true }).waitFor({ state: "hidden" });
     await page.getByRole("button", { name: "Reject", exact: true }).first().click();
     await page.getByRole("button", { name: "Rejection Customer", exact: true }).waitFor({ state: "hidden" });
-    await page.getByRole("button", { name: "Approve time", exact: true }).first().click();
+    await page.getByRole("button", { name: "Approve new time", exact: true }).first().click();
     await page.getByRole("button", { name: "Reschedule Customer", exact: true }).waitFor({ state: "hidden" });
-    await page.getByRole("button", { name: "Reject", exact: true }).click();
+    await page.getByRole("button", { name: "Keep current time", exact: true }).click();
     await page.getByText("All caught up", { exact: true }).waitFor();
     assert.equal(appointments[0].status, "confirmed");
     assert.equal(appointments[1].status, "rejected");
@@ -208,7 +208,7 @@ async function approvedDesktopSmoke(browser, url, output, evidence) {
     await page.getByRole("heading", { name: "Admin access required", exact: true }).waitFor();
     assert.equal(await page.getByRole("link", { name: "Clients", exact: true }).count(), 0, "Native lock event must unmount loaded business data");
     assert.deepEqual(errors, [], "Approved fixture must have no uncaught page errors");
-    evidence.push({ target: "approved-desktop-fixture", viewport, nativeIpcAndBackend: "mocked; actual migrations and SQL in disposable memory only", offlineSharedControlsDisabled: true, acceptedRejectedAndRescheduled: true, updatedAndArchivedService: true, existingBookingQuotePreserved: true, loadedBusinessShellUnmountedOnNativeLock: true, mutations: mutations.map(item => ({ operation: item.operation, method: item.method, action: item.body.action ?? null })), pageErrors: errors });
+    evidence.push({ target: "approved-desktop-fixture", viewport, nativeIpcAndBackend: "mocked; actual migrations and SQL in disposable memory only", offlineSharedControlsDisabled: true, acceptedRejectedAndRescheduled: true, updatedAndArchivedService: true, existingBookingQuotePreserved: true, loadedBusinessShellUnmountedOnNativeLock: true, mutations: mutations.map(item => ({ operation: item.operation, method: item.method, action: item.body?.action ?? null })), pageErrors: errors });
     await page.close();
     sqlite.close();
   }

@@ -25,7 +25,8 @@ export function LegacyIncomeReview() {
     Promise.all([listLegacyIncomeCategories(), listServices()])
       .then(([nextCategories, nextServices]) => {
         if (!alive) return;
-        setCategories(nextCategories);
+        // Unused labels (such as the original starter list) have nothing to classify.
+        setCategories(nextCategories.filter((category) => category.transaction_count > 0 || category.appointment_count > 0));
         setServices(nextServices);
         setError("");
       })
@@ -61,9 +62,9 @@ export function LegacyIncomeReview() {
 
   return (
     <Card className="self-start">
-      <CardHeader title="Legacy income review" />
+      <CardHeader title="Review older income" />
       <div className="px-5 pb-5">
-        <p className="mb-3 text-xs text-muted">Recorded amounts and saved labels remain unchanged.</p>
+        <p className="mb-3 text-xs text-muted">Older records use these labels. Choose whether each one was a service or other income. Amounts and saved labels don't change.</p>
         {error && <p className="mb-3 text-sm text-bad" role="alert">{error}</p>}
         <ul className="divide-y divide-line">
           {categories.map((category) => (

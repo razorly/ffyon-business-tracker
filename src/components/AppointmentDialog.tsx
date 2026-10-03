@@ -34,7 +34,9 @@ import {
   ukDate,
 } from "@/lib/format";
 import { Button, Field, Input, Modal, Select, Textarea } from "./ui";
+import { cn } from "@/lib/utils";
 import { ClientCombobox, type ClientChoice } from "./ClientCombobox";
+import { EntryModeSwitch } from "./EntryModeSwitch";
 import { RemoteAppointmentMap } from "./RemoteAppointmentMap";
 
 const DURATIONS = [15, 20, 30, 45, 60, 75, 90, 120];
@@ -56,7 +58,7 @@ const REPEATS = [
  */
 export function AppointmentDialog() {
   const access = useAccess();
-  const { appointment, closeAppointment: onClose, refresh } = useData();
+  const { appointment, closeAppointment: onClose, switchAppointmentToEntry, refresh } = useData();
   const { open, editing, draft } = appointment;
 
   const [date, setDate] = useState("");
@@ -261,7 +263,7 @@ export function AppointmentDialog() {
     setBusy(true);
     try {
       await markAppointmentPaid(editing.id, pence);
-      toast.success(`${money(pence)} added to your money`);
+      toast.success(`${money(pence)} recorded as income`);
       refresh();
       onClose();
     } catch (e) {
@@ -276,7 +278,7 @@ export function AppointmentDialog() {
     setBusy(true);
     try {
       await markAppointmentUnpaid(editing.id);
-      toast.success("Payment entry removed");
+      toast.success("Payment removed from income");
       refresh();
       onClose();
     } catch (e) {
@@ -347,6 +349,8 @@ export function AppointmentDialog() {
       {!ready && error && <p role="alert" className="mb-3 text-sm text-bad">{error}</p>}
       <form onSubmit={submit}>
         <fieldset disabled={busy || !ready} className="space-y-4">
+        {!editing && draft?.fromEntry && <EntryModeSwitch value="appointment" onChange={(mode) => { if (mode !== "appointment" && !busy) switchAppointmentToEntry(mode, client); }} />}
+        {editing && <PaymentStrip editing={editing} busy={busy} offline={offline} received={received} onReceived={setReceived} onPay={payNow} onUnpaid={markUnpaid} onStatus={changeStatus} />}
         <div ref={clientRef}>
           <Field label="Client">
             <fieldset disabled={offline}><ClientCombobox clients={clients} value={client} onChange={setClient} required={!editing || Boolean(editing.remote_id)} placeholder={!editing || editing.remote_id ? "Search or add a client" : "Search or add a client (optional)"} /></fieldset>
@@ -466,7 +470,9 @@ export function AppointmentDialog() {
 
         {ready && error && <p role="alert" className="text-[13px] text-bad">{error}</p>}
 
-        <PaymentStrip editing={editing} busy={busy} offline={offline} received={received} onReceived={setReceived} onPay={payNow} onUnpaid={markUnpaid} onStatus={changeStatus} />
+        {!editing && <p className="rounded-2xl bg-surface-2 px-4 py-3 text-[13px] text-ink-2">
+          Booking doesn't add any income. Mark the appointment paid once the client has paid.
+        </p>}
 
         <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
           {editing ? (
@@ -513,7 +519,7 @@ export function AppointmentDialog() {
   );
 }
 
-/** Says plainly whether this appointment is counted in the money yet, and switches it. */
+/** The booking's state at a glance — booked, paid or not — with the next things to do. */
 function PaymentStrip({
   editing,
   busy,
@@ -524,7 +530,7 @@ function PaymentStrip({
   onUnpaid,
   onStatus,
 }: {
-  editing: AppointmentRow | null;
+  editing: AppointmentRow;
   busy: boolean;
   offline: boolean;
   received: string;
@@ -533,95 +539,45 @@ function PaymentStrip({
   onUnpaid: () => void;
   onStatus: (next: AppointmentStatus, done: string) => void;
 }) {
-  if (!editing) {
-    return (
-      <p className="rounded-2xl bg-surface-2 px-4 py-3 text-[13px] text-ink-2">
-        Booking it doesn't touch your money. Open it and mark it paid once she's paid.
-      </p>
-    );
-  }
-
-  const statusLabel = editing.status === "confirmed" ? `Confirmed${editing.time_confirmed === 0 ? " · time to confirm" : ""}` : editing.status === "pending" ? "Awaiting approval" : editing.status === "rejected" ? "Rejected" : editing.status === "cancelled" ? "Cancelled" : "Didn't show";
-  if (editing.transaction_id != null) {
-    return (
-      <div className="space-y-2"><div className="flex flex-wrap items-center gap-3 rounded-2xl bg-surface-2 px-4 py-3">
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-good/15 text-good">
-          <Check size={15} strokeWidth={3} />
-        </span>
-        <span className="min-w-0 flex-1 text-[13px] text-ink-2">{statusLabel} · {money(editing.paid_amount_pence ?? 0)} received for {ukDate(editing.date)}.</span>
-        <Button
-          type="button"
-          variant="ghost"
-          disabled={busy}
-          onClick={onUnpaid}
-        >
-          <Undo2 size={15} /> Mark unpaid
-        </Button>
-      </div><div className="flex flex-wrap justify-end gap-1">
-        {editing.status === "confirmed" ? <><Button type="button" variant="ghost" size="sm" disabled={busy || offline} onClick={() => onStatus("cancelled", "Marked as cancelled. Payment retained.")}><CalendarOff size={14} />Cancelled</Button><Button type="button" variant="ghost" size="sm" disabled={busy || offline} onClick={() => onStatus("no_show", "Marked as a no-show. Payment retained.")}><UserX size={14} />Didn't show</Button></> : <Button type="button" variant="ghost" size="sm" disabled={busy || offline} onClick={() => onStatus("confirmed", "Appointment confirmed")}><Undo2 size={15} />Confirm</Button>}
-      </div></div>
-    );
-  }
-
-  if (editing.status === "pending") {
-    return <div className="flex flex-wrap items-center gap-3 rounded-2xl bg-surface-2 px-4 py-3">
-      <Clock size={16} className="text-muted" />
-      <span className="min-w-0 flex-1 text-[13px] text-ink-2">Awaiting approval</span>
-      <Button type="button" disabled={busy || offline} onClick={() => onStatus("rejected", "Request rejected")}><X size={14} /> Reject</Button>
-      <Button type="button" variant="primary" disabled={busy || offline} onClick={() => onStatus("confirmed", "Appointment accepted")}><Check size={14} /> {editing.time_confirmed === 0 ? "Accept date" : "Accept"}</Button>
-    </div>;
-  }
-
-  if (editing.status !== "confirmed") {
-    const cancelled = editing.status === "cancelled";
-    return (
-      <div className="flex items-center gap-3 rounded-2xl bg-surface-2 px-4 py-3">
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface text-muted">
-          {cancelled ? <CalendarOff size={14} /> : <UserX size={14} />}
-        </span>
-        <span className="min-w-0 flex-1 text-[13px] text-ink-2">
-          {statusLabel} · no payment recorded.
-        </span>
-        <Button type="button" variant="ghost" disabled={busy || offline} onClick={() => onStatus("confirmed", "Appointment confirmed")}>
-          <Undo2 size={15} /> Confirm
-        </Button>
-      </div>
-    );
-  }
-
-  if (editing.price_pence === 0) return <div className="space-y-2">
-    <p className="flex items-center gap-2 rounded-xl bg-surface-2 px-4 py-3 text-[13px] text-ink-2"><Check size={15} className="shrink-0 text-good" />{statusLabel} · No payment due.</p>
-    <div className="flex flex-wrap justify-end gap-1"><Button type="button" variant="ghost" size="sm" disabled={busy || offline} onClick={() => onStatus("cancelled", "Marked as cancelled")}><CalendarOff size={14} />Cancelled</Button><Button type="button" variant="ghost" size="sm" disabled={busy || offline} onClick={() => onStatus("no_show", "Marked as a no-show")}><UserX size={14} />Didn't show</Button></div>
-  </div>;
+  const paid = editing.transaction_id != null;
+  const confirmed = editing.status === "confirmed";
+  const pending = editing.status === "pending";
+  const status = pending ? "Booking request" : editing.status === "rejected" ? "Request rejected"
+    : editing.status === "cancelled" ? "Cancelled" : editing.status === "no_show" ? "No-show"
+    : editing.time_confirmed === 0 ? "Confirmed · time to agree" : "Confirmed";
+  const payment = paid ? `Paid ${money(editing.paid_amount_pence ?? 0)}` : pending ? "Waiting for your decision"
+    : editing.price_pence === 0 ? "No payment due" : confirmed ? "Not paid yet" : "No payment recorded";
+  const kept = paid ? " Payment kept." : "";
 
   return (
-    <div>
-      <div className="flex flex-wrap items-end gap-3 rounded-2xl bg-surface-2 px-4 py-3">
+    <section aria-label="Booking status" className="rounded-2xl bg-surface-2 px-4 py-3">
+      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[13px]">
+        <span className={cn("flex h-6 w-6 shrink-0 items-center justify-center rounded-full", paid ? "bg-good/15 text-good" : "bg-surface text-muted")}>
+          {paid ? <Check size={13} strokeWidth={3} /> : pending ? <Clock size={13} /> : !confirmed ? editing.status === "no_show" ? <UserX size={13} /> : <CalendarOff size={13} /> : <BanknoteArrowDown size={13} />}
+        </span>
+        <span className="font-medium text-ink">{status}</span>
+        <span className="text-ink-2">· {payment}</span>
+        {paid && <Button type="button" variant="ghost" size="sm" className="ml-auto" disabled={busy} onClick={onUnpaid}><Undo2 size={14} /> Mark unpaid</Button>}
+      </div>
+
+      {pending && <div className="mt-3 flex flex-wrap justify-end gap-2">
+        <Button type="button" disabled={busy || offline} onClick={() => onStatus("rejected", "Request rejected")}><X size={14} /> Reject</Button>
+        <Button type="button" variant="primary" disabled={busy || offline} onClick={() => onStatus("confirmed", "Booking accepted")}><Check size={14} /> {editing.time_confirmed === 0 ? "Accept date" : "Accept"}</Button>
+      </div>}
+
+      {confirmed && !paid && editing.price_pence !== 0 && <div className="mt-3 flex flex-wrap items-end gap-3">
         <div className="min-w-0 flex-1"><Field label="Amount received"><Input inputMode="decimal" value={received} onChange={(e) => onReceived(e.target.value)} placeholder="0.00" /></Field></div>
         <Button type="button" variant="primary" onClick={onPay} disabled={busy}>
           <BanknoteArrowDown size={15} /> Mark paid
         </Button>
-      </div>
-      <div className="mt-2 flex justify-end gap-1">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          disabled={busy || offline}
-          onClick={() => onStatus("cancelled", "Marked as cancelled")}
-        >
-          <CalendarOff size={14} /> Cancelled
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          disabled={busy || offline}
-          onClick={() => onStatus("no_show", "Marked as a no-show")}
-        >
-          <UserX size={14} /> Didn't show
-        </Button>
-      </div>
-    </div>
+      </div>}
+
+      {!pending && <div className="mt-2 flex flex-wrap justify-end gap-1 border-t border-line pt-2">
+        {confirmed ? <>
+          <Button type="button" variant="ghost" size="sm" disabled={busy || offline} onClick={() => onStatus("cancelled", `Marked as cancelled.${kept}`)}><CalendarOff size={14} /> Mark cancelled</Button>
+          <Button type="button" variant="ghost" size="sm" disabled={busy || offline} onClick={() => onStatus("no_show", `Marked as a no-show.${kept}`)}><UserX size={14} /> Mark no-show</Button>
+        </> : <Button type="button" variant="ghost" size="sm" disabled={busy || offline} onClick={() => onStatus("confirmed", "Booking restored")}><Undo2 size={14} /> Restore booking</Button>}
+      </div>}
+    </section>
   );
 }

@@ -1,8 +1,8 @@
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import { format, subMonths } from "date-fns";
-import { BanknoteArrowDown, CalendarHeart, ChevronRight, Inbox, Mail, MapPin, Plus, PoundSterling, Receipt, Sparkles, Users, Wallet } from "lucide-react";
-import { distinctClients, incomeTotals, listAppointments, listTransactions, monthlyTotals, unpaidBefore, type MonthTotal } from "@/lib/db";
+import { BanknoteArrowDown, CalendarClock, CalendarHeart, ChevronRight, CircleCheck, Mail, MapPin, Plus, PoundSterling, Receipt, Sparkles, Users, Wallet } from "lucide-react";
+import { distinctClients, incomeTotals, listAppointments, listTransactions, monthlyTotals, type MonthTotal } from "@/lib/db";
 import { useData, useLoad } from "@/lib/data";
 import { lastMonths, monthRange, taxYear, useBusinessNow } from "@/lib/dates";
 import { isoDate, money, monthLabel, percentChange, timeLabel } from "@/lib/format";
@@ -33,7 +33,6 @@ export function Dashboard() {
   const [incomeSources, incomeLoading, incomeError] = useLoad(() => incomeTotals(tax.from, today), [tax.from, today], []);
   const [clientsThisMonth, clientsLoading, clientsError] = useLoad(() => distinctClients(thisMonth.from, thisMonth.to), [thisMonth.from], 0);
   const [recent, loadingRecent, recentError] = useLoad(() => listTransactions({ limit: 6 }), [], []);
-  const [overdue, , overdueError] = useLoad(() => unpaidBefore(today), [today], []);
   const [todayRows, todayLoading, todayError] = useLoad(() => listAppointments({ from: today, to: today }), [today], []);
   const todayAppointments = todayRows.filter(row => row.status === "confirmed").sort((a, b) => b.time_confirmed - a.time_confirmed || a.start_time.localeCompare(b.start_time));
 
@@ -48,6 +47,9 @@ export function Dashboard() {
   const taxIncome = taxMonthly.reduce((s, m) => s + m.income, 0);
   const taxProfit = taxMonthly.reduce((s, m) => s + m.income - m.expense, 0);
   const prevLabel = format(subMonths(now, 1), "MMMM");
+  const owed = payments.reduce((sum, row) => sum + (row.price_pence ?? 0), 0);
+  const inboxPending = inboxLoading && requests.length === 0 && payments.length === 0;
+  const mailLabel = mailError ? "Email check unavailable" : mailLoading && mail.unread_count === 0 ? "Checking email…" : `${mail.unread_count} unread email${mail.unread_count === 1 ? "" : "s"}`;
 
   const empty = !loadingRecent && !recentError && recent.length === 0;
   const figuresUnavailable = monthly.length === 0 && (monthlyLoading || Boolean(monthlyError));
@@ -56,7 +58,7 @@ export function Dashboard() {
   return (
     <>
       <PageHeader title={greeting(now)} subtitle={`Here's how ${format(now, "MMMM")} is going`} />
-      <LoadError error={monthlyError || taxError || incomeError || clientsError || recentError || overdueError || todayError || inboxError} onRetry={refresh} />
+      <LoadError error={monthlyError || taxError || incomeError || clientsError || recentError || todayError || inboxError} onRetry={refresh} />
       {monthlyLoading && <p role="status" className="mb-3 text-sm text-muted">Loading business figures…</p>}
 
       <div className="mb-4 grid min-w-0 gap-4 lg:grid-cols-3">
@@ -69,7 +71,12 @@ export function Dashboard() {
         </Card>
         <Card>
           <CardHeader title="Needs your attention" />
-          <div className="space-y-3 px-5 pb-4 text-sm">{inboxError ? <p className="text-bad">Inbox is unavailable. Retry above.</p> : inboxLoading && requests.length === 0 && payments.length === 0 ? <p role="status" className="text-muted">Loading Inbox…</p> : <><p className="flex items-center gap-2"><Inbox size={15} className="text-muted" />{requests.length} booking request{requests.length === 1 ? "" : "s"}</p><p className="flex items-center gap-2"><BanknoteArrowDown size={15} className="text-muted" />{payments.length} payment{payments.length === 1 ? "" : "s"} to confirm</p></>}<p className="flex items-center gap-2"><Mail size={15} className="shrink-0 text-muted" />{mailError ? "Email check unavailable" : mailLoading && mail.unread_count === 0 ? "Checking email…" : `${mail.unread_count} unread email conversation${mail.unread_count === 1 ? "" : "s"}`}</p><Link to="/inbox" className="inline-flex items-center gap-2 font-medium text-ink-2 hover:underline">Open Inbox<ChevronRight size={14} /></Link></div>
+          {inboxError ? <p className="px-5 pb-4 text-sm text-bad">To do is unavailable. Retry above.</p> : <ul className="pb-2 text-sm">
+            <AttentionRow to="/todo" icon={<CalendarClock size={15} />} count={requests.length} loading={inboxPending} label={`${requests.length} booking request${requests.length === 1 ? "" : "s"}`} />
+            <AttentionRow to="/todo" icon={<BanknoteArrowDown size={15} />} count={payments.length} loading={inboxPending} label={`${payments.length} payment${payments.length === 1 ? "" : "s"} to confirm`} detail={owed ? money(owed) : undefined} />
+            <AttentionRow to="/mail" icon={<Mail size={15} />} count={mailError ? 0 : mail.unread_count} loading={mailLoading && mail.unread_count === 0} label={mailLabel} />
+          </ul>}
+          {!inboxError && !inboxPending && requests.length === 0 && payments.length === 0 && !mailError && !mailLoading && mail.unread_count === 0 && <p className="flex items-center gap-2 px-5 pb-4 text-[13px] text-muted"><CircleCheck size={15} className="text-good" /> All caught up</p>}
         </Card>
       </div>
 
@@ -83,14 +90,14 @@ export function Dashboard() {
           icon={<Wallet size={17} />}
         />
         <KpiCard
-          label="Money in"
+          label="Income"
           value={figuresUnavailable ? figuresPlaceholder : money(cur.income)}
           delta={figuresUnavailable ? undefined : percentChange(cur.income, prev.income)}
           deltaLabel={prevLabel}
           icon={<PoundSterling size={17} />}
         />
         <KpiCard
-          label="Money out"
+          label="Expenses"
           value={figuresUnavailable ? figuresPlaceholder : money(cur.expense)}
           delta={figuresUnavailable ? undefined : percentChange(cur.expense, prev.expense)}
           deltaLabel={prevLabel}
@@ -100,32 +107,14 @@ export function Dashboard() {
         <KpiCard label="Clients this month" value={clientsError ? "Unavailable" : clientsLoading ? "…" : String(clientsThisMonth)} icon={<Users size={17} />} />
       </div>
 
-      {overdue.length > 0 && (
-        <Link
-          to="/schedule"
-          className="mt-4 flex items-center gap-3 rounded-3xl border border-line bg-surface px-5 py-3.5 hover:bg-surface-2/60"
-        >
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-soft text-rose">
-            <BanknoteArrowDown size={17} />
-          </span>
-          <span className="min-w-0 flex-1 text-[13.5px]">
-            <b>{money(overdue.reduce((s, a) => s + (a.price_pence ?? 0), 0))}</b> still to collect from{" "}
-            {overdue.length} past appointment{overdue.length === 1 ? "" : "s"}
-            <span className="block text-[12px] text-muted">
-              None of it is in the figures above until you mark them paid
-            </span>
-          </span>
-          <ChevronRight size={16} className="shrink-0 text-muted" />
-        </Link>
-      )}
 
       {empty ? (
         <Card className="mt-6">
-          <EmptyState icon={<Sparkles size={20} />} title="No entries yet">
-            Add your first client or expense and your charts will appear here.
+          <EmptyState icon={<Sparkles size={20} />} title="No income or expenses yet">
+            Mark an appointment paid, or record income or an expense, and your charts will appear here.
             <div className="mt-4">
               <Button variant="primary" onClick={() => openNewEntry()}>
-                Add first entry
+                <Plus size={15} /> Add income or expense
               </Button>
             </div>
           </EmptyState>
@@ -164,7 +153,7 @@ export function Dashboard() {
                 </div>
               </div>
               <div className="px-5 pb-5">
-                <div className="eyebrow mb-3 text-ink-2">Income by service</div>
+                <div className="eyebrow mb-3 text-ink-2">Income by type</div>
                 {incomeSources.length ? (
                   <CategoryDonut
                     centreLabel="Income"
@@ -192,9 +181,9 @@ export function Dashboard() {
             </Card>
             <Card>
               <CardHeader
-                title="Recent entries"
+                title="Recent income & expenses"
                 action={
-                  <Link to="/monthly" className="eyebrow text-ink-2 underline decoration-rose underline-offset-4 hover:text-ink">
+                  <Link to="/finances" className="eyebrow text-ink-2 underline decoration-rose underline-offset-4 hover:text-ink">
                     View all
                   </Link>
                 }
@@ -213,4 +202,16 @@ export function Dashboard() {
 function greeting(now: Date) {
   const h = now.getHours();
   return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+}
+
+/** One line of the attention card, linking straight to where it's dealt with. */
+function AttentionRow({ to, icon, label, count, loading, detail }: { to: string; icon: React.ReactNode; label: string; count: number; loading?: boolean; detail?: string }) {
+  return <li>
+    <Link to={to} className={`flex items-center gap-2.5 px-5 py-2 hover:bg-surface-2/60 ${count > 0 ? "font-medium text-ink" : "text-muted"}`}>
+      <span className={count > 0 ? "text-rose" : "text-muted"}>{icon}</span>
+      <span className="min-w-0 flex-1">{loading ? "Checking…" : label}</span>
+      {detail && <span className="tabular text-xs text-ink-2">{detail}</span>}
+      <ChevronRight size={14} className="shrink-0 text-muted" />
+    </Link>
+  </li>;
 }

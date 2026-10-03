@@ -64,6 +64,7 @@ async function catalogueFlows(browser, width, output) {
     await page.getByRole("heading", { name: "Services", exact: true }).waitFor();
     assert.equal(fixture.select("SELECT service_id,income_kind FROM categories WHERE id=901")[0].service_id, null, "Matching names must not guess an explicit service relationship");
     assert.equal(fixture.select("SELECT income_kind FROM categories WHERE id=901")[0].income_kind, "legacy");
+    await page.getByRole("button", { name: "Finances", exact: true }).click();
     assert.equal(await page.getByRole("heading", { name: "Income categories", exact: true }).count(), 0);
     await page.getByRole("heading", { name: "Other income", exact: true }).waitFor();
     await page.getByRole("heading", { name: "Expense categories", exact: true }).waitFor();
@@ -81,6 +82,7 @@ async function catalogueFlows(browser, width, output) {
     await otherEditor.waitFor({ state: "hidden" });
     assert.deepEqual(fixture.select("SELECT type,income_kind,service_id,default_pence FROM categories WHERE name='Product sale'")[0], { type: "income", income_kind: "other", service_id: null, default_pence: null });
     await capture(page, output, `catalogue-settings-${width}.png`);
+    await page.getByRole("button", { name: "Bookings & website", exact: true }).click();
     await page.getByRole("button", { name: `Edit ${services[0].name}`, exact: true }).click();
     const editor = page.getByRole("dialog", { name: "Edit service", exact: true });
     await editor.waitFor();
@@ -136,7 +138,7 @@ async function catalogueFlows(browser, width, output) {
     assert.equal(records.appointments.length, 1, "Other income must not create a booking or request");
     assert.equal(fixture.mutations.filter(mutation => mutation.operation === "appointments").length, 0);
 
-    await page.locator('nav a[title="Monthly"]').click();
+    await page.locator('nav a[title="Finances"]').click();
     const newOtherRow = page.getByRole("row").filter({ hasText: "+\u00a319.37" });
     await newOtherRow.getByRole("button", { name: "Edit", exact: true }).click();
     const correctedSource = page.getByRole("dialog", { name: "Edit entry", exact: true });
@@ -179,15 +181,16 @@ async function catalogueFlows(browser, width, output) {
     assert.equal(fixture.select("SELECT amount_pence FROM transactions WHERE category_id=903")[0].amount_pence, 643);
     await openEntry(page);
     entry = page.getByRole("dialog", { name: "New entry", exact: true });
-    await entry.getByRole("button", { name: "Money out", exact: true }).click();
+    await entry.getByRole("button", { name: "Expense", exact: true }).click();
     await entry.getByLabel(/^Expense category/).selectOption("904");
     await entry.getByLabel(/^Amount/).fill("7.25");
     await capture(page, output, `catalogue-expense-${width}.png`);
-    await entry.getByRole("button", { name: "Add expense", exact: true }).click();
+    await entry.getByRole("button", { name: "Record expense", exact: true }).click();
     await entry.waitFor({ state: "hidden" });
     assert.deepEqual(fixture.select("SELECT type,amount_pence,service_id FROM transactions WHERE category_id=904")[0], { type: "expense", amount_pence: 725, service_id: null });
 
     await page.locator('nav a[title="Settings"]').click();
+    await page.getByRole("button", { name: "Finances", exact: true }).click();
     await reviewLegacy(page, services[0].name, services[0].id);
     await reviewLegacy(page, "Historic product sale", null);
     assert.deepEqual(fixture.select("SELECT income_kind,service_id FROM categories WHERE id=901")[0], { income_kind: "service", service_id: services[0].id });
@@ -197,6 +200,7 @@ async function catalogueFlows(browser, width, output) {
     await capture(page, output, `catalogue-reviewed-income-${width}.png`);
 
     const originalName = services[0].name;
+    await page.getByRole("button", { name: "Bookings & website", exact: true }).click();
     await page.getByRole("button", { name: `Edit ${originalName}`, exact: true }).click();
     const rename = page.getByRole("dialog", { name: "Edit service", exact: true });
     await rename.getByLabel("Name", { exact: true }).fill("Renamed express treatment");
@@ -238,9 +242,9 @@ async function catalogueFlows(browser, width, output) {
     await capture(page, output, `catalogue-historical-appointment-${width}.png`);
     await savedBooking.getByRole("button", { name: "Cancel", exact: true }).click();
 
-    await page.locator('nav a[title="Monthly"]').click();
+    await page.locator('nav a[title="Finances"]').click();
     await page.getByText("Saved bronze treatment", { exact: true }).waitFor();
-    await page.getByRole("button", { name: "Money in", exact: true }).click();
+    await page.getByRole("button", { name: "Income", exact: true }).click();
     await page.getByLabel("Income type", { exact: true }).selectOption("service");
     await page.getByText(originalName, { exact: true }).first().waitFor();
     assert.equal(await page.getByText("Tips", { exact: true }).count(), 0);
@@ -264,7 +268,7 @@ async function catalogueFlows(browser, width, output) {
     await linkedEntry.getByLabel(/^Appointment payment/).waitFor();
     assert.equal(await linkedEntry.getByLabel(/^Appointment payment/).getAttribute("readonly"), "");
     assert.equal(await linkedEntry.getByLabel(/^Payment for/).count(), 0);
-    assert.equal(await linkedEntry.getByRole("button", { name: "Money out", exact: true }).count(), 0, "An appointment payment cannot be detached by an income source correction");
+    assert.equal(await linkedEntry.getByRole("button", { name: "Expense", exact: true }).count(), 0, "An appointment payment cannot be detached by an income source correction");
     assert.equal(await linkedEntry.getByLabel(/^Amount/).inputValue(), "17.50");
     await capture(page, output, `catalogue-linked-payment-editor-${width}.png`);
     await linkedEntry.getByRole("button", { name: "Cancel", exact: true }).click();
@@ -272,7 +276,7 @@ async function catalogueFlows(browser, width, output) {
     await historicRow.getByRole("button", { name: "Edit", exact: true }).click();
     const toExpense = page.getByRole("dialog", { name: "Edit entry", exact: true });
     await toExpense.getByLabel(/^Income type/).waitFor();
-    await toExpense.getByRole("button", { name: "Money out", exact: true }).click();
+    await toExpense.getByRole("button", { name: "Expense", exact: true }).click();
     await toExpense.getByLabel(/^Expense category/).selectOption("904");
     assert.equal(await toExpense.getByLabel(/^Amount/).inputValue(), "31.00");
     await capture(page, output, `catalogue-income-to-expense-correction-${width}.png`);
@@ -290,19 +294,19 @@ async function catalogueFlows(browser, width, output) {
     await toOther.waitFor({ state: "hidden" });
     assert.deepEqual(fixture.select("SELECT amount_pence,service_id,service_name,income_kind FROM transactions WHERE id=?", [standalone.id])[0], { amount_pence: 1937, service_id: null, service_name: "", income_kind: "other" });
 
-    await page.getByRole("button", { name: "Money out", exact: true }).click();
+    await page.getByRole("button", { name: "Expenses", exact: true }).click();
     const expenseRow = page.getByRole("row").filter({ hasText: "\u2212\u00a37.25" });
     await expenseRow.getByRole("button", { name: "Edit", exact: true }).click();
     const toService = page.getByRole("dialog", { name: "Edit entry", exact: true });
     await toService.getByLabel(/^Expense category/).waitFor();
-    await toService.getByRole("button", { name: "Money in", exact: true }).click();
+    await toService.getByRole("button", { name: "Income", exact: true }).click();
     await toService.getByLabel(/^Income type/).selectOption(`service:${services[1].id}`);
     assert.equal(await toService.getByLabel(/^Amount/).inputValue(), "7.25");
     await toService.getByRole("button", { name: "Save changes", exact: true }).click();
     await toService.waitFor({ state: "hidden" });
     assert.deepEqual(fixture.select("SELECT type,amount_pence,service_id,income_kind FROM transactions WHERE amount_pence=725")[0], { type: "income", amount_pence: 725, service_id: services[1].id, income_kind: "service" });
 
-    await page.getByRole("button", { name: "Money in", exact: true }).click();
+    await page.getByRole("button", { name: "Income", exact: true }).click();
     await page.getByLabel("Income type", { exact: true }).selectOption("other");
     await page.getByText("Tips", { exact: true }).first().waitFor();
     await page.getByText("Historic product sale", { exact: true }).waitFor();
@@ -311,7 +315,7 @@ async function catalogueFlows(browser, width, output) {
     fixture.execute("INSERT INTO transactions(type,date,amount_pence,category_id,client_id,description,service_id,service_name,category_name_snapshot,income_kind) VALUES('income',?,1234567,NULL,NULL,'Large totals browser fixture',?,'Classic tan','','service')", [date, services[1].id]);
     fixture.execute("INSERT INTO transactions(type,date,amount_pence,category_id,client_id,description,service_id,service_name,category_name_snapshot,income_kind) VALUES('expense',?,234567,904,NULL,'Large totals browser fixture',NULL,'','Supplies',NULL)", [date]);
     await page.locator('nav a[title="Dashboard"]').click();
-    await page.getByText("Income by service", { exact: true }).waitFor();
+    await page.getByText("Income by type", { exact: true }).waitFor();
     const charts = await settleCharts(page);
     const fittedValues = await assertFittedValues(page);
     assert.ok(fittedValues.some(value => value.text === "\u00a312,412.89"), "Dashboard must display the entire realistic income amount, not abbreviate or clip it");

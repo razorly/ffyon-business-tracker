@@ -216,7 +216,7 @@ async function desktopFeatures(browser, url, output, evidence) {
     const fixture = await installDesktopFixture(page, records);
     try {
       await page.goto(url, { waitUntil: "networkidle" });
-      await page.locator('nav a[title="Inbox"]').click();
+      await page.locator('nav a[title="To do"]').click();
       await page.getByRole("button", { name: clients[0].name, exact: true }).waitFor();
       await page.getByRole("button", { name: "Accept date", exact: true }).waitFor();
       assert.equal(fixture.commands.filter(item => item.command === "lookup_postcode").length, 0, "Opening requests must not disclose a postcode to a map provider");
@@ -260,9 +260,9 @@ async function desktopFeatures(browser, url, output, evidence) {
       await page.locator('nav a[title="Schedule"]').click();
       await page.getByRole("button", { name: "New entry", exact: true }).click();
       const newEntry = page.getByRole("dialog", { name: "New entry", exact: true });
-      await newEntry.getByLabel(/^Income type/).waitFor();
+      await newEntry.getByText(/^For tips, product sales and other income\./).waitFor();
       assert.equal(await newEntry.getByLabel(/^Payment for/).count(), 0);
-      assert.equal(await newEntry.getByLabel(/^Income type/).inputValue(), "other:");
+      assert.equal(await newEntry.getByLabel(/^Income type/).count(), 0, "A one-option income type list is replaced by guidance");
       assert.equal(await newEntry.getByLabel(/^Service/).count(), 0);
       const carriedDate = new Date(`${date}T12:00:00Z`);
       carriedDate.setUTCDate(carriedDate.getUTCDate() + 2);
@@ -312,7 +312,7 @@ async function desktopFeatures(browser, url, output, evidence) {
       await page.locator('section[aria-label="Appointments needing a confirmed time"]').waitFor();
       await capture(page, output, `admin-all-day-calendar-${viewport.width}.png`);
 
-      await page.locator('nav a[title="Inbox"]').click();
+      await page.locator('nav a[title="To do"]').click();
       await page.getByRole("button", { name: clients[0].name, exact: true }).waitFor();
       assert.equal(await page.getByRole("button", { name: clients[1].name, exact: true }).count(), 0, "Admin-created entries must stay out of Requests");
       await page.locator('nav a[title="Schedule"]').click();

@@ -299,9 +299,9 @@ pub fn notify_payment_confirmation<R: Runtime>(app: AppHandle<R>, count: u32) ->
     app.state::<crate::access::AccessState>().require_authorized()?;
     if count == 0 { return Ok(()); }
     let body = if count == 1 {
-        "1 completed appointment needs payment confirmation in Inbox.".to_string()
+        "1 finished appointment needs its payment confirmed. Open To do in Tanned by Ffy.".to_string()
     } else {
-        format!("{count} completed appointments need payment confirmation in Inbox.")
+        format!("{count} finished appointments need their payments confirmed. Open To do in Tanned by Ffy.")
     };
     app.notification().builder().title("Tanned by Ffy: confirm payments").body(body)
         .show().map_err(|error| error.to_string())

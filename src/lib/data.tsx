@@ -8,6 +8,8 @@ export interface AppointmentDraft {
   clientId?: number;
   clientName?: string;
   serviceId?: string;
+  /** Opened from New entry, so the form can switch back to income or expense. */
+  fromEntry?: boolean;
 }
 
 interface DataCtx {
@@ -15,7 +17,7 @@ interface DataCtx {
   version: number;
   refresh: () => void;
   /** Entry dialog control */
-  entry: { open: boolean; type: TxType; editing: TransactionRow | null; clientId?: number };
+  entry: { open: boolean; type: TxType; editing: TransactionRow | null; clientId?: number; clientName?: string };
   openNewEntry: (type?: TxType, clientId?: number) => void;
   openEditEntry: (tx: TransactionRow) => void;
   closeEntry: () => void;
@@ -23,6 +25,7 @@ interface DataCtx {
   appointment: { open: boolean; editing: AppointmentRow | null; draft: AppointmentDraft | null };
   openNewAppointment: (draft: AppointmentDraft) => void;
   switchEntryToAppointment: (draft: AppointmentDraft) => void;
+  switchAppointmentToEntry: (type: TxType, client?: { id: number | null; name: string }) => void;
   openEditAppointment: (a: AppointmentRow) => void;
   closeAppointment: () => void;
 }
@@ -76,7 +79,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const closeAppointment = useCallback(() => setAppointment((a) => ({ ...a, open: false })), []);
   const switchEntryToAppointment = useCallback((draft: AppointmentDraft) => {
     setEntry((e) => ({ ...e, open: false }));
-    setAppointment({ open: true, editing: null, draft });
+    setAppointment({ open: true, editing: null, draft: { ...draft, fromEntry: true } });
+  }, []);
+  const switchAppointmentToEntry = useCallback((type: TxType, client?: { id: number | null; name: string }) => {
+    setAppointment((a) => ({ ...a, open: false }));
+    setEntry({ open: true, type, editing: null, clientId: client?.id ?? undefined, clientName: client?.name || undefined });
   }, []);
 
   // Ctrl/Cmd + N opens a new entry anywhere in the app
@@ -104,6 +111,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         appointment,
         openNewAppointment,
         switchEntryToAppointment,
+        switchAppointmentToEntry,
         openEditAppointment,
         closeAppointment,
       }}

@@ -96,12 +96,12 @@ async function workflows(browser, width, output) {
     const receipt = fixture.select("SELECT transaction_id FROM appointments WHERE id=?", [localId])[0].transaction_id;
     assert.equal(fixture.select("SELECT amount_pence FROM transactions WHERE id=?", [receipt])[0].amount_pence, 1875);
     await page.getByRole("button", { name: /UI Workflow Customer/ }).first().click();
-    await appointment.getByRole("button", { name: "Cancelled", exact: true }).click();
+    await appointment.getByRole("button", { name: "Mark cancelled", exact: true }).click();
     await appointment.waitFor({ state: "hidden" });
     assert.equal(records.appointments[0].status, "cancelled");
     assert.equal(fixture.select("SELECT transaction_id FROM appointments WHERE id=?", [localId])[0].transaction_id, receipt);
     await page.getByRole("button", { name: /UI Workflow Customer/ }).first().click();
-    await appointment.getByRole("button", { name: "Confirm", exact: true }).click();
+    await appointment.getByRole("button", { name: "Restore booking", exact: true }).click();
     await appointment.waitFor({ state: "hidden" });
     assert.equal(records.appointments[0].status, "confirmed");
     assert.equal(fixture.select("SELECT transaction_id FROM appointments WHERE id=?", [localId])[0].transaction_id, receipt);

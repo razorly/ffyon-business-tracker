@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
-import { CalendarDays, CalendarHeart, Cloud, CloudOff, Inbox, LayoutDashboard, LoaderCircle, Mail, Plus, RefreshCw, Settings, Users } from "lucide-react";
+import { CalendarHeart, Cloud, CloudOff, LayoutDashboard, ListChecks, LoaderCircle, Mail, Plus, RefreshCw, Settings, Users, Wallet } from "lucide-react";
 import { useData } from "@/lib/data";
 import { useInbox } from "@/lib/inbox";
 import { getSyncState, retryPendingMutation, subscribeSync, syncNow } from "@/lib/sync";
@@ -13,9 +13,9 @@ import { BrandLogo } from "./BrandLogo";
 const nav = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
   { to: "/schedule", label: "Schedule", icon: CalendarHeart },
-  { to: "/inbox", label: "Inbox", icon: Inbox },
+  { to: "/todo", label: "To do", icon: ListChecks },
   { to: "/mail", label: "Mail", icon: Mail },
-  { to: "/monthly", label: "Monthly", icon: CalendarDays },
+  { to: "/finances", label: "Finances", icon: Wallet },
   { to: "/clients", label: "Clients", icon: Users },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
@@ -23,8 +23,11 @@ const nav = [
 export function Layout() {
   const { openNewEntry } = useData();
   const { requests, payments, mail } = useInbox();
-  const appointments = new Set([...requests, ...payments].map(row => row.id)).size;
-  const attention = appointments + mail.unread_count;
+  // To do counts appointments only; unread email has its own badge on Mail.
+  const todo = new Set([...requests, ...payments].map(row => row.id)).size;
+  const badge = (to: string) => to === "/todo" ? todo : to === "/mail" ? mail.unread_count : 0;
+  const describe = (to: string, label: string) => to === "/todo" && todo ? `To do, ${todo} appointment${todo === 1 ? "" : "s"} needing attention`
+    : to === "/mail" && mail.unread_count ? `Mail, ${mail.unread_count} unread conversation${mail.unread_count === 1 ? "" : "s"}` : label;
   return (
     <div className="app-layout flex h-full">
       <aside className="flex w-16 shrink-0 flex-col border-r border-line bg-surface px-2 py-6 sm:w-60 sm:px-4">
@@ -34,7 +37,7 @@ export function Layout() {
           <div className="mx-auto mt-3 h-px w-3/4 bg-rose" />
         </div>
 
-        <Button variant="primary" className="mb-5 w-full" aria-label="New entry" title="New entry" onClick={() => openNewEntry()}>
+        <Button variant="primary" className="mb-5 w-full" aria-label="New entry" title="New appointment, income or expense" onClick={() => openNewEntry()}>
           <Plus size={16} /><span className="hidden sm:inline">New entry</span>
         </Button>
 
@@ -45,7 +48,7 @@ export function Layout() {
               to={to}
               end={to === "/"}
               title={label}
-              aria-label={to === "/inbox" && attention ? `Inbox, ${attention} ${mail.unread_count ? "item" : "appointment"}${attention === 1 ? "" : "s"} needing attention` : to === "/mail" && mail.unread_count ? `Mail, ${mail.unread_count} unread conversation${mail.unread_count === 1 ? "" : "s"}` : label}
+              aria-label={describe(to, label)}
               className={({ isActive }) =>
                 cn(
                   "relative flex items-center gap-3 rounded-full px-3 py-2.5 text-[14.5px] font-medium transition-colors sm:px-4",
@@ -53,7 +56,7 @@ export function Layout() {
                 )
               }
             >
-              <Icon size={17} className="shrink-0" /><span className="hidden sm:inline">{label}</span>{((to === "/inbox" && attention > 0) || (to === "/mail" && mail.unread_count > 0)) && <span data-testid={to === "/mail" ? "mail-badge" : "inbox-badge"} className="absolute right-0 top-0 rounded-full bg-accent px-1.5 py-0.5 text-[11px] text-accent-ink sm:static sm:ml-auto sm:px-2">{to === "/mail" ? mail.unread_count : attention}</span>}
+              <Icon size={17} className="shrink-0" /><span className="hidden sm:inline">{label}</span>{badge(to) > 0 && <span data-testid={to === "/mail" ? "mail-badge" : "todo-badge"} className="absolute right-0 top-0 rounded-full bg-accent px-1.5 py-0.5 text-[11px] text-accent-ink sm:static sm:ml-auto sm:px-2">{badge(to)}</span>}
             </NavLink>
           ))}
         </nav>

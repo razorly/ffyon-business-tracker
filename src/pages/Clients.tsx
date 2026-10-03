@@ -22,6 +22,7 @@ import { Button, Card, ConfirmModal, EmptyState, Field, Input, LoadError, Modal,
 import { TransactionList } from "@/components/TransactionList";
 
 type SortKey = "name" | "total" | "recent";
+const STATUS: Record<string, string> = { pending: "Request", confirmed: "Confirmed", rejected: "Rejected", cancelled: "Cancelled", no_show: "No-show" };
 
 export function Clients() {
   const access = useAccess();
@@ -67,7 +68,8 @@ export function Clients() {
     [],
   );
   const [appointments, , appointmentsError] = useLoad(() => selectedId ? listAppointments({ clientId: selectedId }) : Promise.resolve([]), [selectedId], []);
-  const pastAppointments = appointments.filter((a) => a.date < today || a.status !== "confirmed").sort((a, b) => b.date.localeCompare(a.date) || b.start_time.localeCompare(a.start_time)).slice(0, 12);
+  // Upcoming requests and confirmed bookings are listed above; history is everything past or called off.
+  const pastAppointments = appointments.filter((a) => a.date < today || (a.status !== "confirmed" && a.status !== "pending")).sort((a, b) => b.date.localeCompare(a.date) || b.start_time.localeCompare(a.start_time)).slice(0, 12);
 
   const totalRevenue = clients.reduce((s, c) => s + c.total_pence, 0);
 
@@ -109,7 +111,7 @@ export function Clients() {
 
           {visible.length === 0 ? (
             <EmptyState icon={<Users size={20} />} title={clients.length ? "No matches" : "No clients yet"}>
-              {clients.length ? "Try another search." : "Clients are added automatically when you log a tan, or add one here."}
+              {clients.length ? "Try another search." : "Clients appear when they book online or when you book them in. You can also add one here."}
             </EmptyState>
           ) : (
             <div className="max-w-full overflow-x-auto" role="region" aria-label="Client list" tabIndex={0}>
@@ -187,7 +189,7 @@ export function Clients() {
                 <MiniStat label="Average" value={selected.visits ? money(Math.round(selected.total_pence / selected.visits)) : "—"} />
               </div>
               <div className="flex flex-wrap items-center justify-between gap-2 px-5 pt-5 pb-2">
-                <span className="eyebrow text-ink-2">Booked in</span>
+                <span className="eyebrow text-ink-2">Upcoming</span>
                 <Button
                   size="sm"
                   disabled={access.state !== "online" || !!selected.disabled}
@@ -218,16 +220,16 @@ export function Clients() {
                   ))}
                 </ul>
               ) : (
-                <p className="px-5 text-[13px] text-muted">Nothing booked in yet.</p>
+                <p className="px-5 text-[13px] text-muted">Nothing booked.</p>
               )}
 
               <div className="eyebrow px-5 pt-5 pb-2 text-ink-2">Appointment history</div>
               {pastAppointments.length ? <ul className="max-h-[300px] divide-y divide-line overflow-y-auto">
-                {pastAppointments.map((a) => <li key={a.id}><button onClick={() => openEditAppointment(a)} className="flex w-full flex-wrap items-center justify-between gap-2 px-5 py-2 text-left text-[13px] hover:bg-surface-2 cursor-pointer"><span>{shortDate(a.date)} · {a.time_confirmed === 0 ? "Time to confirm" : timeLabel(a.start_time)}<span className="block text-xs text-muted">{a.service_name || a.category_name || "Appointment"}{a.is_remote ? " · home visit" : ""}</span></span><span className="text-xs text-muted">{a.status.replace("_", " ")}{a.transaction_id != null ? " · paid" : ""}</span></button></li>)}
+                {pastAppointments.map((a) => <li key={a.id}><button onClick={() => openEditAppointment(a)} className="flex w-full flex-wrap items-center justify-between gap-2 px-5 py-2 text-left text-[13px] hover:bg-surface-2 cursor-pointer"><span>{shortDate(a.date)} · {a.time_confirmed === 0 ? "Time to confirm" : timeLabel(a.start_time)}<span className="block text-xs text-muted">{a.service_name || a.category_name || "Appointment"}{a.is_remote ? " · home visit" : ""}</span></span><span className="text-xs text-muted">{STATUS[a.status]}{a.transaction_id != null ? " · paid" : ""}</span></button></li>)}
               </ul> : <p className="px-5 text-[13px] text-muted">No appointment history yet.</p>}
 
               <div className="flex flex-wrap items-center justify-between gap-2 px-5 pt-5 pb-2">
-                <span className="eyebrow text-ink-2">Financial history</span>
+                <span className="eyebrow text-ink-2">Payments</span>
                 <Button size="sm" onClick={() => openNewEntry("income", selected.id)}>
                   <Plus size={14} /> Record income
                 </Button>
@@ -237,12 +239,12 @@ export function Clients() {
                   <TransactionList rows={history} />
                 </div>
               ) : (
-                <p className="px-5 pb-5 text-[13px] text-muted">No visits logged yet.</p>
+                <p className="px-5 pb-5 text-[13px] text-muted">No payments recorded yet.</p>
               )}
             </>
           ) : (
             <EmptyState icon={<UserRound size={20} />} title="Select a client">
-              See their visit history and totals.
+              See their bookings, payments and totals.
             </EmptyState>
           )}
         </Card>

@@ -117,7 +117,7 @@ export function TrayBridge() {
       }
       refresh();
       const who = appointment.client_name ?? (appointment.service_name || appointment.category_name || "Appointment");
-      toast.success(`${money(appointment.price_pence)} added to your money`, {
+      toast.success(`${money(appointment.price_pence)} recorded as income`, {
         description: who,
         duration: TOAST_MS,
         action: {

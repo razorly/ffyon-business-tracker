@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { ArrowDownLeft, ArrowUpRight, CalendarPlus, Trash2 } from "lucide-react";
+import { ArrowDownLeft, ArrowUpRight, Trash2 } from "lucide-react";
 import {
   createClient,
   createTransaction,
@@ -21,7 +21,8 @@ import { isoDate, money, parseAmount, penceToInput } from "@/lib/format";
 import { businessNow } from "@/lib/dates";
 import { listServices, type CloudService } from "@/lib/sync";
 import { toastDeleted } from "@/lib/undo";
-import { Button, Field, Input, Modal, Segmented, Select, Textarea } from "./ui";
+import { Button, Field, Input, Modal, Select, Textarea } from "./ui";
+import { EntryModeSwitch, type EntryMode } from "./EntryModeSwitch";
 import { ClientCombobox, type ClientChoice } from "./ClientCombobox";
 
 type IncomeSource = "service" | "other" | "legacy";
@@ -60,6 +61,8 @@ export function EntryDialog() {
     setLoaded(false);
     setLoadedFor(null);
     setError(null);
+    // Show the chosen mode straight away; the rest of the form fills in once loaded.
+    setType(editing?.type ?? entry.type);
     Promise.all([listCategories("expense"), listOtherIncomeCategories(), listClients(),
       editing ? listServices() : Promise.resolve([]), editing ? listAppointments() : Promise.resolve([])])
       .then(([expenses, other, cls, catalog, bookings]) => {
@@ -83,7 +86,7 @@ export function EntryDialog() {
         setAmountIsDefault(!editing && defaultAmount != null);
         setCategoryId(editing ? String(editing.category_id ?? "") : t === "expense" ? String(expenses[0]?.id ?? "") : "");
         const cid = editing?.client_id ?? entry.clientId ?? null;
-        setClient({ id: cid, name: cid ? cls.find((c) => c.id === cid)?.name ?? "" : "" });
+        setClient({ id: cid, name: cid ? cls.find((c) => c.id === cid)?.name ?? "" : entry.clientName ?? "" });
         setDescription(editing?.description ?? "");
         setLoaded(true);
         setLoadedFor(entry);
@@ -92,7 +95,7 @@ export function EntryDialog() {
       .catch(() => { if (alive) setError("Couldn't load your payment details. Close this entry and try again."); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [entry.open, editing, entry.type, entry.clientId]);
+  }, [entry.open, editing, entry.type, entry.clientId, entry.clientName]);
 
   const selectedService = services.find((s) => s.id === serviceId);
   const typeCategories = type === "expense" ? expenseCategories : otherCategories;
@@ -143,14 +146,15 @@ export function EntryDialog() {
     applyDefault(value === "expense" ? expenseCategories[0]?.default_pence ?? null : null);
   };
 
-  const switchEntryMode = (value: TxType | "appointment") => {
+  const switchEntryMode = (value: EntryMode) => {
     if (value !== "appointment") return switchType(value);
     if (editing) return;
+    // Whatever has been typed so far carries over, so switching never loses the client.
     switchEntryToAppointment({
       date: ready ? date : isoDate(businessNow()),
       start_time: "09:00",
-      clientId: (loaded ? client.id : entry.clientId) ?? undefined,
-      clientName: loaded ? client.name : undefined,
+      clientId: (ready ? client.id : entry.clientId) ?? undefined,
+      clientName: ready ? client.name : entry.clientName,
     });
   };
 
@@ -226,22 +230,18 @@ export function EntryDialog() {
         {linkedAppointment ? (
           <p className="inline-flex items-center gap-1.5 text-sm text-ink-2">
             {type === "income" ? <ArrowDownLeft size={14} /> : <ArrowUpRight size={14} />}
-            {type === "income" ? "Money in" : "Money out"}
+            {type === "income" ? "Income" : "Expense"}
           </p>
         ) : (
-          <Segmented<TxType | "appointment"> className={editing ? "w-full" : "w-full flex-col rounded-xl sm:flex-row sm:rounded-full"} value={type} onChange={switchEntryMode} options={[
-            ...(!editing ? [{ value: "appointment" as const, label: <span className="inline-flex items-center gap-1.5"><CalendarPlus size={14} /> Appointment</span> }] : []),
-            { value: "income", label: <span className="inline-flex items-center gap-1.5"><ArrowDownLeft size={14} /> Money in</span> },
-            { value: "expense", label: <span className="inline-flex items-center gap-1.5"><ArrowUpRight size={14} /> Money out</span> },
-          ]} />
+          <EntryModeSwitch value={type} onChange={switchEntryMode} modes={editing ? ["income", "expense"] : undefined} />
         )}
 
         {editing && type === "income" && linkedAppointment ? (
           <Field label="Appointment payment">
             <Input readOnly value={editing.service_name || editing.category_name_snapshot || editing.category_name || "Other income"} />
           </Field>
-        ) : type === "income" ? (
-          <Field label="Income type">
+        ) : type === "income" && (editing || otherCategories.length > 0) ? (
+          <Field label="Income type" hint={editing ? undefined : "Paid for an appointment? Mark it paid from the appointment or To do instead."}>
             <Select value={incomeSource === "service" ? `service:${serviceId}` : incomeSource === "legacy" ? "legacy:" : `other:${categoryId}`} onChange={event => pickIncomeType(event.target.value)} disabled={loading}>
               {editing ? (["other", "service", "legacy"] as const).map(source => {
                 const choices = incomeChoices.filter(choice => choice.source === source);
@@ -251,6 +251,8 @@ export function EntryDialog() {
               }) : incomeChoices.map(choice => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
             </Select>
           </Field>
+        ) : type === "income" ? (
+          <p className="text-xs text-muted">For tips, product sales and other income. Paid for an appointment? Mark it paid from the appointment or To do instead.</p>
         ) : (
           <Field label="Expense category">
             <Select value={categoryId} onChange={(event) => pickCategory(event.target.value)} disabled={loading}>
@@ -302,7 +304,7 @@ export function EntryDialog() {
           <div className="flex gap-2">
             <Button type="button" disabled={saving} onClick={closeEntry}>Cancel</Button>
             <Button type="submit" variant="primary" disabled={saving || loading || !loaded}>
-              {editing ? "Save changes" : type === "income" ? "Record income" : "Add expense"}
+              {editing ? "Save changes" : type === "income" ? "Record income" : "Record expense"}
             </Button>
           </div>
         </div>

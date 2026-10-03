@@ -2,14 +2,15 @@
 
 A small desktop app for tracking income and outgoings for a tanning business. It runs on Mac and Windows.
 
-- **Dashboard**: shows this month's profit, money in and money out (each compared with last month) and clients this month. It also has a 12-month income vs expenses chart, a monthly profit chart, a tax-year total, income by service, and recent entries.
-- **Schedule**: a calendar of appointments, in day, week or month view. Click any empty time to book one; click an appointment to open it. Regulars can be booked as a repeat (every week up to every 4 weeks), and an appointment can be marked cancelled or a no-show. Booking changes nothing about the money — an appointment only becomes an income entry when it's marked **paid**, and anything past that hasn't been marked paid is listed under **Money you're owed**.
-- **New entry**: press **Ctrl/⌘ + N** anywhere. Choose **Appointment** to open the full booking form with the selected date and client, without recording income. **Money in** opens directly on **Other income**, with an optional income type, client and note. Appointment payments are handled in the booking form or Inbox. Expenses keep their own categories and usual amounts.
-- **Inbox**: customer requests and completed appointments awaiting payment confirmation, in separate sections. Timed appointments appear when their duration has finished; confirmed date-only bookings appear the following day. Confirm the amount received with **Confirm paid**. Cancelled, pending, rejected, no-show, paid and free bookings are excluded from payment reminders.
-- **Monthly view**: step through the months. It shows the month's totals, a day-by-day chart, and a table of entries you can search, filter and sort, with edit and delete.
+- **Dashboard**: today's appointments, a **Needs your attention** card (booking requests, payments to confirm and unread email, each linking straight to where it's dealt with), this month's profit, income and expenses (each compared with last month) and clients this month. It also has a 12-month income vs expenses chart, a monthly profit chart, a tax-year total, income by type, and recent income and expenses.
+- **Schedule**: a calendar of appointments, in day, week or month view. Click any empty time to book one; click an appointment to open it. Regulars can be booked as a repeat (every week up to every 4 weeks), and an appointment can be marked cancelled or a no-show. Booking adds no income — an appointment only becomes income when it's marked **paid**. Finished appointments waiting for payment are listed in **To do**.
+- **New entry**: press **Ctrl/⌘ + N** anywhere. The switch at the top chooses **Appointment**, **Income** or **Expense**; anything typed for the client carries across, and the booking form keeps the same switch so you can go back. **Income** is for tips, product sales and other income outside appointments, with an optional income type, client and note. Appointment payments are recorded from the appointment itself or from To do. Expenses keep their own categories and usual amounts.
+- **To do**: website booking requests (new bookings and requested time changes) and finished appointments waiting for payment, in separate sections. Timed appointments appear when their duration has finished; confirmed date-only bookings appear the following day. Confirm the amount received with **Confirm paid**. Cancelled, pending, rejected, no-show, paid and free bookings are excluded from payment reminders. Email is not part of To do; it has its own **Mail** page and badge.
+- **Mail**: the shared business email. Conversations, replies, Sent and Trash; email is deleted after 90 days.
+- **Finances**: step through the months. It shows the month's income, expenses and profit, a day-by-day chart, and a table of entries you can search, filter and sort, with edit and delete.
 - **Clients**: shows visits, total spent and last visit for each client, plus their full history.
 - **Tray**: while the app is running it also sits in the system tray (the menu bar on a Mac), with today's takings, the next appointment, one-click **Quick add** for active services at their current discounted prices, and **Mark paid** for anything waiting. **Ctrl/⌘ + Shift + N** opens a new entry from whatever else you're in.
-- **Settings**: manage the shared Services catalogue, other-income labels, expense categories and explicit legacy income review. Export to Excel or CSV (with tax-year presets), save and restore backups, turn on automatic backups, choose what the tray does, check for updates, and switch between light and dark mode.
+- **Settings**: three tabs. **Bookings & website** holds what's shared with the website: services, booking availability, studio and home-visit details, request notifications, time off and the existing diary import. **Finances** holds other income types, expense categories, the review of older income labels and Excel/CSV export (with tax-year presets). **This computer** holds the site connection, backups (including automatic backups), the tray and shortcuts, appearance and updates.
 
 Local financial entry and category deletion offers **Undo**. Shared appointment/account deletion is permanent privacy cleanup with no undo: it removes personal booking details while retaining anonymized recorded payments. Cancellation and disabling an account remain separate actions.
 
@@ -21,9 +22,9 @@ Customer requests need admin approval; manual entries are confirmed directly. Da
 
 ### Services and payment defaults
 
-Services are the single treatment catalogue for the website, bookings, service payments, tray shortcuts and reports. Set the name, duration, base price and optional discount once in **Settings > Services**. New appointments suggest the current discounted price; their payment controls use the saved quote and allow the actual amount received to be edited. Existing bookings and payments keep their saved names, quotes and amounts when a service is renamed or archived.
+Services are the single treatment catalogue for the website, bookings, service payments, tray shortcuts and reports. Set the name, duration, base price and optional discount once in **Settings > Bookings & website > Services**. New appointments suggest the current discounted price; their payment controls use the saved quote and allow the actual amount received to be edited. Existing bookings and payments keep their saved names, quotes and amounts when a service is renamed or archived.
 
-Use **Money in** for tips, product sales and other non-treatment receipts. It defaults to **Other income** and does not inherit a service price or offer appointment payments. The historical entry editor preserves saved labels and amounts, with one grouped **Income type** selector for explicit corrections to unlinked records. Expense categories can still store a usual amount to prefill new expenses. Neither list duplicates service prices. After upgrading, **Legacy income review** reuses existing explicit links and asks you to classify unmatched old labels without guessing by name. Review local financial records separately on each computer.
+Use **New entry > Income** for tips, product sales and other non-treatment receipts. It defaults to **Other income** and does not inherit a service price or offer appointment payments. The historical entry editor preserves saved labels and amounts, with one grouped **Income type** selector for explicit corrections to unlinked records. Expense categories can still store a usual amount to prefill new expenses. Neither list duplicates service prices. After upgrading, **Settings > Finances > Review older income** reuses existing explicit links and asks you to classify unmatched old labels without guessing by name. Labels with no recorded income or appointments are not listed. Review local financial records separately on each computer.
 
 ### Appointments and money
 
@@ -48,11 +49,11 @@ While Tanned by Ffy is running there's an icon in the system tray — the menu b
 - **Mark paid** — today's bookings and anything overdue. It's the same money moment as pressing Mark paid in the diary, undo included. A booking with no price yet opens instead of guessing one.
 - **Back up now** — once automatic backups have a folder.
 
-Closing the window asks, the first time, whether to leave Tanned by Ffy in the tray or close it properly, and remembers the answer. **Settings → Tray & shortcuts** changes it later. Leaving it running is what keeps the one-click entry and the shortcut available.
+Closing the window asks, the first time, whether to leave Tanned by Ffy in the tray or close it properly, and remembers the answer. **Settings → This computer → Tray & shortcuts** changes it later. Leaving it running is what keeps the one-click entry and the shortcut available.
 
 When the window is out of sight, anything done from the tray says so with a notification from the computer instead of a message in the app.
 
-Payment confirmations also update the Inbox badge and send a count-only desktop reminder, even when the window is open. Repeated syncs do not repeat the same reminder. **Settings > Tray & shortcuts > Desktop payment reminders** turns desktop reminders off without hiding Inbox items. Allow notifications for Tanned by Ffy in Windows or macOS notification settings. The app must be running (including in the tray/menu bar); reopening or resuming checks overdue bookings. Reminders follow the Europe/London business clock and never email customers. Payment records and reminder bookkeeping remain local to each approved computer.
+Payments to confirm also update the To do badge and send a count-only desktop reminder, even when the window is open. Repeated syncs do not repeat the same reminder. **Settings > This computer > Tray & shortcuts > Desktop payment reminders** turns desktop reminders off without hiding To do items. Allow notifications for Tanned by Ffy in Windows or macOS notification settings. The app must be running (including in the tray/menu bar); reopening or resuming checks overdue bookings. Reminders follow the Europe/London business clock and never email customers. Payment records and reminder bookkeeping remain local to each approved computer.
 
 ### Backups
 
@@ -128,5 +129,5 @@ src/lib/export.ts        Excel/CSV export, backup/restore, automatic backups
 src/lib/tray.ts          What the tray menu says; the global shortcut
 src/components/TrayBridge.tsx  Carries out what's clicked in the tray
 src/components/          UI pieces, charts, calendar, entry and appointment dialogs
-src/pages/               Dashboard, Schedule, Monthly, Clients, Settings
+src/pages/               Dashboard, Schedule, Todo, Mail, Finances, Clients, Settings
 ```

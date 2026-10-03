@@ -13,14 +13,16 @@ import {
   startOfWeek,
 } from "date-fns";
 import { BanknoteArrowDown, ChevronLeft, ChevronRight, Clock, Plus } from "lucide-react";
-import { isOwed, listAppointments, markAppointmentPaid, unpaidBefore, type AppointmentRow } from "@/lib/db";
+import { Link } from "react-router-dom";
+import { isOwed, listAppointments } from "@/lib/db";
 import { useData, useLoad } from "@/lib/data";
+import { useInbox } from "@/lib/inbox";
 import { listBlocks } from "@/lib/sync";
 import { useAccess } from "@/components/AccessGate";
-import { isoDate, money, shortDate, timeLabel } from "@/lib/format";
+import { isoDate, money, shortDate } from "@/lib/format";
 import { useBusinessNow } from "@/lib/dates";
 import { PageHeader } from "@/components/Layout";
-import { Button, Card, CardHeader, Input, LoadError, Segmented, Stat } from "@/components/ui";
+import { Button, Card, Input, LoadError, Segmented, Stat } from "@/components/ui";
 import { MonthGrid, TimeGrid } from "@/components/calendar";
 import { toast } from "sonner";
 
@@ -49,9 +51,9 @@ export function Schedule() {
   const owed = counted.filter(isOwed).reduce((s, r) => s + (r.price_pence ?? 0), 0);
   const untimed = counted.filter((appointment) => appointment.time_confirmed === 0);
 
-  // Past bookings never marked paid. Not tied to the week on screen — it's a standing to-do list.
-  const [overdueRows, , overdueError] = useLoad(() => unpaidBefore(today), [today], []);
-  const overdue = overdueRows.filter((appointment) => appointment.price_pence !== 0);
+  // Finished bookings waiting for payment are handled in one place: To do.
+  const { payments } = useInbox();
+  const waiting = payments.reduce((sum, row) => sum + (row.price_pence ?? 0), 0);
 
   const showsToday = today >= period.countFrom && today <= period.countTo;
   const unavailable = rows.length === 0 && (loading || Boolean(loadError));
@@ -66,7 +68,7 @@ export function Schedule() {
 
   return (
     <>
-      <PageHeader title="Schedule" subtitle="Your diary — appointments only count as money once they're paid">
+      <PageHeader title="Schedule" subtitle="Your diary. Appointments count as income once they're marked paid">
         <div className="flex items-center gap-1 rounded-full border border-line bg-surface p-1">
           <Button variant="ghost" size="icon" onClick={() => step(-1)} aria-label={`Previous ${view}`}>
             <ChevronLeft size={16} />
@@ -92,14 +94,20 @@ export function Schedule() {
         </Button>
       </PageHeader>
 
-      <LoadError error={loadError || blocksError || overdueError} onRetry={refresh} />
+      <LoadError error={loadError || blocksError} onRetry={refresh} />
       {loading && <p role="status" className="mb-3 text-sm text-muted">Loading schedule…</p>}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4">
         <Stat label="Confirmed appointments" value={unavailable ? placeholder : String(counted.length)} />
-        <Stat label="Paid" value={unavailable ? placeholder : money(paid)} tone="good" hint="Counted in your money" />
-        <Stat label="Still to collect" value={unavailable ? placeholder : money(owed)} hint="Not in your money until you mark it paid" />
+        <Stat label="Paid" value={unavailable ? placeholder : money(paid)} tone="good" hint="Recorded as income" />
+        <Stat label="Unpaid" value={unavailable ? placeholder : money(owed)} hint="Not counted as income until marked paid" />
       </div>
+
+      {payments.length > 0 && <Link to="/todo" className="mt-4 flex items-center gap-3 rounded-3xl border border-line bg-surface px-5 py-3.5 text-[13.5px] hover:bg-surface-2/60">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-soft text-rose"><BanknoteArrowDown size={17} /></span>
+        <span className="min-w-0 flex-1"><b>{payments.length} finished appointment{payments.length === 1 ? "" : "s"}</b> waiting for payment{waiting ? ` · ${money(waiting)}` : ""}<span className="block text-[12px] text-muted">Confirm what was received in To do</span></span>
+        <ChevronRight size={16} className="shrink-0 text-muted" />
+      </Link>}
 
       {untimed.length > 0 && <section className="mt-4 border-l-2 border-accent pl-3" aria-label="Appointments needing a confirmed time">
         <p className="flex items-center gap-2 text-sm font-medium"><Clock size={15} /> Time to confirm ({untimed.length})</p>
@@ -127,74 +135,7 @@ export function Schedule() {
         )}
       </Card>
 
-      {overdue.length > 0 && <OwedCard rows={overdue} onOpen={openEditAppointment} onPaid={refresh} />}
     </>
-  );
-}
-
-/** Appointments that have been and gone without being marked paid. */
-function OwedCard({
-  rows,
-  onOpen,
-  onPaid,
-}: {
-  rows: AppointmentRow[];
-  onOpen: (a: AppointmentRow) => void;
-  onPaid: () => void;
-}) {
-  const [busy, setBusy] = useState<number | null>(null);
-  const total = rows.reduce((s, r) => s + (r.price_pence ?? 0), 0);
-  return (
-    <Card className="mt-4">
-      <CardHeader
-        title="Money you're owed"
-        subtitle={`${rows.length} past appointment${rows.length === 1 ? "" : "s"} you haven't marked paid`}
-        action={<span className="font-display text-[22px] leading-none">{money(total)}</span>}
-      />
-      <ul className="divide-y divide-line">
-        {rows.map((a) => (
-          <li key={a.id} className="flex items-center gap-3 px-5 py-2.5">
-            <button
-              onClick={() => onOpen(a)}
-              className="min-w-0 flex-1 text-left text-[13.5px] cursor-pointer hover:underline decoration-rose underline-offset-4"
-            >
-              <span className="font-medium">{a.client_name || a.service_name || a.category_name || "Appointment"}</span>
-              <span className="block text-[12px] text-muted">
-                {shortDate(a.date)} · {a.time_confirmed === 0 ? "Time to confirm" : timeLabel(a.start_time)}
-                {a.client_name && (a.service_name || a.category_name) ? ` · ${a.service_name || a.category_name}` : ""}
-              </span>
-            </button>
-            <span className="tabular text-[13.5px] font-semibold">
-              {a.price_pence != null ? money(a.price_pence) : <span className="text-muted">No price</span>}
-            </span>
-            {a.price_pence != null ? (
-              <Button
-                size="sm"
-                disabled={busy != null}
-                onClick={async () => {
-                  if (busy != null) return;
-                  setBusy(a.id);
-                  try {
-                    await markAppointmentPaid(a.id);
-                    toast.success(`${money(a.price_pence!)} added to your money`);
-                    onPaid();
-                  } catch (e) {
-                    toast.error(e instanceof Error ? e.message : "Couldn't record the payment");
-                  } finally { setBusy(null); }
-                }}
-              >
-                <BanknoteArrowDown size={14} /> Paid
-              </Button>
-            ) : (
-              <Button size="sm" onClick={() => onOpen(a)}>
-                Add a price
-              </Button>
-            )}
-          </li>
-        ))}
-      </ul>
-      <div className="h-2" />
-    </Card>
   );
 }
 

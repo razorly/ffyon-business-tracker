@@ -49,21 +49,44 @@ import { SiteBusinessSettings } from "@/components/SiteBusinessSettings";
 import { LegacyIncomeReview } from "@/components/LegacyIncomeReview";
 import { Button, Card, CardHeader, ConfirmModal, Field, Input, LoadError, Modal, Segmented, Select, Swatch } from "@/components/ui";
 
+type Section = "bookings" | "finances" | "computer";
+const SECTIONS: { value: Section; label: string; subtitle: string }[] = [
+  { value: "bookings", label: "Bookings & website", subtitle: "Shared with your website" },
+  { value: "finances", label: "Finances", subtitle: "Income, expenses and exports" },
+  { value: "computer", label: "This computer", subtitle: "Connection, backups and the app" },
+];
+const SECTION_KEY = "ffyon-settings-section";
+
 export function Settings() {
+  // Remembered for the session so returning to Settings lands where you left off.
+  const [section, setSection] = useState<Section>(() => {
+    try { const saved = sessionStorage.getItem(SECTION_KEY); return SECTIONS.some((item) => item.value === saved) ? saved as Section : "bookings"; }
+    catch { return "bookings"; }
+  });
+  const choose = (next: Section) => {
+    setSection(next);
+    try { sessionStorage.setItem(SECTION_KEY, next); } catch { /* Only a convenience. */ }
+  };
   return (
     <>
-      <PageHeader title="Settings" subtitle="Site connection, services, availability and local records" />
+      <PageHeader title="Settings" subtitle={SECTIONS.find((item) => item.value === section)!.subtitle} />
+      <Segmented<Section> className="mb-5 w-full flex-col rounded-xl sm:w-auto sm:flex-row sm:rounded-full" value={section} onChange={choose}
+        options={SECTIONS.map(({ value, label }) => ({ value, label }))} />
       <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
-        <SiteConnection />
-        <SiteBusinessSettings />
-        <LegacyIncomeReview />
-        <CategoriesCard type="income" />
-        <CategoriesCard type="expense" />
-        <ExportCard />
-        <BackupCard />
-        <TrayCard />
-        <AppearanceCard />
-        <AboutCard />
+        {section === "bookings" && <SiteBusinessSettings />}
+        {section === "finances" && <>
+          <LegacyIncomeReview />
+          <CategoriesCard type="income" />
+          <CategoriesCard type="expense" />
+          <ExportCard />
+        </>}
+        {section === "computer" && <>
+          <SiteConnection />
+          <BackupCard />
+          <TrayCard />
+          <AppearanceCard />
+          <AboutCard />
+        </>}
       </div>
     </>
   );
@@ -82,7 +105,7 @@ function CategoriesCard({ type }: { type: TxType }) {
     <Card>
       <CardHeader
         title={type === "income" ? "Other income" : "Expense categories"}
-        subtitle={type === "income" ? "Tips and product sales" : "What you spend money on"}
+        subtitle={type === "income" ? "Tips, product sales and other income outside appointments" : "What you spend money on"}
         action={
           <Button size="sm" aria-label={type === "income" ? "Add other income" : "Add expense category"} onClick={() =>
               setEditing({ name: "", type, colour: nextColour(cats.map((c) => c.colour)), default_pence: null, income_kind: type === "income" ? "other" : undefined })
@@ -539,7 +562,7 @@ function TrayCard() {
         <div>
           <div className="text-[13px] font-medium">New entry shortcut</div>
           <p className="mt-0.5 mb-2 text-xs text-muted">
-            {QUICK_KEYS_LABEL} opens a new entry from whatever you're in the middle of.
+            {QUICK_KEYS_LABEL} opens New entry from any app on this computer.
           </p>
           <Segmented
             className="w-full"
@@ -557,12 +580,13 @@ function TrayCard() {
             <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0 accent-accent" checked={remindersEnabled} onChange={event => setRemindersEnabled(event.target.checked)} />
             Desktop payment reminders
           </label>
+          <p className="mt-0.5 pl-7 text-xs text-muted">A notification when a finished appointment needs its payment confirmed.</p>
           {remindersEnabled && reminderResult === "blocked" && <p role="status" className="mt-2 text-xs text-muted">Notifications are blocked. Allow Tanned by Ffy notifications in Windows or macOS notification settings.</p>}
-          {remindersEnabled && reminderResult === "error" && <p role="status" className="mt-2 text-xs text-bad">Could not send the desktop reminder. Payment confirmations are still in Inbox.</p>}
+          {remindersEnabled && reminderResult === "error" && <p role="status" className="mt-2 text-xs text-bad">Could not send the desktop reminder. Payments to confirm are still listed in To do.</p>}
         </div>
 
         <p className="text-xs text-muted">
-          Today's takings, active services at their current prices, and appointments awaiting payment.
+          The {where} menu shows today's takings, one-click payments for active services, and appointments waiting for payment.
           {!isTauri() && " (Only in the desktop app.)"}
         </p>
       </div>

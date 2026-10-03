@@ -164,12 +164,16 @@ async function flow(browser, width, output) {
   page.on("request", request => { if (!request.url().startsWith(url) && !request.url().startsWith("data:")) remote.push(request.url()); });
   const mail = await fixtureFor(page);
   try {
-    await page.goto(`${url}#/inbox`, { waitUntil: "networkidle" });
-    await page.getByRole("heading", { name: "Inbox", exact: true }).waitFor();
-    await until(page, async () => await page.getByTestId("inbox-badge").textContent() === "3");
+    await page.goto(`${url}#/todo`, { waitUntil: "networkidle" });
+    await page.getByRole("heading", { name: "To do", exact: true }).waitFor();
+    await until(page, async () => await page.getByTestId("todo-badge").textContent() === "1");
+    await until(page, async () => await page.getByTestId("mail-badge").count() === 1);
     assert.equal(await page.getByTestId("mail-badge").textContent(), "2", "Mail counts unread conversations, not seventy messages");
     await page.getByRole("button", { name: "Booking still available", exact: true }).waitFor();
-    await capture(page, output, `inbox-email-${width}.png`);
+    assert.equal(await page.getByText("Tan question").count(), 0, "To do lists appointments only; email stays in Mail");
+    await capture(page, output, `todo-with-unread-mail-${width}.png`);
+    await page.locator('nav a[title="Mail"]').click();
+    await page.getByRole("button", { name: "Unread", exact: true }).click();
     await page.getByRole("link").filter({ hasText: "Tan question" }).click();
     await page.getByRole("heading", { name: "Tan question", exact: true }).waitFor();
     await page.getByLabel("Message history", { exact: true }).getByText("Arrived after the detail response", { exact: true }).waitFor();
@@ -293,10 +297,10 @@ async function unavailable(browser, output) {
   const page = await browser.newPage({ viewport: { width: 375, height: 900 } });
   const mail = await fixtureFor(page, { unavailable: true });
   try {
-    await page.goto(`${url}#/inbox`, { waitUntil: "networkidle" });
-    await page.getByText(/Mail is temporarily unavailable/).waitFor();
+    await page.goto(`${url}#/todo`, { waitUntil: "networkidle" });
     await page.getByRole("button", { name: "Booking still available", exact: true }).waitFor();
-    assert.equal(await page.getByTestId("inbox-badge").textContent(), "1");
+    assert.equal(await page.getByTestId("todo-badge").textContent(), "1");
+    assert.equal(await page.getByTestId("mail-badge").count(), 0);
     await page.getByRole("button", { name: "Accept", exact: true }).click();
     await until(page, () => mail.fixture.records.appointments[0].status === "confirmed");
     await capture(page, output, "mail-unavailable-booking-still-works.png");

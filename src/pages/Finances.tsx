@@ -3,7 +3,7 @@ import { addMonths, eachDayOfInterval, endOfMonth, format, isSameMonth, startOfM
 import { ArrowDown, ArrowUp, CalendarDays, ChevronLeft, ChevronRight, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { dailyTotals, deleteTransaction, listTransactions, type TransactionRow } from "@/lib/db";
 import { useData, useLoad } from "@/lib/data";
-import { monthRange } from "@/lib/dates";
+import { monthRange, useBusinessNow } from "@/lib/dates";
 import { isoDate, money, ukDate } from "@/lib/format";
 import { transactionKind, transactionKindLabel, transactionLabel, type TransactionKind } from "@/lib/income-display";
 import { themedColour } from "@/lib/palette";
@@ -17,10 +17,13 @@ import { DailyBars, Legend } from "@/components/charts";
 type Filter = "all" | "income" | "expense";
 type SortKey = "date" | "amount";
 
-export function Monthly() {
+/** Income and expenses, a month at a time. */
+export function Finances() {
   const { openNewEntry, openEditEntry, refresh } = useData();
   const { dark } = useTheme();
-  const [month, setMonth] = useState(() => startOfMonth(new Date()));
+  // The business month follows the London clock, like the dashboard, not the computer's timezone.
+  const now = useBusinessNow();
+  const [month, setMonth] = useState(() => startOfMonth(now));
   const [filter, setFilter] = useState<Filter>("all");
   const [incomeKind, setIncomeKind] = useState<"all" | Exclude<TransactionKind, "expense">>("all");
   const [search, setSearch] = useState("");
@@ -68,13 +71,13 @@ export function Monthly() {
   const toggleSort = (key: SortKey) =>
     setSort((s) => (s.key === key ? { key, desc: !s.desc } : { key, desc: true }));
 
-  const isCurrent = isSameMonth(month, new Date());
+  const isCurrent = isSameMonth(month, now);
   const unavailable = rows.length === 0 && (loading || Boolean(loadError));
   const placeholder = loadError ? "Unavailable" : "…";
 
   return (
     <>
-      <PageHeader title="Monthly view" subtitle="Every entry for the month, with totals">
+      <PageHeader title="Finances" subtitle="Income and expenses, month by month">
         <div className="flex items-center gap-1 rounded-full border border-line bg-surface p-1">
           <Button variant="ghost" size="icon" onClick={() => setMonth((m) => subMonths(m, 1))} aria-label="Previous month">
             <ChevronLeft size={16} />
@@ -85,8 +88,8 @@ export function Monthly() {
           </Button>
         </div>
         {!isCurrent && (
-          <Button size="md" onClick={() => setMonth(startOfMonth(new Date()))}>
-            Today
+          <Button size="md" onClick={() => setMonth(startOfMonth(now))}>
+            This month
           </Button>
         )}
       </PageHeader>
@@ -94,8 +97,8 @@ export function Monthly() {
       {loading && <p role="status" className="mb-3 text-sm text-muted">Loading monthly finances…</p>}
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Stat label="Money in" value={unavailable ? placeholder : money(income)} tone="good" />
-        <Stat label="Money out" value={unavailable ? placeholder : money(expense)} />
+        <Stat label="Income" value={unavailable ? placeholder : money(income)} tone="good" />
+        <Stat label="Expenses" value={unavailable ? placeholder : money(expense)} />
         <Stat label="Profit" value={unavailable ? placeholder : money(income - expense)} tone={income - expense < 0 ? "bad" : undefined} strong />
         <Stat label="Client payments" value={unavailable ? placeholder : String(clientVisits)} />
       </div>
@@ -124,8 +127,8 @@ export function Monthly() {
             onChange={setFilter}
             options={[
               { value: "all", label: "All" },
-              { value: "income", label: "Money in" },
-              { value: "expense", label: "Money out" },
+              { value: "income", label: "Income" },
+              { value: "expense", label: "Expenses" },
             ]}
           />
           <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -145,7 +148,7 @@ export function Monthly() {
               <Search size={15} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
               <Input
                 className="w-60 max-w-full rounded-full pl-8"
-                placeholder="Search client, service, note"
+                placeholder="Search client, type or note"
                 aria-label="Search entries"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -159,7 +162,7 @@ export function Monthly() {
 
         {visible.length === 0 && !loading ? (
           <EmptyState icon={<CalendarDays size={20} />} title={loadError ? "Entries unavailable" : rows.length ? "No matching entries" : "Nothing this month"}>
-            {loadError ? "Retry loading your finances above." : rows.length ? "Try a different filter or search." : "Entries you add for this month will show here."}
+            {loadError ? "Retry loading your finances above." : rows.length ? "Try a different filter or search." : "Income and expenses for this month will show here."}
           </EmptyState>
         ) : (
           <div className="overflow-x-auto">
@@ -167,7 +170,7 @@ export function Monthly() {
               <thead>
                 <tr className="eyebrow border-y border-line bg-surface-2/60 text-left text-ink-2">
                   <SortTh label="Date" active={sort.key === "date"} desc={sort.desc} onClick={() => toggleSort("date")} className="pl-5" />
-                  <th className="px-3 py-2 font-medium">Service / category</th>
+                  <th className="px-3 py-2 font-medium">Type</th>
                   <th className="px-3 py-2 font-medium">Client</th>
                   <th className="px-3 py-2 font-medium">Note</th>
                   <SortTh label="Amount" active={sort.key === "amount"} desc={sort.desc} onClick={() => toggleSort("amount")} className="text-right" />
