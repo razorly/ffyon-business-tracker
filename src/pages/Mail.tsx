@@ -23,6 +23,7 @@ export function MailPage() {
   const [composeOpen, setComposeOpen] = useState(false);
   const [status, setStatus] = useState<MailStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
+  const [statusRevision, setStatusRevision] = useState(0);
   const [list, setList] = useState<MailList & { filter: MailFilter }>({ ...EMPTY_LIST, filter });
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
@@ -58,7 +59,7 @@ export function MailPage() {
     void getMailStatus().then(value => { if (active) setStatus(value); })
       .catch(error => { if (active) { setStatus(null); setStatusError(errorText(error)); } });
     return () => { active = false; };
-  }, [online, mailRevision]);
+  }, [online, statusRevision]);
 
   useEffect(() => {
     const epoch = ++listEpoch.current;
@@ -80,6 +81,10 @@ export function MailPage() {
     if (!conversationId || !online) { setDetailLoading(false); return; }
     setDetailLoading(true);
     void getMail(conversationId).then(value => {
+      if (detailEpoch.current === epoch && value.conversation.id !== conversationId) {
+        navigate(`/mail/${encodeURIComponent(value.conversation.id)}`, { replace: true });
+        refreshMail();
+      }
       if (detailEpoch.current === epoch) setDetail(previous => {
         if (previous?.conversation.id !== value.conversation.id) return value;
         const cutoff = value.retention_cutoff || "";
@@ -137,6 +142,7 @@ export function MailPage() {
     try {
       const value = await getMail(id, cursor);
       if (detailEpoch.current !== epoch) return;
+      if (value.conversation.id !== id) { navigate(`/mail/${encodeURIComponent(value.conversation.id)}`, { replace: true }); refreshMail(); return; }
       if (value.next_cursor === cursor) throw new Error("The message history did not advance. Please refresh it.");
       showEarlier.current = true;
       setDetail(previous => {
@@ -206,7 +212,7 @@ export function MailPage() {
     </PageHeader>
     <p className="mb-4 text-xs leading-relaxed text-muted">Emails are automatically deleted after 90 days. Trash can be restored before then.</p>
     {!online && <p role="status" className="mb-4 rounded-xl border border-line bg-surface px-4 py-3 text-sm text-ink-2">You're offline. Reconnect to load email, send messages and download attachments.</p>}
-    {statusError && <MailError title="Could not check mail settings" error={statusError} onRetry={refreshMail} disabled={!online} />}
+    {statusError && <MailError title="Could not check mail settings" error={statusError} onRetry={() => setStatusRevision(value => value + 1)} disabled={!online} />}
     {status && !status.configured && <p role="status" className="mb-4 rounded-xl border border-line bg-surface px-4 py-3 text-sm text-ink-2">Business email is not configured yet. Sending will become available when the business sender is connected.</p>}
     {status?.receiving_configured === false && <p role="status" className="mb-4 rounded-xl border border-line bg-surface px-4 py-3 text-sm text-ink-2">Incoming email setup is incomplete. Existing conversations remain available.</p>}
     {!!status?.receiving_addresses.length && <p className="mb-4 break-words text-xs text-muted">{status.receiving_configured === false ? "Business addresses" : "Receiving at"} {status.receiving_addresses.join(", ")}</p>}
@@ -222,7 +228,7 @@ export function MailPage() {
               <div className="flex items-start gap-2"><span className={cn("min-w-0 flex-1 break-words text-sm", conversation.unread_count > 0 ? "font-semibold" : "font-medium")}>{conversation.participant_name || conversation.participant_email}</span>{conversation.unread_count > 0 && <span aria-label={`${conversation.unread_count} unread message${conversation.unread_count === 1 ? "" : "s"}`} className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-accent" />}</div>
               <p className={cn("mt-1 break-words text-sm", conversation.unread_count > 0 && "font-medium")}>{conversation.subject || "(No subject)"}</p>
               <p className="mt-1 line-clamp-2 break-words text-xs leading-relaxed text-ink-2">{conversation.preview}</p>
-              <div className="mt-2 flex flex-wrap justify-between gap-2 text-[11px] text-muted"><time dateTime={conversation.last_message_at}>{mailTime(conversation.last_message_at)}</time>{conversation.direction === "outbound" && <span>Outgoing</span>}</div>
+              <div className="mt-2 flex flex-wrap justify-between gap-2 text-[11px] text-muted"><time dateTime={conversation.last_message_at}>{mailTime(conversation.last_message_at)}</time><span>{conversation.message_count > 1 && `${conversation.message_count} messages`}{conversation.message_count > 1 && conversation.direction === "outbound" && " · "}{conversation.direction === "outbound" && "Outgoing"}</span></div>
             </Link></li>)}
           </ul>}
           {visibleList.next_cursor && <div className="border-t border-line p-3 text-center"><Button size="sm" disabled={!online || listLoading || moreLoading} onClick={() => void loadMore()}>{moreLoading && <LoaderCircle size={14} className="animate-spin" />} Load more</Button></div>}

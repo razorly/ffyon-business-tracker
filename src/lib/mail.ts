@@ -10,6 +10,7 @@ export interface MailConversation {
   participant_name: string | null;
   client_id: string | null;
   unread_count: number;
+  message_count: number;
   last_message_at: string;
   preview: string;
   direction: MailDirection;

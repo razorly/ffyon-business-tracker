@@ -30,7 +30,7 @@ async function fixtureFor(page, { unavailable = false } = {}) {
   const threads = [{ id: uuid(9001), subject: "Tan question", participant_email: "customer@example.invalid", participant_name: "Customer with a long name for small screens", client_id: null, messages }, { id: uuid(9002), subject: "Another customer's question", participant_email: "another@example.invalid", participant_name: null, client_id: null, messages: [{ ...copy(messages[0]), id: uuid(9701), text_body: "Another customer's unread question", attachments: [], created_at: new Date(start + 71 * 60_000).toISOString() }] }, { id: uuid(9003), subject: "Previous sent email", participant_email: "sent@example.invalid", participant_name: "Sent customer", client_id: null, messages: [{ ...copy(messages[0]), id: uuid(9702), direction: "outbound", status: "pending", from_address: "hello@business.example.invalid", to_addresses: ["sent@example.invalid"], text_body: "Awaiting transport confirmation", read_at: new Date().toISOString(), message_id: null, created_at: new Date(start + 72 * 60_000).toISOString() }, { ...copy(messages[0]), id: uuid(9703), direction: "outbound", status: "failed", from_address: "hello@business.example.invalid", to_addresses: ["sent@example.invalid"], text_body: "Transport rejected this earlier message", read_at: new Date().toISOString(), message_id: null, created_at: new Date(start + 73 * 60_000).toISOString() }] }];
   const summarize = thread => {
     const last = thread.messages.at(-1);
-    return { id: thread.id, subject: thread.subject, participant_email: thread.participant_email, participant_name: thread.participant_name, client_id: thread.client_id, unread_count: thread.messages.filter(message => message.direction === "inbound" && !message.read_at).length, last_message_at: last.created_at, preview: last.text_body, direction: last.direction, trashed_at: thread.trashed_at || null };
+    return { id: thread.id, subject: thread.subject, participant_email: thread.participant_email, participant_name: thread.participant_name, client_id: thread.client_id, unread_count: thread.messages.filter(message => message.direction === "inbound" && !message.read_at).length, message_count: thread.messages.length, last_message_at: last.created_at, preview: last.text_body, direction: last.direction, trashed_at: thread.trashed_at || null };
   };
   const requests = [], sends = [], saved = [], sendIds = new Map();
   let arrival = null;
@@ -81,7 +81,7 @@ async function fixtureFor(page, { unavailable = false } = {}) {
     }
     const detail = args.operation.match(/^mail\/conversations\/([^/]+)(?:\/(read|trash|restore))?$/);
     assert.ok(detail, `Unexpected mock mail operation ${args.operation}`);
-    const thread = threads.find(value => value.id === detail[1]);
+    const thread = threads.find(value => value.id === (detail[1] === uuid(9099) ? uuid(9001) : detail[1]));
     if (!thread) throw new Error("404: This conversation could not be found.");
     if (detail[2] === "trash" || detail[2] === "restore") {
       assert.equal(args.method, "POST"); assert.deepEqual(args.body, {});
@@ -129,11 +129,32 @@ async function run() {
     if (!focused) {
       for (const width of [1280, 375, 320]) evidence.push(await flow(browser, width, output));
       evidence.push(await unavailable(browser, output));
+      evidence.push(await groupedLegacyLink(browser, output));
     }
     evidence.push(await earlierPageRemoved(browser, output));
     await writeFile(resolve(output, "evidence.json"), JSON.stringify({ evidence, boundary: "Loopback app plus disposable SQLite/native/mail fixtures. No real email, Resend, WebView2 or file writes." }, null, 2));
     console.log(JSON.stringify({ evidence }, null, 2));
   } finally { await browser.close(); }
+}
+
+async function groupedLegacyLink(browser, output) {
+  const page=await browser.newPage({viewport:{width:1280,height:900},timezoneId:'Europe/London'});
+  const mail=await fixtureFor(page);
+  try {
+    await page.goto(`${url}#/mail/${uuid(9099)}`,{waitUntil:'networkidle'});
+    await page.getByRole('heading',{name:'Tan question',exact:true}).waitFor();
+    await until(page,()=>page.url().endsWith(`#/mail/${uuid(9001)}`));
+    const list=page.getByRole('region',{name:'Email conversations',exact:true});
+    assert.equal(await list.getByRole('link').filter({hasText:'Tan question'}).count(),1,'One list entry contains the complete conversation');
+    await until(page,async()=>await list.getByText('71 messages',{exact:true}).count()===1);
+    const statusCalls=mail.requests.filter(request=>request.operation==='mail/status').length;
+    const listCalls=mail.requests.filter(request=>request.operation==='mail/conversations').length;
+    await page.getByRole('button',{name:'Refresh conversations',exact:true}).click();
+    await until(page,()=>mail.requests.filter(request=>request.operation==='mail/conversations').length>listCalls);
+    assert.equal(mail.requests.filter(request=>request.operation==='mail/status').length,statusCalls,'Refreshing conversations does not refetch unchanged Mail configuration');
+    await capture(page,output,'grouped-conversation.png');
+    return {flow:'grouped-legacy-link',canonicalRoute:true,oneConversationRow:true,messageCount:true};
+  } finally {await page.close();mail.fixture.close();}
 }
 
 async function flow(browser, width, output) {

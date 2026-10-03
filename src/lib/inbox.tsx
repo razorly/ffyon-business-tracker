@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { listPaymentConfirmations, type AppointmentRow } from "./db";
 import { useLoad } from "./data";
 import { listPendingAppointments } from "./sync";
@@ -31,6 +31,7 @@ export function InboxProvider({ children }: { children: ReactNode }) {
   const [mail, setMail] = useState<MailUnread>({ conversations: [], unread_count: 0 });
   const [mailLoading, setMailLoading] = useState(true);
   const [mailError, setMailError] = useState<string | null>(null);
+  const mailRequest = useRef<Promise<MailUnread> | null>(null);
   const refreshMail = useCallback(() => setMailRevision(value => value + 1), []);
   const [remindersEnabled, setEnabled] = useState(readPaymentRemindersEnabled);
   const [reminderResult, setReminderResult] = useState<ReminderResult>("idle");
@@ -50,15 +51,32 @@ export function InboxProvider({ children }: { children: ReactNode }) {
     let active = true;
     if (access.state !== "online") { setMailLoading(false); setMailError("Reconnect to check email."); return; }
     setMailLoading(true); setMailError(null);
-    void getMailUnread().then(value => { if (active) setMail(value); })
-      .catch(error => { if (active) setMailError(error instanceof Error ? error.message : "Could not check email."); })
-      .finally(() => { if (active) setMailLoading(false); });
+    const previous = mailRequest.current;
+    void (async () => {
+      // A read acknowledgement can invalidate an older unread request. Wait for
+      // it, then let only the latest effect make one fresh follow-up request.
+      if (previous) await previous.catch(() => {});
+      if (!active) return;
+      const request = Promise.resolve().then(getMailUnread);
+      mailRequest.current = request;
+      try { const value = await request; if (active) setMail(value); }
+      catch (error) { if (active) setMailError(error instanceof Error ? error.message : "Could not check email."); }
+      finally {
+        if (mailRequest.current === request) mailRequest.current = null;
+        if (active) setMailLoading(false);
+      }
+    })();
     return () => { active = false; };
   }, [access.state, mailRevision, clock]);
 
   useEffect(() => {
+    let lastTick = -Infinity;
     const tick = () => {
       if (document.visibilityState !== "visible") return;
+      const now = Date.now();
+      // Restoring a window commonly emits both focus and visibilitychange.
+      if (now - lastTick < 1000) return;
+      lastTick = now;
       setClock(value => value + 1);
       refreshMail();
     };

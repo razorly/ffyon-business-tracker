@@ -55,8 +55,15 @@ test('Mail backend security and delivery regressions', { skip: !available }, asy
     for (const schema of schemas) for (const sql of schema.split('--> statement-breakpoint')) if (sql.trim()) sqlite.exec(sql);
     db = {
       fail: null,
+      beforeBatch: null,
       prepare(sql) { return new Statement(sql); },
-      async batch(statements) { sqlite.exec('BEGIN'); try { const result = statements.map(statement => statement.execute()); sqlite.exec('COMMIT'); return result; } catch (error) { sqlite.exec('ROLLBACK'); throw error; } },
+      async batch(statements) {
+        // An overlapping request may commit after validation and before the
+        // write transaction starts. Clear first so the hook can run real batches.
+        const hook = db.beforeBatch; db.beforeBatch = null;
+        if (hook) await hook(statements);
+        sqlite.exec('BEGIN'); try { const result = statements.map(statement => statement.execute()); sqlite.exec('COMMIT'); return result; } catch (error) { sqlite.exec('ROLLBACK'); throw error; }
+      },
     };
     bindings.DB = db;
     sqlite.prepare('INSERT INTO admin_devices(id, name, token_hash, created_at) VALUES (?, ?, ?, ?)').run(deviceId, 'Mail fixture device', tokenHash, new Date().toISOString());
@@ -248,6 +255,131 @@ test('Mail backend security and delivery regressions', { skip: !available }, asy
       assert.equal((await admin('mail/conversations')).body.conversations[0].unread_count, 2, 'Retain both incoming delivery copies');
       assert.equal(sqlite.prepare('SELECT mail_message_id FROM mail_message_aliases WHERE message_id=?').get(canonical).mail_message_id, sent.id, 'An incoming copy cannot take over the outbound alias');
       assert.equal((await webhook(copyEmail)).status, 200); assert.equal((await webhook(replyCopyEmail)).status, 200); assert.equal(count('mail_messages'), 4);
+    });
+
+    await t.test('historical self-delivery splits regroup all messages, preserve read state and old links, and replay sends without dispatch', async () => {
+      reset(); const address='hello@tannedbyffy.co.uk';
+      const original=send({to:address}), first=await admin('mail/send','POST',original);
+      assert.equal(first.status,200);
+      const sent=sqlite.prepare('SELECT * FROM mail_messages WHERE id=?').get(first.body.message_id);
+      const received=await importOne(incoming({from:address,message_id:sent.message_id,headers:{}}));
+      const legacy=crypto.randomUUID(), stamp=new Date(Date.now()+1000).toISOString();
+      sqlite.prepare('INSERT INTO mail_conversations(id,subject,participant_email,created_at,updated_at,last_message_at) VALUES(?,?,?,?,?,?)').run(legacy,sent.subject,address,stamp,stamp,stamp);
+      sqlite.prepare('UPDATE mail_messages SET conversation_id=? WHERE id=?').run(legacy,received.id);
+      const replyInput=send({to:address,conversation_id:legacy,reply_to_message_id:received.id});
+      const reply=await admin('mail/send','POST',replyInput);assert.equal(reply.status,200);
+      const replySent=sqlite.prepare('SELECT * FROM mail_messages WHERE id=?').get(reply.body.message_id);
+      // Reproduce the pre-fix provider path, with the reply copy in the original history.
+      const copy=await importOne(incoming({from:address,message_id:replySent.message_id,headers:{'in-reply-to':sent.message_id,references:sent.message_id}}));
+      sqlite.prepare('UPDATE mail_messages SET conversation_id=? WHERE id=?').run(first.body.conversation_id,copy.id);
+      sqlite.prepare('DELETE FROM mail_conversations WHERE NOT EXISTS(SELECT 1 FROM mail_messages WHERE conversation_id=mail_conversations.id)').run();
+      sqlite.prepare('UPDATE mail_messages SET read_at=? WHERE id=?').run(stamp,received.id);
+      const before=rows('SELECT * FROM mail_messages ORDER BY id'), aliases=rows('SELECT * FROM mail_message_aliases ORDER BY message_id');
+      await handlers.mail.repairMailThreads(Date.now()+3600001);
+      assert.equal(count('mail_conversations'),1);assert.equal(count('mail_messages'),4);
+      assert.deepEqual(rows('SELECT * FROM mail_messages ORDER BY id'),before.map(message=>({...message,conversation_id:first.body.conversation_id})));
+      assert.deepEqual(rows('SELECT * FROM mail_message_aliases ORDER BY message_id'),aliases);
+      const detail=await admin('mail/conversations/'+legacy);assert.equal(detail.status,200);
+      assert.equal(detail.body.conversation.id,first.body.conversation_id);assert.equal(detail.body.messages.length,4);assert.equal(detail.body.conversation.message_count,4);
+      assert.equal(detail.body.conversation.unread_count,1);
+      assert.equal((await admin('mail/conversations')).body.conversations.length,1);
+      const sendsBefore=provider.sends.length;
+      assert.equal((await admin('mail/send','POST',replyInput)).body.conversation_id,first.body.conversation_id);
+      assert.equal(provider.sends.length,sendsBefore,'Retrying the frozen pre-merge request must not dispatch again');
+      assert.equal((await admin('mail/conversations/'+legacy+'/read','POST',{message_ids:[copy.id]})).status,200);
+      assert.equal((await admin('mail/unread')).body.unread_count,0);
+      assert.equal((await admin('mail/conversations/'+legacy+'/trash','POST',{})).status,200);
+      assert.equal((await admin('mail/conversations?filter=trash')).body.conversations.length,1);
+      assert.equal((await admin('mail/conversations/'+legacy+'/restore','POST',{})).status,200);
+      const newReply=await admin('mail/send','POST',send({to:address,conversation_id:legacy,reply_to_message_id:copy.id}));
+      assert.equal(newReply.status,200,JSON.stringify(newReply.body));assert.equal(newReply.body.conversation_id,first.body.conversation_id);
+      assert.equal(count('mail_conversations'),1);
+    });
+
+    await t.test('a historical merge between reply validation and insertion cannot recreate the retired conversation', async () => {
+      reset(); const address = 'hello@tannedbyffy.co.uk';
+      const original = await admin('mail/send', 'POST', send({ to: address })); assert.equal(original.status, 200);
+      const sent = sqlite.prepare('SELECT * FROM mail_messages WHERE id=?').get(original.body.message_id);
+      const received = await importOne(incoming({ from: address, message_id: sent.message_id, headers: {} }));
+      const legacy = crypto.randomUUID(), stamp = new Date(Date.now() + 1000).toISOString();
+      sqlite.prepare('INSERT INTO mail_conversations(id,subject,participant_email,created_at,updated_at,last_message_at) VALUES (?,?,?,?,?,?)').run(legacy, sent.subject, address, stamp, stamp, stamp);
+      sqlite.prepare('UPDATE mail_messages SET conversation_id=? WHERE id=?').run(legacy, received.id);
+      const input = send({ to: address, conversation_id: legacy, reply_to_message_id: received.id });
+      let repairs = 0;
+      db.beforeBatch = async statements => {
+        assert.ok(statements.some(statement => statement.sql.startsWith('INSERT OR IGNORE INTO mail_messages')), 'Overlap must occur at the reply persistence transaction after validation');
+        repairs++; await handlers.mail.repairMailThreads(Date.now() + 3600001);
+      };
+      const reply = await admin('mail/send', 'POST', input); assert.equal(reply.status, 200, JSON.stringify(reply.body));
+      assert.equal(repairs, 1); assert.equal(db.beforeBatch, null);
+      assert.equal(reply.body.conversation_id, original.body.conversation_id);
+      assert.equal(count('mail_conversations'), 1); assert.equal(count('mail_messages'), 3);
+      assert.ok(rows('SELECT * FROM mail_messages').every(message => message.conversation_id === original.body.conversation_id));
+      assert.equal(sqlite.prepare('SELECT conversation_id FROM mail_conversation_redirects WHERE id=?').get(legacy).conversation_id, original.body.conversation_id);
+      const detail = await admin('mail/conversations/' + legacy); assert.equal(detail.status, 200);
+      assert.equal(detail.body.messages.length, 3); assert.equal(detail.body.conversation.message_count, 3);
+      const sends = provider.sends.length;
+      const retry = await admin('mail/send', 'POST', input); assert.equal(retry.status, 200);
+      assert.equal(retry.body.conversation_id, original.body.conversation_id); assert.equal(provider.sends.length, sends);
+      assert.equal(count('mail_messages'), 3);
+    });
+
+    await t.test('a historical merge between inbound threading and insertion preserves the new arrival in canonical history', async () => {
+      reset(); const address = 'hello@tannedbyffy.co.uk';
+      const original = await admin('mail/send', 'POST', send({ to: address })); assert.equal(original.status, 200);
+      const sent = sqlite.prepare('SELECT * FROM mail_messages WHERE id=?').get(original.body.message_id);
+      const received = await importOne(incoming({ from: address, message_id: sent.message_id, headers: {} }));
+      const legacy = crypto.randomUUID(), stamp = new Date(Date.now() + 1000).toISOString();
+      sqlite.prepare('INSERT INTO mail_conversations(id,subject,participant_email,created_at,updated_at,last_message_at) VALUES (?,?,?,?,?,?)').run(legacy, sent.subject, address, stamp, stamp, stamp);
+      sqlite.prepare('UPDATE mail_messages SET conversation_id=? WHERE id=?').run(legacy, received.id);
+      const reply = await admin('mail/send', 'POST', send({ to: address, conversation_id: legacy, reply_to_message_id: received.id })); assert.equal(reply.status, 200);
+      const replySent = sqlite.prepare('SELECT * FROM mail_messages WHERE id=?').get(reply.body.message_id);
+      assert.equal(replySent.conversation_id, legacy, 'Prepare the still-split historical source before starting concurrent repair');
+      const arrival = incoming({ from: address, headers: { 'in-reply-to': replySent.message_id, references: replySent.message_id }, text: 'Reply arriving during repair', created_at: new Date(Date.now() + 2000).toISOString() });
+      let repairs = 0;
+      db.beforeBatch = async statements => {
+        assert.ok(statements.some(statement => statement.sql.includes("'inbound'")), 'Overlap must occur after header matching and before inbound persistence');
+        repairs++; await handlers.mail.repairMailThreads(Date.now() + 3600001);
+      };
+      const imported = await importOne(arrival);
+      assert.equal(repairs, 1); assert.equal(db.beforeBatch, null); assert.equal(imported.conversation_id, original.body.conversation_id);
+      assert.equal(count('mail_conversations'), 1); assert.equal(count('mail_messages'), 4);
+      assert.ok(rows('SELECT * FROM mail_messages').every(message => message.conversation_id === original.body.conversation_id));
+      const detail = await admin('mail/conversations/' + legacy); assert.equal(detail.status, 200);
+      assert.equal(detail.body.conversation.message_count, 4); assert.equal(detail.body.messages.length, 4);
+      assert.equal(detail.body.conversation.last_message_at, arrival.created_at, 'The new arrival must update the actual canonical conversation metadata');
+      assert.equal((await webhook(arrival)).status, 200); assert.equal(count('mail_messages'), 4, 'Webhook replay must remain idempotent');
+      assert.equal(provider.sends.length, 2, 'Repair and inbound import never send email');
+    });
+
+    await t.test('historical repair leaves unrelated subjects, forged identities and conflicting references separate', async () => {
+      reset(); const address='hello@tannedbyffy.co.uk';
+      const first=await admin('mail/send','POST',send({to:address}));const sent=sqlite.prepare('SELECT * FROM mail_messages WHERE id=?').get(first.body.message_id);
+      await importOne(incoming({from:'someone@example.test',message_id:sent.message_id,headers:{},subject:sent.subject}));
+      await importOne(incoming({from:address,headers:{},subject:sent.subject}));
+      const second=await admin('mail/send','POST',send({to:address}));const other=sqlite.prepare('SELECT * FROM mail_messages WHERE id=?').get(second.body.message_id);
+      await importOne(incoming({from:address,message_id:sent.message_id,headers:{'in-reply-to':other.message_id,references:other.message_id}}));
+      const before=rows('SELECT * FROM mail_conversations ORDER BY id');
+      await handlers.mail.repairMailThreads(Date.now()+3600001);
+      assert.deepEqual(rows('SELECT * FROM mail_conversations ORDER BY id'),before);assert.equal(count('mail_conversation_redirects'),0);
+    });
+
+    await t.test('historical merge rolls back atomically and preserves Trash when both histories were trashed', async () => {
+      reset();const address='hello@tannedbyffy.co.uk';const first=await admin('mail/send','POST',send({to:address}));
+      const sent=sqlite.prepare('SELECT * FROM mail_messages WHERE id=?').get(first.body.message_id),received=await importOne(incoming({from:address,message_id:sent.message_id,headers:{}}));
+      const legacy=crypto.randomUUID(),stamp=new Date(Date.now()+1000).toISOString();
+      sqlite.prepare('INSERT INTO mail_conversations(id,subject,participant_email,created_at,updated_at,last_message_at,trashed_at) VALUES(?,?,?,?,?,?,?)').run(legacy,sent.subject,address,stamp,stamp,stamp,stamp);
+      sqlite.prepare('UPDATE mail_messages SET conversation_id=? WHERE id=?').run(legacy,received.id);
+      sqlite.prepare('UPDATE mail_conversations SET trashed_at=? WHERE id=?').run(stamp,first.body.conversation_id);
+      db.fail=sql=>sql.startsWith('UPDATE mail_messages SET conversation_id=');
+      await assert.rejects(handlers.mail.repairMailThreads(Date.now()+3600001));
+      assert.equal(count('mail_conversation_redirects'),0);assert.equal(count('mail_conversations'),2);
+      assert.equal(sqlite.prepare('SELECT conversation_id FROM mail_messages WHERE id=?').get(received.id).conversation_id,legacy);
+      await handlers.mail.repairMailThreads(Date.now()+3600002);
+      assert.equal(count('mail_conversations'),1);assert.equal((await admin('mail/conversations?filter=trash')).body.conversations.length,1);
+      const old=new Date(Date.now()-91*86400000).toISOString();sqlite.prepare('UPDATE mail_messages SET created_at=?').run(old);
+      await handlers.mail.cleanupExpiredMail(Date.now()+3600001);
+      assert.equal(count('mail_conversation_redirects'),0);assert.equal((await admin('mail/conversations/'+legacy)).status,404);
     });
 
     await t.test('a customer forging a sent own Message-ID cannot join the outgoing conversation or take over its aliases', async () => {

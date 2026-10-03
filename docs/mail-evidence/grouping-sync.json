@@ -1,0 +1,70 @@
+{
+  "recorded_at": "2026-10-03T08:22:48Z",
+  "app_version": "0.5.9",
+  "executable": "src-tauri/target/release/ffyon-tracker.exe",
+  "executable_sha256": "C3E60FEF4661A8BFEC709736F6ACCCFE0C72F60487E6DBE7D74E8F479B197536",
+  "installed_app_replaced": false,
+  "site": {
+    "project_id": "appgprj_6abd6e180c8081918b5ec762c98ae90e",
+    "version_number": 24,
+    "version_id": "appgprj_6abd6e180c8081918b5ec762c98ae90e~appgver_5fdbdd2bbe188191885b85da5ed8fe7a",
+    "source_commit": "544c317d78138c648901994f4c589433597b890d",
+    "deployment_id": "appgdep_6ac0bae0f770819198205edd1619cc04",
+    "deployment_status": "succeeded",
+    "production_url": "https://tannedbyffy.co.uk",
+    "generated_origin": "https://ffyon-customer.razorly.chatgpt.site",
+    "audience": "public"
+  },
+  "validation": {
+    "app_tests": { "passed": 144, "failed": 0, "skipped": 0 },
+    "included_mail_backend_cases": 54,
+    "included_sync_latency_tests": 13,
+    "included_inbox_refresh_tests": 4,
+    "site_bridge_checks": 383,
+    "site_authentication_checks": 28,
+    "site_typescript": "passed",
+    "site_production_build": "passed",
+    "site_local_workerd_mail_check": "passed",
+    "app_production_build": "passed",
+    "native_release_build": "passed",
+    "browser_fixture_widths": [1280, 375, 320],
+    "browser_grouping_and_canonical_navigation": "passed",
+    "browser_mail_config_refresh_reduction": "passed",
+    "blocked_provider_and_database_work_does_not_block_sync_or_mail_list": "passed",
+    "concurrent_reply_and_incoming_import_during_merge": "passed",
+    "revocation_and_invalid_credentials": "passed"
+  },
+  "live_checks": {
+    "public_site_status": 200,
+    "unauthorized_mail_status": 401,
+    "unsigned_webhook_status": 401,
+    "signed_unknown_sent_webhook_status": 200,
+    "conversation_count_before": 3,
+    "conversation_count_after": 2,
+    "retained_message_count": 5,
+    "all_message_fields_preserved_except_canonical_conversation_id": true,
+    "all_header_aliases_preserved": true,
+    "unrelated_unread_conversation_preserved": true,
+    "canonical_self_mail_message_count": 4,
+    "old_conversation_redirect_count": 1,
+    "worker_error_query": "Only the two intentional 401 smoke checks; both invocation outcomes were ok."
+  },
+  "root_cause": {
+    "sync": "Schedule sync awaited booking email delivery and header recovery before returning. Two queued deliveries could consume the native 30-second deadline alongside sequential database work.",
+    "additional_overhead": "Repeated device heartbeat writes, separate notification-status queries, and paired foreground refresh events added work.",
+    "grouping": "Historical self-addressed delivery copies had separate saved conversations before the self-copy threading fix."
+  },
+  "changes": {
+    "delivery": "Durable and idempotent notification delivery runs in request-scoped Worker waitUntil; database maintenance and notification counts are batched.",
+    "authorization": "Every request still selects and authorizes its current device row. Only the last-seen heartbeat write is throttled.",
+    "mail": "Exact header identities repair legacy self-copy conversations in the background. Transactional redirects preserve old links and concurrent writes.",
+    "frontend": "Conversation rows display message counts; unread requests are serialized, paired focus events coalesce, and Mail settings refresh independently."
+  },
+  "real_emails_sent_this_follow_up": 0,
+  "limitations": [
+    "Windows was locked during the native foreground check. Browser fixtures passed, but the rebuilt native Mail screen and an actual native sync response time have not been verified in this follow-up.",
+    "The native Rust test suite was unchanged and was not rerun for this follow-up.",
+    "Provider latency and outages were exercised with mocks; no additional real booking email was sent."
+  ],
+  "new_git_tag_created": false
+}
