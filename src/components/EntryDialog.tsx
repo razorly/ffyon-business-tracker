@@ -196,7 +196,7 @@ export function EntryDialog() {
           ?? (type === "income" ? "Other income" : ""),
         ...(!preserveAttribution ? { income_kind: type === "expense" ? null : incomeService ? "service" as const : "other" as const } : {}),
       };
-      if (editing) await updateTransaction(editing.id, input);
+      if (editing) await updateTransaction(editing.id, input, editing);
       else await createTransaction(input);
       toast.success(`${editing ? "Updated" : "Recorded"} ${type === "income" ? "income" : "expense"} of ${money(pence)}`);
       refresh();
@@ -213,7 +213,7 @@ export function EntryDialog() {
     if (!editing || saving) return;
     setSaving(true);
     try {
-      toastDeleted(await deleteTransaction(editing.id), refresh);
+      toastDeleted(await deleteTransaction(editing.id, editing), refresh);
       refresh();
       closeEntry();
     } catch {

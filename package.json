@@ -1,11 +1,12 @@
 {
   "name": "ffyon-tracker",
   "private": true,
-  "version": "0.6.1",
+  "version": "0.7.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:pwa": "tsc && vite build --mode pwa --outDir pwa/dist",
     "preview": "vite preview",
     "test": "node --experimental-vm-modules --test tests/*.mjs",
     "tauri": "tauri"

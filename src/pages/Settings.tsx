@@ -14,6 +14,7 @@ import {
 } from "@/lib/db";
 import { useData, useLoad } from "@/lib/data";
 import { useInbox } from "@/lib/inbox";
+import { isPwa } from "@/lib/access";
 import { taxYear, useBusinessNow } from "@/lib/dates";
 import { isoDate, money, parseAmount, penceToInput, ukDate } from "@/lib/format";
 import {
@@ -45,6 +46,7 @@ import { toastDeleted } from "@/lib/undo";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/Layout";
 import { SiteConnection } from "@/components/SiteConnection";
+import { useSharedLedger } from "@/components/LedgerGate";
 import { SiteBusinessSettings } from "@/components/SiteBusinessSettings";
 import { LegacyIncomeReview } from "@/components/LegacyIncomeReview";
 import { Button, Card, CardHeader, ConfirmModal, Field, Input, LoadError, Modal, Segmented, Select, Swatch } from "@/components/ui";
@@ -58,6 +60,7 @@ const SECTIONS: { value: Section; label: string; subtitle: string }[] = [
 const SECTION_KEY = "ffyon-settings-section";
 
 export function Settings() {
+  const webApp = isPwa();
   // Remembered for the session so returning to Settings lands where you left off.
   const [section, setSection] = useState<Section>(() => {
     try { const saved = sessionStorage.getItem(SECTION_KEY); return SECTIONS.some((item) => item.value === saved) ? saved as Section : "bookings"; }
@@ -71,7 +74,7 @@ export function Settings() {
     <>
       <PageHeader title="Settings" subtitle={SECTIONS.find((item) => item.value === section)!.subtitle} />
       <Segmented<Section> className="mb-5 w-full flex-col rounded-xl sm:w-auto sm:flex-row sm:rounded-full" value={section} onChange={choose}
-        options={SECTIONS.map(({ value, label }) => ({ value, label }))} />
+        options={SECTIONS.map(({ value, label }) => ({ value, label: webApp && value === "computer" ? "This device" : label }))} />
       <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
         {section === "bookings" && <SiteBusinessSettings />}
         {section === "finances" && <>
@@ -83,7 +86,7 @@ export function Settings() {
         {section === "computer" && <>
           <SiteConnection />
           <BackupCard />
-          <TrayCard />
+          {!webApp && <TrayCard />}
           <AppearanceCard />
           <AboutCard />
         </>}
@@ -348,6 +351,8 @@ function ExportCard() {
 // ---------- Backup ----------
 
 function BackupCard() {
+  const webApp = isPwa();
+  const sharing = useSharedLedger().ledger !== null;
   const { refresh } = useData();
   const [confirmRestore, setConfirmRestore] = useState(false);
   const [confirmWipe, setConfirmWipe] = useState(false);
@@ -373,7 +378,7 @@ function BackupCard() {
 
   return (
     <Card>
-      <CardHeader title="Backup & restore" subtitle="Financial records and private notes are stored on this computer" />
+      <CardHeader title={sharing ? "Shared ledger backup" : "Backup & restore"} subtitle={sharing ? "Finances and private notes sync across approved devices" : webApp ? "Financial records and private notes are stored on this device" : "Financial records and private notes are stored on this computer"} />
       <div className="space-y-4 px-5 pb-5">
         <div className="flex flex-wrap gap-2">
           <Button
@@ -389,15 +394,16 @@ function BackupCard() {
           >
             <Download size={15} /> Save backup
           </Button>
-          <Button onClick={() => setConfirmRestore(true)}>
+          {!sharing && <Button onClick={() => setConfirmRestore(true)}>
             <Upload size={15} /> Restore from backup
-          </Button>
+          </Button>}
         </div>
         <p className="text-xs text-muted">
-          Tip: save backups to iCloud Drive, OneDrive or a USB stick. A backup can also be used to move the data to
-          another approved computer. Restoring does not grant access or change website bookings.
+          {sharing ? "Save a copy of the shared records to keep a separate backup." : webApp
+            ? "Save a backup to Files or iCloud Drive before removing the app or clearing its website data. You can also restore a backup from the desktop app."
+            : "Tip: save backups to iCloud Drive, OneDrive or a USB stick. A backup can also be used to move the data to another approved computer. Restoring does not grant access or change website bookings."}
         </p>
-        <div className="border-t border-line pt-4">
+        {!webApp && <div className="border-t border-line pt-4">
           <div className="text-[13px] font-medium">Automatic backups</div>
           {auto ? (
             <>
@@ -447,15 +453,15 @@ function BackupCard() {
               </Button>
             </>
           )}
-        </div>
+        </div>}
 
-        <div className="border-t border-line pt-4">
+        {!sharing && <div className="border-t border-line pt-4">
           <div className="text-[13px] font-medium">Start fresh</div>
           <p className="mt-0.5 text-xs text-muted">Delete all entries, appointments and clients. Services, other income and expense categories are kept.</p>
           <Button variant="ghost" className="mt-2 -ml-2 text-bad" onClick={() => { setWipeText(""); setWipeError(""); setConfirmWipe(true); }}>
             <Trash2 size={15} /> Delete all data…
           </Button>
-        </div>
+        </div>}
       </div>
 
       <ConfirmModal
@@ -619,6 +625,7 @@ function AppearanceCard() {
 // ---------- About ----------
 
 function AboutCard() {
+  const webApp = isPwa();
   // The bundled version is right for the browser preview; the installed app
   // knows better, so it overrides it once it answers.
   const [version, setVersion] = useState(__APP_VERSION__);
@@ -637,10 +644,10 @@ function AboutCard() {
       <CardHeader title="About" subtitle="Tanned by Ffy" />
       <div className="space-y-4 px-5 pb-5">
         <div className="rounded-2xl bg-surface-2 p-3.5">
-          <div className="eyebrow text-[10px] text-ink-2">Installed version</div>
+          <div className="eyebrow text-[10px] text-ink-2">{webApp ? "Web app version" : "Installed version"}</div>
           <div className="tabular mt-1.5 font-display text-[22px] leading-none">{version}</div>
         </div>
-        <Button
+        {!webApp && <><Button
           disabled={checking}
           onClick={async () => {
             setChecking(true);
@@ -658,7 +665,7 @@ function AboutCard() {
         </Button>
         <p className="text-xs text-muted">
           New versions install themselves when you say so, and the app restarts. Your data isn't touched.
-        </p>
+        </p></>}
       </div>
     </Card>
   );

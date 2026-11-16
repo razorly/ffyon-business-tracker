@@ -1,23 +1,17 @@
 import { invoke } from "@tauri-apps/api/core";
-import { isBrowserFixture, requireLocalAccess } from "./access";
+import { isBrowserFixture, isPwa, requireLocalAccess } from "./access";
+import { downloadBrowserFile, pickBrowserBackup } from "./browser-files";
 import { exportAll, isTauri, listClients, listTransactions, monthlyTotals, restoreAll, validateBackup } from "./db";
 import { isoDate, monthLabel, ukDate } from "./format";
 import { transactionKind, transactionKindLabel, transactionLabel } from "./income-display";
 
-/** Save bytes via the native dialog (or a browser download in dev preview). Returns false if cancelled. */
+/** Save bytes using the current platform's file handling. Returns false if cancelled. */
 async function saveBytes(defaultName: string, filterName: string, ext: string, data: Uint8Array | string) {
   await requireLocalAccess();
   if (!isTauri()) {
-    if (!isBrowserFixture()) throw new Error("Export requires the paired desktop app.");
-    const blob = new Blob([data as BlobPart]);
-    const a = document.createElement("a");
-    const url = URL.createObjectURL(blob);
-    a.href = url;
-    a.download = defaultName;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1_000);
+    if (!isPwa() && !isBrowserFixture()) throw new Error("Export requires the paired app.");
+    const mime = ext === "json" ? "application/json" : ext === "csv" ? "text/csv" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    downloadBrowserFile(defaultName, data as BlobPart, mime);
     return true;
   }
   const path = await invoke<string | null>("protected_save_file", { defaultPath: defaultName, filters: [{ name: filterName, extensions: [ext] }] });
@@ -104,10 +98,19 @@ export async function saveBackup() {
 
 /** Returns number of transactions restored, or null if cancelled. Throws on an invalid file. */
 export async function loadBackup(): Promise<number | null> {
-  if (!isTauri()) throw new Error("Restore is only available in the desktop app.");
-  const path = await invoke<string | null>("protected_pick_file", { filters: [{ name: "Tanned by Ffy backup", extensions: ["json"] }] });
-  if (!path) return null;
-  const parsed = JSON.parse(await invoke<string>("protected_read_text_file", { path }));
+  let source: string;
+  if (isPwa()) {
+    const file = await pickBrowserBackup();
+    if (!file) return null;
+    await requireLocalAccess();
+    source = await file.text();
+  } else {
+    if (!isTauri()) throw new Error("Restore requires the paired app.");
+    const path = await invoke<string | null>("protected_pick_file", { filters: [{ name: "Tanned by Ffy backup", extensions: ["json"] }] });
+    if (!path) return null;
+    source = await invoke<string>("protected_read_text_file", { path });
+  }
+  const parsed = JSON.parse(source);
   if (!validateBackup(parsed)) throw new Error("That file isn't a Tanned by Ffy backup.");
 
   await restoreAll(parsed);

@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { Check, Copy, Download, KeyRound, LoaderCircle, RefreshCw, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
-import { checkAccess, connectOwner, getAccessStatus, onAccessChanged, pairDevice, prepareOwnerConnection, type AccessStatus } from "@/lib/access";
+import { checkAccess, connectOwner, getAccessStatus, isPwa, onAccessChanged, pairDevice, prepareOwnerConnection, type AccessStatus } from "@/lib/access";
 import { checkForUpdate } from "@/lib/update";
 import { quitApp } from "@/lib/tray";
 import { Button, Field, Input, Segmented } from "./ui";
@@ -31,6 +31,7 @@ export function AccessGate({ children }: { children: ReactNode }) {
     const timer = setInterval(foreground, 15_000);
     window.addEventListener("focus", foreground);
     window.addEventListener("online", foreground);
+    if (isPwa()) window.addEventListener("offline", foreground);
     document.addEventListener("visibilitychange", foreground);
     return () => {
       alive = false;
@@ -38,6 +39,7 @@ export function AccessGate({ children }: { children: ReactNode }) {
       clearInterval(timer);
       window.removeEventListener("focus", foreground);
       window.removeEventListener("online", foreground);
+      window.removeEventListener("offline", foreground);
       document.removeEventListener("visibilitychange", foreground);
     };
   }, []);
@@ -50,6 +52,7 @@ export function AccessGate({ children }: { children: ReactNode }) {
 }
 
 function LockedScreen({ status, onStatus }: { status: AccessStatus; onStatus: (value: AccessStatus) => void }) {
+  const webApp = isPwa();
   const [mode, setMode] = useState<"pair" | "owner">("pair");
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
@@ -67,24 +70,24 @@ function LockedScreen({ status, onStatus }: { status: AccessStatus; onStatus: (v
     e.preventDefault();
     void run(async () => onStatus(await pairDevice(code.replace(/[\s-]/g, "").toUpperCase(), name.trim())));
   };
-  return <main className="flex h-full min-h-[600px] items-center justify-center overflow-y-auto bg-page px-6 py-10">
-    <div className="w-full max-w-lg">
+  return <main className={webApp ? "pwa-locked h-full overflow-y-auto bg-page" : "flex h-full min-h-[600px] items-center justify-center overflow-y-auto bg-page px-6 py-10"}>
+    <div className="mx-auto w-full max-w-lg">
       <div className="mb-8 text-center">
         <BrandLogo />
         <div className="eyebrow mt-3 text-muted">Business Tracker</div>
       </div>
       <div className="flex items-center gap-3 border-b border-line pb-4">
         <ShieldCheck size={24} className="shrink-0 text-rose" />
-        <div><h1 className="font-display text-[25px]">Admin access required</h1><p className="mt-1 text-sm text-ink-2">This computer needs approval before opening your business records.</p></div>
+        <div><h1 className="font-display text-[25px]">Admin access required</h1><p className="mt-1 text-sm text-ink-2">This {webApp ? "device" : "computer"} needs approval before opening your business records.</p></div>
       </div>
       {status.state === "checking" ? <div role="status" className="flex items-center gap-3 py-8 text-sm text-muted"><LoaderCircle size={18} className="animate-spin" /> Checking authorization</div> : <>
         {(error ?? status.error) && <p role="alert" className="mt-4 break-words text-sm text-bad">{error ?? status.error}</p>}
         {status.device_id && <Button className="mt-4" disabled={busy} onClick={retry}><RefreshCw size={15} /> Verify Connection</Button>}
-        <div className="mt-6"><Segmented value={mode} onChange={setMode} options={[{ value: "pair", label: "Pair Device" }, { value: "owner", label: "Set Up First Admin" }]} /></div>
+        {!webApp && <div className="mt-6"><Segmented value={mode} onChange={setMode} options={[{ value: "pair", label: "Pair Device" }, { value: "owner", label: "Set Up First Admin" }]} /></div>}
         <form onSubmit={pairing} className="mt-5 space-y-4">
-          <Field label="Computer name"><Input autoComplete="off" maxLength={80} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Salon Mac" disabled={busy || !!setup} /></Field>
+          <Field label={webApp ? "Device name" : "Computer name"}><Input autoComplete="off" maxLength={80} value={name} onChange={(e) => setName(e.target.value)} placeholder={webApp ? "e.g. Salon iPhone" : "e.g. Salon Mac"} disabled={busy || !!setup} /></Field>
           {mode === "pair" ? <>
-            <Field label="Pairing code" hint="Get a ten-minute code from Settings > Site Connection on an approved computer."><Input autoComplete="off" spellCheck={false} maxLength={18} value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder="XXXX-XXXX-XXXX" disabled={busy} className="font-mono" /></Field>
+            <Field label="Pairing code" hint="Get a ten-minute code from Settings > Site Connection on an approved computer."><Input autoComplete="off" autoCapitalize="characters" spellCheck={false} maxLength={18} value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder="XXXX-XXXX-XXXX" disabled={busy} className="font-mono" /></Field>
             <Button type="submit" variant="primary" disabled={busy || !name.trim() || code.replace(/[\s-]/g, "").length !== 12}>{busy ? <LoaderCircle size={15} className="animate-spin" /> : <KeyRound size={15} />} Pair Device</Button>
           </> : <>
             {!setup ? <Button type="button" variant="primary" disabled={busy || !name.trim()} onClick={() => run(async () => setSetup(await prepareOwnerConnection(name.trim())))}><KeyRound size={15} /> Generate setup values</Button> : <>
@@ -96,12 +99,14 @@ function LockedScreen({ status, onStatus }: { status: AccessStatus; onStatus: (v
             <p className="text-xs text-muted">Only the site owner can configure first-admin access or recover access when all approved devices are lost.</p>
           </>}
         </form>
-        <p className="mt-6 border-t border-line pt-4 text-xs text-muted">Windows stores the credential in Credential Manager. macOS uses Keychain and may ask you to allow access. This computer stays locked if secure storage is unavailable.</p>
+        <p className="mt-6 border-t border-line pt-4 text-xs text-muted">{webApp
+          ? "On iPhone, add this page to your Home Screen in Safari, then open it from the new icon before pairing."
+          : "Windows stores the credential in Credential Manager. macOS uses Keychain and may ask you to allow access. This computer stays locked if secure storage is unavailable."}</p>
       </>}
-      <div className="mt-6 flex items-center justify-between gap-3">
+      {!webApp && <div className="mt-6 flex items-center justify-between gap-3">
         <Button variant="ghost" disabled={busy} onClick={() => run(async () => { await checkForUpdate(false); })}><Download size={14} /> Check for updates</Button>
         <Button variant="ghost" onClick={() => void quitApp()}>Quit</Button>
-      </div>
+      </div>}
     </div>
   </main>;
 }

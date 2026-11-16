@@ -4,18 +4,19 @@ import { CalendarHeart, Cloud, CloudOff, LayoutDashboard, ListChecks, LoaderCirc
 import { useData } from "@/lib/data";
 import { useInbox } from "@/lib/inbox";
 import { getSyncState, retryPendingMutation, subscribeSync, syncNow } from "@/lib/sync";
-import { checkAccess } from "@/lib/access";
+import { checkAccess, isPwa } from "@/lib/access";
 import { cn } from "@/lib/utils";
 import { Button } from "./ui";
 import { useAccess } from "./AccessGate";
 import { BrandLogo } from "./BrandLogo";
+import { LedgerStatus } from "./LedgerGate";
 
 const nav = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard },
-  { to: "/schedule", label: "Schedule", icon: CalendarHeart },
+  { to: "/", label: "Dashboard", shortLabel: "Home", icon: LayoutDashboard },
+  { to: "/schedule", label: "Schedule", shortLabel: "Diary", icon: CalendarHeart },
   { to: "/todo", label: "To do", icon: ListChecks },
   { to: "/mail", label: "Mail", icon: Mail },
-  { to: "/finances", label: "Finances", icon: Wallet },
+  { to: "/finances", label: "Finances", shortLabel: "Money", icon: Wallet },
   { to: "/clients", label: "Clients", icon: Users },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
@@ -23,6 +24,7 @@ const nav = [
 export function Layout() {
   const { openNewEntry } = useData();
   const { requests, payments, mail } = useInbox();
+  const webApp = isPwa();
   // To do counts appointments only; unread email has its own badge on Mail.
   const todo = new Set([...requests, ...payments].map(row => row.id)).size;
   const badge = (to: string) => to === "/todo" ? todo : to === "/mail" ? mail.unread_count : 0;
@@ -30,7 +32,14 @@ export function Layout() {
     : to === "/mail" && mail.unread_count ? `Mail, ${mail.unread_count} unread conversation${mail.unread_count === 1 ? "" : "s"}` : label;
   return (
     <div className="app-layout flex h-full">
-      <aside className="flex w-16 shrink-0 flex-col border-r border-line bg-surface px-2 py-6 sm:w-60 sm:px-4">
+      {webApp && <header className="pwa-header">
+        <div className="flex min-w-0 items-center gap-2">
+          <img src="/branding/app-icon.svg" alt="" className="size-8 rounded-lg" />
+          <span className="truncate font-display text-lg">Tanned by Ffy</span>
+        </div>
+        <Button variant="primary" className="shrink-0" onClick={() => openNewEntry()}><Plus size={16} /> New entry</Button>
+      </header>}
+      <aside className={cn("flex w-16 shrink-0 flex-col border-r border-line bg-surface px-2 py-6 sm:w-60 sm:px-4", webApp && "pwa-sidebar")}>
         <div className="mb-7 hidden px-2 pt-1 text-center sm:block">
           <BrandLogo />
           <div className="eyebrow mt-1.5 text-[10px] text-ink-2">Business Tracker</div>
@@ -66,9 +75,16 @@ export function Layout() {
 
       <main className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-6xl px-4 py-7 sm:px-8">
+          <LedgerStatus />
           <Outlet />
         </div>
       </main>
+      {webApp && <nav className="pwa-tabs" aria-label="Business tracker">{nav.map(({ to, label, shortLabel, icon: Icon }) => (
+        <NavLink key={to} to={to} end={to === "/"} aria-label={describe(to, label)}>
+          <span className="relative"><Icon size={19} aria-hidden />{badge(to) > 0 && <span aria-hidden className="pwa-tab-badge">{badge(to)}</span>}</span>
+          <span>{shortLabel ?? label}</span>
+        </NavLink>
+      ))}</nav>}
     </div>
   );
 }

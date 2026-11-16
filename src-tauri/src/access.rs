@@ -2,7 +2,7 @@
 use std::{
     collections::HashMap,
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{Arc, LazyLock, Mutex},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -28,6 +28,20 @@ const VAULT_ACCOUNT: &str = "device-v1";
 const LEASE_SECONDS: u64 = 86_400;
 const MAX_RESPONSE_BYTES: usize = 25_000_000;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const LEDGER_URL: &str = "https://ffyon.home/api/ledger";
+static LEDGER_CLIENT: LazyLock<Client> = LazyLock::new(|| {
+    let ca = reqwest::Certificate::from_pem(include_bytes!("home-root-ca.pem"))
+        .expect("embedded Rob Home Root CA");
+    Client::builder()
+        .tls_built_in_root_certs(false)
+        .add_root_certificate(ca)
+        .no_proxy()
+        .connect_timeout(Duration::from_secs(3))
+        .timeout(REQUEST_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("shared ledger HTTPS client configuration")
+});
 
 pub fn now_seconds() -> u64 {
     SystemTime::now()
@@ -1005,6 +1019,52 @@ pub async fn admin_request(
             Err(error)
         }
     }
+}
+
+#[tauri::command]
+pub async fn ledger_request(
+    app: AppHandle,
+    state: State<'_, AccessState>,
+    revision: Option<u64>,
+    body: Option<Value>,
+) -> Result<Value, String> {
+    let (vault, epoch) = state.request_credential()?;
+    state.require_current_admin(&vault)?;
+    let mut request = if let Some(body) = body {
+        if body.get("content").and_then(Value::as_str).is_none_or(|v| v.len() > 16 * 1024 * 1024 - 2048) {
+            return Err("This ledger is too large to sync.".into());
+        }
+        LEDGER_CLIENT.put(LEDGER_URL).json(&body)
+    } else {
+        let request = LEDGER_CLIENT.get(LEDGER_URL);
+        if let Some(revision) = revision { request.query(&[("revision", revision)]) } else { request }
+    };
+    request = request.bearer_auth(&vault.token).header("X-Ffyon-Device", &vault.device_id);
+    let mut response = request.send().await
+        .map_err(|_| "Connect to the home network to reach the shared ledger.".to_string())?;
+    let status = response.status();
+    if status.is_redirection() {
+        return Err("The home ledger returned an unexpected redirect.".into());
+    }
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        state.failed_for(Some(&vault), Some(epoch), true, "Approve this computer to open the shared ledger.".into());
+        emit(&app, state.status());
+        crate::tray::refresh_locked(&app);
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|_| "The shared ledger response was interrupted.")? {
+        if bytes.len() + chunk.len() > MAX_RESPONSE_BYTES {
+            return Err("The shared ledger response is too large.".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    let value: Value = serde_json::from_slice(&bytes).map_err(|_| "The shared ledger returned an invalid response.")?;
+    if !status.is_success() {
+        let message = value.get("error").and_then(Value::as_str).unwrap_or("The shared ledger is unavailable.");
+        return Err(format!("{}: {}", status.as_u16(), message));
+    }
+    state.require_current_admin(&vault)?;
+    Ok(value)
 }
 
 pub fn handle_cli() -> bool {

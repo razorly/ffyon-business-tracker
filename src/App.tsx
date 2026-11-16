@@ -13,6 +13,9 @@ import { AppointmentDialog } from "@/components/AppointmentDialog";
 import { TrayBridge } from "@/components/TrayBridge";
 import { AccessGate } from "@/components/AccessGate";
 import { SyncBridge } from "@/components/SyncBridge";
+import { isDesktop } from "@/lib/access";
+import { LedgerGate } from "@/components/LedgerGate";
+import { useData } from "@/lib/data";
 const TodoPage = lazy(() => import("@/pages/Todo").then(module => ({ default: module.TodoPage })));
 const MailPage = lazy(() => import("@/pages/Mail").then(module => ({ default: module.MailPage })));
 const Dashboard = lazy(() => import("@/pages/Dashboard").then(module => ({ default: module.Dashboard })));
@@ -28,6 +31,7 @@ function Page({ children }: { children: ReactNode }) {
 function Shell() {
   // One quiet copy a day, if she's set a folder for it.
   useEffect(() => {
+    if (!isDesktop()) return;
     runAutoBackup().catch(() => {
       toast.error("Automatic backup failed — check the folder in Settings");
     });
@@ -37,6 +41,7 @@ function Shell() {
 
   return (
     <DataProvider>
+      <LedgerRefresh />
       <InboxProvider>
         <HashRouter>
           <SyncBridge />
@@ -58,10 +63,19 @@ function Shell() {
         </HashRouter>
         <EntryDialog />
         <AppointmentDialog />
-        <TrayBridge />
+        {isDesktop() && <TrayBridge />}
       </InboxProvider>
     </DataProvider>
   );
+}
+
+function LedgerRefresh() {
+  const { refresh } = useData();
+  useEffect(() => {
+    window.addEventListener("ffyon-ledger-data-changed", refresh);
+    return () => window.removeEventListener("ffyon-ledger-data-changed", refresh);
+  }, [refresh]);
+  return null;
 }
 
 export default function App() {
@@ -75,7 +89,7 @@ export default function App() {
 function AppContent() {
   const { dark } = useTheme();
   return <>
-    <WindowFrame><AccessGate><Shell /></AccessGate></WindowFrame>
+    <WindowFrame><AccessGate><LedgerGate><Shell /></LedgerGate></AccessGate></WindowFrame>
     <Toaster position="bottom-right" theme={dark ? "dark" : "light"} style={{ zIndex: 40 }} richColors closeButton />
   </>;
 }

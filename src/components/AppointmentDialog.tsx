@@ -229,7 +229,7 @@ export function AppointmentDialog() {
       customer_notes: customerNotes.trim(),
     };
     if (editing) {
-      await updateAppointment(editing.id, input, editing.cloud_revision);
+      await updateAppointment(editing.id, input, editing.cloud_revision, editing.notes ?? null);
       return editing.id;
     }
     if (repeatDays) {

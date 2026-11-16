@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { isBrowserFixture, isDesktop, requireOnlineAccess } from "./access";
+import { isBrowserFixture, isDesktop, isPwa, requireOnlineAccess } from "./access";
 import { serviceColour } from "./palette";
 
 export type TxType = "income" | "expense";
@@ -127,12 +127,19 @@ export interface Db {
 }
 
 let dbPromise: Promise<Db> | null = null;
+let sharedDb: (() => Promise<Db>) | null = null;
 
 export const isTauri = isDesktop;
-
+export function setSharedDatabase(factory: (() => Promise<Db>) | null) { sharedDb = factory; }
 export function getDb(): Promise<Db> {
+  return sharedDb ? sharedDb() : getDeviceDb();
+}
+
+export function getDeviceDb(): Promise<Db> {
   if (!dbPromise) {
-    if (import.meta.env.DEV && isBrowserFixture() && !isTauri()) {
+    if (typeof __PWA_BUILD__ !== "undefined" && __PWA_BUILD__ && isPwa()) {
+      dbPromise = import("./pwa-db").then((m) => m.pwaDb);
+    } else if (import.meta.env.DEV && isBrowserFixture() && !isTauri()) {
       dbPromise = import("./devdb").then((m) => m.createDevDb());
     } else if (isTauri()) {
       dbPromise = Promise.resolve({
@@ -285,10 +292,11 @@ export async function createClient(c: { name: string; email?: string; phone?: st
   return client.id;
 }
 
-export async function updateClient(c: Pick<Client, "id" | "name" | "phone" | "notes"> & Partial<Pick<Client, "email" | "disabled" | "cloud_revision" | "saved_address" | "saved_postcode">>) {
+export async function updateClient(c: Pick<Client, "id" | "name" | "phone" | "notes"> & Partial<Pick<Client, "email" | "disabled" | "cloud_revision" | "saved_address" | "saved_postcode">>, expectedNotes?: string | null) {
   const db = await getDb();
   const [before] = await db.select<Client[]>("SELECT * FROM clients WHERE id = $1", [c.id]);
   if (!before) throw new Error("Client not found");
+  if (expectedNotes !== undefined && (before.notes ?? null) !== expectedNotes) throw new Error("The private notes changed on another device. Reopen the client to see them.");
   if (before.remote_id && (c.name.trim() !== before.name || (c.phone ?? "") !== (before.phone ?? "") || (c.email != null && c.email !== before.email) || (c.disabled != null && c.disabled !== before.disabled) || (c.saved_address !== undefined && c.saved_address !== before.saved_address) || (c.saved_postcode !== undefined && c.saved_postcode !== before.saved_postcode))) {
     await sharedMutation("clients", "PATCH", {
       id: before.remote_id, revision: c.cloud_revision ?? before.cloud_revision, name: c.name.trim(),
@@ -296,10 +304,12 @@ export async function updateClient(c: Pick<Client, "id" | "name" | "phone" | "no
       saved_address: c.saved_address ?? before.saved_address ?? "", saved_postcode: c.saved_postcode ?? before.saved_postcode ?? "",
     });
   }
-  await db.execute(
-    before.remote_id ? "UPDATE clients SET notes = $1 WHERE id = $2" : "UPDATE clients SET notes = $1, name = $3, phone = $4, email = $5, saved_address=$6, saved_postcode=$7 WHERE id = $2",
-    before.remote_id ? [c.notes || null, c.id] : [c.notes || null, c.id, c.name.trim(), c.phone || null, c.email ?? before.email, c.saved_address ?? before.saved_address ?? "", c.saved_postcode ?? before.saved_postcode ?? ""],
+  const target = before.remote_id ? await getDb() : db;
+  const updated = await target.execute(
+    before.remote_id ? "UPDATE clients SET notes = $1 WHERE id = $2 AND notes IS $3" : "UPDATE clients SET notes = $1, name = $3, phone = $4, email = $5, saved_address=$6, saved_postcode=$7 WHERE id = $2 AND notes IS $8",
+    before.remote_id ? [c.notes || null, c.id, before.notes] : [c.notes || null, c.id, c.name.trim(), c.phone || null, c.email ?? before.email, c.saved_address ?? before.saved_address ?? "", c.saved_postcode ?? before.saved_postcode ?? "", before.notes],
   );
+  if (!updated.rowsAffected) throw new Error("The client changed. Reopen it before editing the notes.");
 }
 
 export async function deleteClient(id: number): Promise<DeletedSnapshot> {
@@ -380,10 +390,16 @@ export async function createTransaction(t: TransactionInput) {
   return res.lastInsertId as number;
 }
 
-export async function updateTransaction(id: number, t: TransactionInput) {
+function unchangedEntry(current: Transaction, expected?: Transaction) {
+  return !expected || (["type", "date", "amount_pence", "category_id", "client_id", "description", "service_id", "service_name",
+    "category_name_snapshot", "income_kind", "created_at"] as const).every(field => current[field] === expected[field]);
+}
+
+export async function updateTransaction(id: number, t: TransactionInput, expected?: Transaction) {
   const db = await getDb();
   const [before] = await db.select<Transaction[]>("SELECT * FROM transactions WHERE id=$1", [id]);
   if (!before) throw new Error("Recorded payment not found.");
+  if (!unchangedEntry(before, expected)) throw new Error("This entry changed on another device. Reopen it to see the latest value.");
   const linked = await db.select<{ id: number }[]>("SELECT id FROM appointments WHERE transaction_id=$1", [id]);
   if (linked.length && t.type !== "income") throw new Error("A recorded appointment payment must remain an income entry. Mark it unpaid before changing its type.");
   const attribution = await transactionAttribution(db, t, before);
@@ -429,9 +445,10 @@ async function transactionAttribution(db: Db, t: TransactionInput, before?: Tran
     income_kind: t.type === "expense" ? null : category?.income_kind ?? t.income_kind ?? null };
 }
 
-export async function deleteTransaction(id: number): Promise<DeletedSnapshot> {
+export async function deleteTransaction(id: number, expected?: Transaction): Promise<DeletedSnapshot> {
   const db = await getDb();
   const [tx] = await db.select<Transaction[]>("SELECT * FROM transactions WHERE id = $1", [id]);
+  if (expected && (!tx || !unchangedEntry(tx, expected))) throw new Error("This entry changed on another device. Refresh before deleting it.");
   // An appointment whose entry has been deleted goes back to unpaid, so the
   // money it was worth leaves the totals with it.
   const wasPaying = await db.select<{ id: number; status: AppointmentStatus }[]>(
@@ -552,10 +569,11 @@ export async function deleteAppointmentSeries(seriesId: string, fromDate: string
 }
 
 /** Shared booking edits never rewrite money already recorded. */
-export async function updateAppointment(id: number, a: AppointmentInput, expectedRevision?: number) {
+export async function updateAppointment(id: number, a: AppointmentInput, expectedRevision?: number, expectedNotes?: string | null) {
   const db = await getDb();
   const before = await getAppointment(id);
   if (!before) throw new Error("Appointment not found");
+  if (expectedNotes !== undefined && (before.notes ?? null) !== expectedNotes) throw new Error("The private notes changed on another device. Reopen the appointment to see them.");
   const details = bookingDetails(a, before);
   const beforeDetails = bookingDetails(before);
   const detailsChanged = Object.entries(details).some(([field, value]) => value !== beforeDetails[field as keyof typeof beforeDetails]);
@@ -594,7 +612,9 @@ export async function updateAppointment(id: number, a: AppointmentInput, expecte
       if (client) await updateClient({ ...client, saved_address: details.visit_address, saved_postcode: details.visit_postcode });
     }
   }
-  await db.execute("UPDATE appointments SET notes = $1, category_id = $2 WHERE id = $3", [a.notes || null, a.category_id, id]);
+  const notesDb = before.remote_id && changed ? await getDb() : db;
+  const updated = await notesDb.execute("UPDATE appointments SET notes = $1, category_id = $2 WHERE id = $3 AND notes IS $4", [a.notes || null, a.category_id, id, before.notes]);
+  if (!updated.rowsAffected) throw new Error("The appointment changed. Reopen it before editing the notes.");
 }
 
 /** Permanent deletion removes booking details, never the money received. */
@@ -1023,8 +1043,8 @@ export interface Backup {
   appointments?: Appointment[];
 }
 
-export async function exportAll(): Promise<Backup> {
-  const db = await getDb();
+export async function exportAll(source?: Db): Promise<Backup> {
+  const db = source ?? await getDb();
   const [categories, clients, transactions, appointments] = await db.readBatch<[Category[], Client[], Transaction[], Appointment[]]>([
     { sql: "SELECT * FROM categories ORDER BY id" },
     { sql: "SELECT * FROM clients ORDER BY id" },

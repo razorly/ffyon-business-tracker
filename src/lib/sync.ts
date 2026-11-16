@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import { requireOnlineAccess } from "./access";
+import { isPwa, requireOnlineAccess } from "./access";
+import { pwaAdminRequest } from "./pwa-access";
 import { getAppointment, getDb, listAppointments, listClients, type AppointmentRow, type AppointmentStatus, type ClientWithStats, type Statement } from "./db";
 
 export interface CloudClient { id: string; account_id: string | null; name: string; email: string; phone: string; saved_address: string; saved_postcode: string; disabled: boolean; revision: number; updated_at: string; merged_into?: string | null }
@@ -27,7 +28,10 @@ function publish(patch: Partial<SyncState>) { state = { ...state, ...patch }; fo
 
 export async function adminRequest<T = unknown>(operation: string, method: string, body?: unknown, query?: Record<string, string>): Promise<T> {
   await requireOnlineAccess();
-  try { return await invoke<T>("admin_request", { operation, method, body: body ?? null, query: query ?? null }); }
+  try {
+    if (isPwa()) return await pwaAdminRequest<T>(operation, method, body, query);
+    return await invoke<T>("admin_request", { operation, method, body: body ?? null, query: query ?? null });
+  }
   catch (error) { throw error instanceof Error ? error : new Error(String(error)); }
 }
 
@@ -362,15 +366,19 @@ export function mutateAndSync(operation: string, method: string, body: Record<st
       pending = { operation, method, body: { operation_id: crypto.randomUUID(), ...body } };
       await db.execute("INSERT INTO sync_state(key,value) VALUES ('mutation-pending',$1)", [JSON.stringify(pending)]);
     }
+    const clearPending = async () => {
+      const current = await getDb();
+      await current.execute("DELETE FROM sync_state WHERE key='mutation-pending' AND value=$1", [JSON.stringify(pending)]);
+    };
     try {
       const response = await adminRequest<{ client?: CloudClient; aliases?: Record<string, string> }>(pending.operation, pending.method, pending.body);
       if (pending.operation === "clients/link" && response.aliases && response.client) await applyClientAliases(response.client, response.aliases);
     } catch (error) {
-      if (/^4\d\d:/.test(String(error instanceof Error ? error.message : error))) await db.execute("DELETE FROM sync_state WHERE key='mutation-pending'").catch(() => {});
+      if (/^4\d\d:/.test(String(error instanceof Error ? error.message : error))) await clearPending().catch(() => {});
       throw error;
     }
     await syncAfterWrite();
-    await db.execute("DELETE FROM sync_state WHERE key='mutation-pending'");
+    await clearPending();
     return pending.body;
   });
   mutationQueue = task.catch(() => {});

@@ -334,7 +334,7 @@ function ClientForm({
     setBusy(true); setError(null);
     try {
       let id = client?.id;
-      if (id) await updateClient({ id, name, email, phone, notes, saved_address: savedAddress, saved_postcode: savedPostcode, cloud_revision: client?.cloud_revision });
+      if (id) await updateClient({ id, name, email, phone, notes, saved_address: savedAddress, saved_postcode: savedPostcode, cloud_revision: client?.cloud_revision }, client?.notes ?? null);
       else id = await createClient({ name, email, phone, notes, saved_address: savedAddress, saved_postcode: savedPostcode });
       toast.success(client?.id ? "Client updated" : "Client added");
       onSaved(id);

@@ -231,7 +231,7 @@ export function Finances() {
         }
         onConfirm={async () => {
           if (!toDelete) return;
-          toastDeleted(await deleteTransaction(toDelete.id), refresh);
+          toastDeleted(await deleteTransaction(toDelete.id, toDelete), refresh);
           refresh();
         }}
       />

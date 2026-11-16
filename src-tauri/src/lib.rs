@@ -264,6 +264,7 @@ pub fn run() {
             access::access_check,
             access::access_disconnect,
             access::admin_request,
+            access::ledger_request,
             location::lookup_postcode,
             location::open_appointment_directions,
             database::db_select,

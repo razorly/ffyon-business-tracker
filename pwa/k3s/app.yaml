@@ -1,0 +1,176 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ffyon
+  namespace: ffyon
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: ffyon
+  template:
+    metadata:
+      labels:
+        app: ffyon
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: unpack
+          image: docker.io/library/node:24.22.2-alpine@sha256:a34ab6d7f6f4813f4d0c5469d74685604b962fbdbf5793a7bc7b4998ecb867c8
+          command: [tar, -xzf, /bundle/bundle.tar.gz, -C, /app]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: bundle
+              mountPath: /bundle
+              readOnly: true
+            - name: app
+              mountPath: /app
+      containers:
+        - name: tracker
+          image: docker.io/library/node:24.22.2-alpine@sha256:a34ab6d7f6f4813f4d0c5469d74685604b962fbdbf5793a7bc7b4998ecb867c8
+          command: [node, /app/server.mjs]
+          env:
+            - name: FFYON_PUBLIC_ORIGIN
+              value: https://ffyon.home
+            - name: FFYON_LEDGER_DIRECTORY
+              value: /ledger
+            - name: FFYON_SESSION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ffyon-session
+                  key: key
+          ports:
+            - name: http
+              containerPort: 8080
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 30
+          volumeMounts:
+            - name: app
+              mountPath: /app
+              readOnly: true
+            - name: ledger
+              mountPath: /ledger
+      volumes:
+        - name: bundle
+          configMap:
+            name: __FFYON_BUNDLE__
+        - name: app
+          emptyDir:
+            sizeLimit: 16Mi
+        - name: ledger
+          persistentVolumeClaim:
+            claimName: ffyon-ledger
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ffyon-ledger
+  namespace: ffyon
+spec:
+  storageClassName: nas-nfs
+  accessModes: [ReadWriteMany]
+  resources:
+    requests:
+      storage: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ffyon
+  namespace: ffyon
+spec:
+  selector:
+    app: ffyon
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ffyon
+  namespace: ffyon
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    cert-manager.io/cluster-issuer: home-ca
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: ffyon.home
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ffyon
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - ffyon.home
+      secretName: ffyon-home-tls
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: ffyon-https
+  namespace: ffyon
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ffyon-http
+  namespace: ffyon
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+    traefik.ingress.kubernetes.io/router.middlewares: ffyon-ffyon-https@kubernetescrd
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: ffyon.home
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ffyon
+                port:
+                  number: 80

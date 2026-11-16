@@ -2,8 +2,21 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { LoaderCircle, MapPin, Navigation, X } from "lucide-react";
 import { Button } from "./ui";
+import { isPwa } from "@/lib/access";
 
 type PostcodeLocation = { postcode: string; latitude: number; longitude: number };
+
+async function lookupPostcode(postcode: string) {
+  if (!isPwa()) return invoke<PostcodeLocation>("lookup_postcode", { postcode });
+  const normalized = postcode.trim().toUpperCase().replace(/\s+/g, "");
+  if (!/^[A-Z]{1,2}\d[A-Z\d]?\d[A-Z]{2}$/.test(normalized)) throw new Error("Enter a valid UK postcode.");
+  const response = await fetch(`https://api.postcodes.io/postcodes/${normalized}`, {
+    credentials: "omit", redirect: "error", signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) throw new Error("The postcode location is unavailable.");
+  const { result } = await response.json() as { result: PostcodeLocation };
+  return result;
+}
 
 export function RemoteAppointmentMap({ address, postcode }: { address: string; postcode: string }) {
   const [location, setLocation] = useState<PostcodeLocation | null>(null);
@@ -23,7 +36,7 @@ export function RemoteAppointmentMap({ address, postcode }: { address: string; p
     setBusy(true);
     setError("");
     try {
-      const found = await invoke<PostcodeLocation>("lookup_postcode", { postcode });
+      const found = await lookupPostcode(postcode);
       if (current !== request.current) return;
       if (!Number.isFinite(found.latitude) || !Number.isFinite(found.longitude)) throw new Error("The postcode location is unavailable.");
       setLocation(found);
@@ -36,6 +49,7 @@ export function RemoteAppointmentMap({ address, postcode }: { address: string; p
     try { await invoke("open_appointment_directions", { address, postcode }); }
     catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
   };
+  const directionsUrl = `https://www.google.com/maps/dir/?${new URLSearchParams({ api: "1", destination: `${address}, ${postcode}` })}`;
   const source = location ? `https://www.openstreetmap.org/export/embed.html?${new URLSearchParams({
     bbox: `${location.longitude - 0.008},${location.latitude - 0.005},${location.longitude + 0.008},${location.latitude + 0.005}`,
     layer: "mapnik",
@@ -49,7 +63,10 @@ export function RemoteAppointmentMap({ address, postcode }: { address: string; p
         {busy ? <LoaderCircle size={14} className="animate-spin" /> : location ? <X size={14} /> : <MapPin size={14} />}
         {busy ? "Finding postcode..." : location ? "Hide map" : "Show map"}
       </Button>
-      <Button type="button" size="sm" disabled={!postcode.trim() || !address.trim()} onClick={() => void directions()}><Navigation size={14} /> Directions</Button>
+      <Button type="button" size="sm" disabled={!postcode.trim() || !address.trim()} onClick={() => {
+        if (isPwa()) window.open(directionsUrl, "_blank", "noopener,noreferrer");
+        else void directions();
+      }}><Navigation size={14} /> Directions</Button>
     </div>
     <p className="text-[11px] leading-relaxed text-muted">Map: postcode area only, via Postcodes.io and OpenStreetMap. Directions sends the address to Google Maps.</p>
     {error && <p role="alert" className="break-words text-xs text-bad">{error}</p>}

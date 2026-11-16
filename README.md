@@ -1,6 +1,6 @@
 # Tanned by Ffy
 
-A small desktop app for tracking income and outgoings for a tanning business. It runs on Mac and Windows.
+A small app for tracking income and outgoings for a tanning business. It runs on Mac and Windows. The [iPhone web app](docs/ios-pwa.md) runs on the home k3s cluster.
 
 - **Dashboard**: today's appointments, a **Needs your attention** card (booking requests, payments to confirm and unread email, each linking straight to where it's dealt with), this month's profit, income and expenses (each compared with last month) and clients this month. It also has a 12-month income vs expenses chart, a monthly profit chart, a tax-year total, income by type, and recent income and expenses.
 - **Schedule**: a calendar of appointments, in day, week or month view. Click any empty time to book one; click an appointment to open it. Regulars can be booked as a repeat (every week up to every 4 weeks), and an appointment can be marked cancelled or a no-show. Booking adds no income — an appointment only becomes income when it's marked **paid**. Finished appointments waiting for payment are listed in **To do**.
@@ -12,9 +12,9 @@ A small desktop app for tracking income and outgoings for a tanning business. It
 - **Tray**: while the app is running it also sits in the system tray (the menu bar on a Mac), with today's takings, the next appointment, one-click **Quick add** for active services at their current discounted prices, and **Mark paid** for anything waiting. **Ctrl/⌘ + Shift + N** opens a new entry from whatever else you're in.
 - **Settings**: three tabs. **Bookings & website** holds what's shared with the website: services, booking availability, studio and home-visit details, request notifications, time off and the existing diary import. **Finances** holds other income types, expense categories, the review of older income labels and Excel/CSV export (with tax-year presets). **This computer** holds the site connection, backups (including automatic backups), the tray and shortcuts, appearance and updates.
 
-Local financial entry and category deletion offers **Undo**. Shared appointment/account deletion is permanent privacy cleanup with no undo: it removes personal booking details while retaining anonymized recorded payments. Cancellation and disabling an account remain separate actions.
+Financial entry and category deletion offers **Undo**. Shared appointment or account deletion permanently removes personal booking details and retains anonymized recorded payments. Cancellation and disabling an account remain separate actions.
 
-The official app requires an approved admin device. Customers, services and bookings synchronize with the Tanned by Ffy website; income, expenses and private notes stay in the local SQLite database on each computer. A website customer account does not unlock the desktop app.
+The app requires an approved admin device. Customers, services and bookings synchronize with the Tanned by Ffy website. On version 0.7.0 and later, finances and private notes synchronize between approved devices through the [shared ledger on the home cluster](docs/ios-pwa.md#shared-finances-and-private-notes).
 
 See [Admin setup](docs/admin-setup.md) for Windows/macOS pairing, device access and recovery.
 
@@ -24,7 +24,7 @@ Customer requests need admin approval; manual entries are confirmed directly. Da
 
 Services are the single treatment catalogue for the website, bookings, service payments, tray shortcuts and reports. Set the name, duration, base price and optional discount once in **Settings > Bookings & website > Services**. New appointments suggest the current discounted price; their payment controls use the saved quote and allow the actual amount received to be edited. Existing bookings and payments keep their saved names, quotes and amounts when a service is renamed or archived.
 
-Use **New entry > Income** for tips, product sales and other non-treatment receipts. It defaults to **Other income** and does not inherit a service price or offer appointment payments. The historical entry editor preserves saved labels and amounts, with one grouped **Income type** selector for explicit corrections to unlinked records. Expense categories can still store a usual amount to prefill new expenses. Neither list duplicates service prices. After upgrading, **Settings > Finances > Review older income** reuses existing explicit links and asks you to classify unmatched old labels without guessing by name. Labels with no recorded income or appointments are not listed. Review local financial records separately on each computer.
+Use **New entry > Income** for tips, product sales and other non-treatment receipts. It defaults to **Other income** and does not inherit a service price or offer appointment payments. The historical entry editor preserves saved labels and amounts, with one grouped **Income type** selector for explicit corrections to unlinked records. Expense categories can still store a usual amount to prefill new expenses. Neither list duplicates service prices. After upgrading, **Settings > Finances > Review older income** reuses existing explicit links and asks you to classify unmatched old labels without guessing by name. Labels with no recorded income or appointments are not listed.
 
 ### Appointments and money
 
@@ -53,7 +53,7 @@ Closing the window asks, the first time, whether to leave Tanned by Ffy in the t
 
 When the window is out of sight, anything done from the tray says so with a notification from the computer instead of a message in the app.
 
-Payments to confirm also update the To do badge and send a count-only desktop reminder, even when the window is open. Repeated syncs do not repeat the same reminder. **Settings > This computer > Tray & shortcuts > Desktop payment reminders** turns desktop reminders off without hiding To do items. Allow notifications for Tanned by Ffy in Windows or macOS notification settings. The app must be running (including in the tray/menu bar); reopening or resuming checks overdue bookings. Reminders follow the Europe/London business clock and never email customers. Payment records and reminder bookkeeping remain local to each approved computer.
+Payments to confirm also update the To do badge and send a count-only desktop reminder, even when the window is open. Repeated syncs do not repeat the same reminder. **Settings > This computer > Tray & shortcuts > Desktop payment reminders** turns desktop reminders off without hiding To do items. Allow notifications for Tanned by Ffy in Windows or macOS notification settings. The app must be running (including in the tray/menu bar); reopening or resuming checks overdue bookings. Reminders follow the Europe/London business clock and track delivery on each computer.
 
 ### Backups
 

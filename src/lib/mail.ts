@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { adminRequest } from "./sync";
+import { isPwa } from "./access";
+import { downloadBrowserFile } from "./browser-files";
 
 export type MailFilter = "all" | "unread" | "sent" | "trash";
 export type MailDirection = "inbound" | "outbound";
@@ -110,6 +112,10 @@ export async function downloadMailAttachment(messageId: string, attachment: Mail
   const raw = atob(file.base64);
   if (raw.length > MAIL_ATTACHMENT_LIMIT) throw new Error("This attachment exceeds the 15 MB download limit.");
   const name = safeAttachmentName(typeof file.filename === "string" ? file.filename : attachment.filename);
+  if (isPwa()) {
+    downloadBrowserFile(name, Uint8Array.from(raw, character => character.charCodeAt(0)));
+    return true;
+  }
   const extension = name.includes(".") ? name.split(".").pop() : null;
   const filters = extension && /^[a-z0-9]{1,12}$/i.test(extension) ? [{ name: "Attachment", extensions: [extension] }] : [];
   const path = await invoke<string | null>("protected_save_file", { defaultPath: name, filters });
