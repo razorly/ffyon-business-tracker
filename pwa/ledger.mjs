@@ -1,39 +1,16 @@
-import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from "node:crypto";
-import { open, readFile, rename, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { randomUUID } from "node:crypto";
+import { encryptedJson } from "./encrypted-json.mjs";
 
 export const ledgerLimit = 16 * 1024 * 1024;
 const signature = Buffer.from("SQLite format 3\0");
 
 export function createLedger(directory, key) {
-  const path = join(directory, "ledger.v1");
+  const store = encryptedJson(directory, "ledger.v1", key);
   let loaded;
   let queue = Promise.resolve();
 
-  function encrypt(value) {
-    const iv = randomBytes(12);
-    const cipher = createCipheriv("aes-256-gcm", key, iv);
-    const data = Buffer.concat([cipher.update(JSON.stringify(value), "utf8"), cipher.final()]);
-    return Buffer.concat([iv, cipher.getAuthTag(), data]);
-  }
-  async function load() {
-    let data;
-    try { data = await readFile(path); }
-    catch (error) { if (error.code === "ENOENT") return null; throw error; }
-    const cipher = createDecipheriv("aes-256-gcm", key, data.subarray(0, 12)).setAuthTag(data.subarray(12, 28));
-    return JSON.parse(Buffer.concat([cipher.update(data.subarray(28)), cipher.final()]));
-  }
-  async function persist(record) {
-    const temporary = join(directory, `.ledger-${randomUUID()}.tmp`);
-    try {
-      const file = await open(temporary, "wx", 0o600);
-      try { await file.writeFile(encrypt(record)); await file.sync(); }
-      finally { await file.close(); }
-      await rename(temporary, path);
-    } finally { await rm(temporary, { force: true }).catch(() => {}); }
-  }
   function read() {
-    return loaded ??= load().catch(error => { loaded = undefined; throw error; });
+    return loaded ??= store.read().catch(error => { loaded = undefined; throw error; });
   }
   const summary = (record) => record ? { ledger_id: record.ledger_id, revision: record.revision } : { ledger_id: null, revision: 0 };
 
@@ -56,7 +33,7 @@ export function createLedger(directory, key) {
       ledger_id: current?.ledger_id ?? randomUUID(), revision, content: input.content,
       receipts: [...(current?.receipts ?? []).slice(-127), [operation, revision]],
     };
-    await persist(next);
+    await store.write(next);
     loaded = Promise.resolve(next);
     return { status: 200, body: { ...summary(next), applied_revision: revision } };
   }

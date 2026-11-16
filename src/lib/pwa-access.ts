@@ -122,3 +122,8 @@ export async function pwaAdminRequest<T>(operation: string, method: string, body
 export function pwaLedgerRequest<T>(revision?: number, body?: unknown) {
   return request<T>(revision === undefined ? "ledger" : `ledger?revision=${revision}`, body === undefined ? "GET" : "PUT", body);
 }
+
+export interface PwaPushStatus { enabled: boolean; public_key: string }
+export const getPwaPush = () => request<PwaPushStatus>("push", "GET");
+export const enablePwaPush = (subscription: PushSubscriptionJSON) => request<PwaPushStatus>("push", "PUT", subscription);
+export const disablePwaPush = () => request<PwaPushStatus>("push", "DELETE");

@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "build:pwa": "tsc && vite build --mode pwa --outDir pwa/dist",
+    "build:pwa": "tsc && vite build --mode pwa --outDir pwa/dist && node pwa/build-runtime.mjs",
     "preview": "vite preview",
     "test": "node --experimental-vm-modules --test tests/*.mjs",
     "tauri": "tauri"
@@ -31,6 +31,7 @@
     "recharts": "^3.10.1",
     "sonner": "^2.0.8",
     "tailwind-merge": "^3.7.0",
+    "web-push": "4.0.0",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
@@ -41,6 +42,7 @@
     "@types/react-dom": "^19.1.6",
     "@types/sql.js": "^1.4.11",
     "@vitejs/plugin-react": "^6.0.2",
+    "rolldown": "1.2.9",
     "sql.js": "^1.14.2",
     "tailwindcss": "^4.3.3",
     "typescript": "~6.0.3",

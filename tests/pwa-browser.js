@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createECDH, randomBytes, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { mkdir, mkdtemp, readFile, rm, rmdir } from "node:fs/promises";
 import { createServer } from "node:https";
@@ -71,7 +71,9 @@ server.listen(0, "127.0.0.1");
 await once(server, "listening");
 const origin = `https://localhost:${server.address().port}`;
 const ledgerDirectory = await mkdtemp(join(output, "test-ledger-"));
-const app = createPwaServer({ origin, secret: randomBytes(32).toString("hex"), directory: resolve("pwa/dist"), ledgerDirectory, fetchUpstream: mockSite });
+const app = createPwaServer({ origin, secret: randomBytes(32).toString("hex"), directory: resolve("pwa/dist"), ledgerDirectory,
+  fetchUpstream: mockSite, pushSender: async () => assert.fail("The loopback UI fixture must never deliver a real push."),
+});
 server.on("request", (request, response) => {
   if (!ledgerAvailable && request.url.startsWith("/api/pwa/ledger")) {
     response.writeHead(503, { "Content-Type": "application/json" }).end('{"error":"Legacy fixture mode"}');
@@ -80,8 +82,30 @@ server.on("request", (request, response) => {
 const browser = await webkit.launch();
 try {
   const context = await browser.newContext({ ...devices["iPhone 14"], ignoreHTTPSErrors: true });
+  const curve = createECDH("prime256v1");
+  curve.generateKeys();
+  await context.addInitScript(subscription => {
+    let active = null;
+    let granted = false;
+    Object.defineProperty(navigator, "standalone", { value: true });
+    Object.defineProperty(window, "Notification", { configurable: true, value: { get permission() { return granted ? "granted" : "default"; } } });
+    Object.defineProperty(ServiceWorkerRegistration.prototype, "pushManager", {
+      value: {
+        getSubscription: async () => active,
+        async subscribe(options) {
+          if (!options.userVisibleOnly || options.applicationServerKey.length !== 65) throw new Error("Invalid subscribe options");
+          granted = true;
+          active = { toJSON: () => subscription, async unsubscribe() { active = null; return true; } };
+          return active;
+        },
+      },
+    });
+  }, { endpoint: "https://web.push.apple.com/test-fixture", keys: {
+    p256dh: curve.getPublicKey().toString("base64url"), auth: randomBytes(16).toString("base64url"),
+  } });
   const anonymous = await context.request.get(`${origin}/api/pwa/admin/sync`, { headers: { "X-Ffyon-PWA": "1" } });
   assert.equal(anonymous.status(), 401);
+  assert.equal((await context.request.get(`${origin}/api/pwa/push`, { headers: { "X-Ffyon-PWA": "1" } })).status(), 401);
   assert.equal(requests.length, 0);
   const page = await context.newPage();
   const errors = [];
@@ -133,6 +157,22 @@ try {
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
   await nav.getByRole("link", { name: "Settings" }).click();
   await page.getByRole("button", { name: "This device" }).click();
+  const pushUrl = `${origin}/api/pwa/push`;
+  const [enrollment] = await Promise.all([
+    page.waitForResponse(response => response.url() === pushUrl && response.request().method() === "PUT"),
+    page.getByRole("button", { name: "Enable push notifications" }).click(),
+  ]);
+  assert.equal(enrollment.status(), 200);
+  const pushStatus = await enrollment.json();
+  assert.deepEqual(Object.keys(pushStatus).sort(), ["enabled", "public_key"]);
+  assert.equal(pushStatus.enabled, true);
+  await page.getByText("Alerts are enabled on this iPhone.", { exact: true }).waitFor();
+  const [removal] = await Promise.all([
+    page.waitForResponse(response => response.url() === pushUrl && response.request().method() === "DELETE"),
+    page.getByRole("button", { name: "Disable push notifications" }).click(),
+  ]);
+  assert.equal((await removal.json()).enabled, false);
+  await page.getByRole("button", { name: "Enable push notifications" }).waitFor();
   const [download] = await Promise.all([
     page.waitForEvent("download"), page.getByRole("button", { name: "Save backup" }).click(),
   ]);
@@ -195,10 +235,11 @@ try {
   await page.getByRole("heading", { name: "Admin access required" }).waitFor();
   await nav.waitFor({ state: "hidden" });
   assert.deepEqual(errors, []);
-  console.log("WebKit passed pairing, Mail, backup restore, automatic finance merge, synced notes and deletion, and revocation.");
+  console.log("WebKit passed pairing, push opt-in and opt-out, Mail, backup restore, finance merge, synced notes and deletion, and revocation.");
 } finally {
   await browser.close();
   server.close();
   await rm(join(ledgerDirectory, "ledger.v1"), { force: true });
+  await rm(join(ledgerDirectory, "push.v1"), { force: true });
   await rmdir(ledgerDirectory);
 }

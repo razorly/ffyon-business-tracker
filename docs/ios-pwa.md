@@ -12,19 +12,25 @@ Changes and deletions made in the shared ledger appear on all connected devices.
 
 Shared records require access to the home network and online verification. The previous device ledger is kept for migration review. **Settings → This device → Shared ledger backup** saves a separate copy of the shared records to Files.
 
+## Push notifications
+
+Open the Home Screen app on iOS 16.4 or later. Go to **Settings → This device → Push notifications**, tap **Enable push notifications** and allow the iPhone prompt.
+
+The cluster checks for new booking requests, payments to confirm and unread mail about once a minute, even while the app is closed. Alerts show counts and link to **To do** or **Mail**. Payment alerts start when the shared ledger is available. The current queues stay visible in the app when you first enable alerts. Enable notifications separately on each iPhone.
+
 ## Deployment
 
-Run these commands from the repository root. Keep the archive outside `pwa/dist`.
+Use Node 24 and run these commands from the repository root. Keep the archive outside `pwa/dist`.
 
 ```sh
 npm ci
 npm run build:pwa
-tar -czf ffyon-pwa-bundle.tar.gz -C pwa server.mjs ledger.mjs dist
+tar -czf ffyon-pwa-bundle.tar.gz -C pwa server.mjs ledger.mjs encrypted-json.mjs push.mjs push-alerts.mjs dist
 ```
 
 Copy the archive and the three files in `pwa/k3s` to a staging directory on a host with the home cluster's kubeconfig. Run `sh deploy.sh ffyon-pwa-bundle.tar.gz` there. The script validates the manifests against the cluster, uploads a versioned bundle and waits for rollout and the home TLS certificate. Redeploy using the same procedure. Existing bundle ConfigMaps allow Kubernetes rollout undo while those ConfigMaps are retained.
 
-The `ffyon/ffyon-ledger` NAS claim holds the encrypted ledger. The server publishes each new revision by replacing one encrypted snapshot after the write succeeds. Keep the NAS data and `ffyon/ffyon-session` Secret together for recovery. The booking and mail site verifies device approval and continues to serve bookings, clients and mail. Finances and staff notes stay on the home cluster.
+The `ffyon/ffyon-ledger` NAS claim holds encrypted ledger snapshots and push subscriptions. Keep the NAS data and `ffyon/ffyon-session` Secret together for recovery. The server delivers alerts through Apple’s Web Push service. The booking and mail site verifies device approval and continues to serve bookings, clients and mail. Finances and staff notes stay on the home cluster.
 
 ## Browser regression test
 

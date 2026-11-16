@@ -7,6 +7,8 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 import { createLedger, ledgerLimit } from "./ledger.mjs";
+import { createAlertReader } from "./push-alerts.mjs";
+import { createPushService, parseAppleSubscription, vapidKeys } from "./push.mjs";
 
 const site = "https://ffyon-customer.razorly.chatgpt.site";
 const installCookie = "__Host-ffyon-install";
@@ -66,7 +68,7 @@ async function body(request, limit) {
   return Buffer.concat(chunks);
 }
 
-export function createPwaServer({ origin, secret, directory, ledgerDirectory, fetchUpstream = fetch }) {
+export function createPwaServer({ origin, secret, directory, ledgerDirectory, pushSender, fetchUpstream = fetch }) {
   if (!token.test(secret ?? "")) throw new Error("Expected a 32-byte FFYON_SESSION_KEY in hex.");
   if (new URL(origin).origin !== origin || new URL(origin).protocol !== "https:") throw new Error("Expected a trusted HTTPS origin.");
   const master = Buffer.from(secret, "hex");
@@ -74,6 +76,26 @@ export function createPwaServer({ origin, secret, directory, ledgerDirectory, fe
   const sealKey = derive("credential-v1");
   const ledger = ledgerDirectory && createLedger(ledgerDirectory, derive("shared-ledger-v1"));
   const verified = new Map();
+  const push = ledgerDirectory && pushSender && createPushService({
+    directory: ledgerDirectory, key: derive("push-subscriptions-v1"), vapid: vapidKeys(derive, site), origin,
+    send: pushSender,
+    async verify(credential) {
+      const rejected = await verifyDevice(credential, false);
+      if (!rejected) return true;
+      await rejected.body?.cancel();
+      if (rejected.status === 401 || rejected.status === 403) return false;
+      throw new Error("Could not verify the device for push delivery.");
+    },
+    readAlerts: createAlertReader({
+      ledger,
+      async request(credential, operation, query) {
+        const result = await upstream(credential, operation, "GET", undefined, query);
+        if (result.ok) return result.json();
+        await result.body?.cancel();
+        throw new Error("Could not load alerts.");
+      },
+    }),
+  });
 
   function seal(credential, install) {
     const iv = randomBytes(12);
@@ -124,19 +146,27 @@ export function createPwaServer({ origin, secret, directory, ledgerDirectory, fe
     });
   }
 
+  async function verifyDevice(credential, allowCached = true) {
+    const key = derive("ledger-auth-v1", `${credential.id}:${credential.token}`).toString("hex");
+    const now = Date.now();
+    if (allowCached && (verified.get(key) ?? 0) > now) return null;
+    const result = await upstream(credential, "session", "GET");
+    if (!result.ok) {
+      verified.delete(key);
+      return result;
+    }
+    const { device } = await result.json();
+    if (device?.id !== credential.id) throw new HttpError(502, "The site returned invalid authorization.");
+    if (verified.size >= 128) verified.delete(verified.keys().next().value);
+    verified.set(key, now + 5_000);
+    return null;
+  }
+
   async function ledgerApi(request, response, url, credential) {
     if (!ledger) throw new HttpError(503, "Shared ledger storage is unavailable.");
     if (request.method !== "GET" && request.method !== "PUT") throw new HttpError(405, "Method not allowed.");
-    const key = derive("ledger-auth-v1", `${credential.id}:${credential.token}`).toString("hex");
-    const now = Date.now();
-    if ((verified.get(key) ?? 0) <= now) {
-      const result = await upstream(credential, "session", "GET");
-      if (!result.ok) return forward(result, response);
-      const { device } = await result.json();
-      if (device?.id !== credential.id) throw new HttpError(502, "The site returned invalid authorization.");
-      if (verified.size >= 128) verified.delete(verified.keys().next().value);
-      verified.set(key, now + 5_000);
-    }
+    const rejected = await verifyDevice(credential);
+    if (rejected) return forward(rejected, response);
     if (request.method === "GET") {
       const known = url.searchParams.get("revision");
       if ([...url.searchParams.keys()].some(name => name !== "revision") ||
@@ -151,6 +181,27 @@ export function createPwaServer({ origin, secret, directory, ledgerDirectory, fe
     return json(response, result.status, result.body);
   }
 
+  async function pushApi(request, response, url, credential) {
+    if (!push) throw new HttpError(503, "Push notifications are unavailable.");
+    if (url.search || !["GET", "PUT", "DELETE"].includes(request.method)) throw new HttpError(405, "Method not allowed.");
+    if (request.method === "DELETE") {
+      await push.remove(credential.id);
+      return json(response, 200, await push.status(credential.id));
+    }
+    const rejected = await verifyDevice(credential, request.method === "GET");
+    if (rejected) return forward(rejected, response);
+    if (request.method === "GET") return json(response, 200, await push.status(credential.id));
+    let input;
+    try { input = JSON.parse(await body(request, 4096)); }
+    catch (error) { if (error instanceof HttpError) throw error; throw new HttpError(400, "Invalid notification subscription."); }
+    const subscription = parseAppleSubscription(input);
+    if (!subscription) throw new HttpError(422, "Enable notifications from the iPhone Home Screen app.");
+    const result = await push.subscribe(credential, subscription);
+    if (!result) throw new HttpError(409, "The tracker has reached its notification device limit.");
+    push.wake();
+    return json(response, 200, result);
+  }
+
   async function api(request, response, url) {
     const method = request.method;
     const requestOrigin = request.headers.origin;
@@ -162,6 +213,12 @@ export function createPwaServer({ origin, secret, directory, ledgerDirectory, fe
     const route = url.pathname.slice("/api/pwa/".length);
     if (route === "disconnect" && method === "POST" && !url.search) {
       await body(request, 256);
+      if (push) {
+        let credential;
+        try { credential = session(request, install); }
+        catch (error) { if (!(error instanceof HttpError) || error.status !== 401) throw error; }
+        if (credential) await push.remove(credential.id);
+      }
       response.setHeader("Set-Cookie", cookie(adminCookie, "", 0));
       return json(response, 200, { ok: true });
     }
@@ -182,6 +239,7 @@ export function createPwaServer({ origin, secret, directory, ledgerDirectory, fe
     }
     const credential = session(request, install);
     if (route === "ledger") return ledgerApi(request, response, url, credential);
+    if (route === "push") return pushApi(request, response, url, credential);
     if (route === "session" && method === "GET" && !url.search) {
       const result = await upstream(credential, "session", "GET");
       return publicSession(result, response, install, credential, [cookie(installCookie, install)]);
@@ -201,7 +259,7 @@ export function createPwaServer({ origin, secret, directory, ledgerDirectory, fe
     return forward(result, response);
   }
 
-  return createServer({ requestTimeout: 35_000 }, async (request, response) => {
+  const server = createServer({ requestTimeout: 35_000 }, async (request, response) => {
     response.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://api.postcodes.io; frame-src https://www.openstreetmap.org; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'");
     response.setHeader("Referrer-Policy", "no-referrer");
     response.setHeader("X-Content-Type-Options", "nosniff");
@@ -240,6 +298,9 @@ export function createPwaServer({ origin, secret, directory, ledgerDirectory, fe
       return json(response, 500, { error: "The tracker could not complete this request." });
     }
   });
+  server.on("listening", () => push?.start());
+  server.on("close", () => push?.stop());
+  return server;
 }
 
 async function forward(result, response) {
@@ -248,10 +309,12 @@ async function forward(result, response) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const { default: webPush } = await import("./dist/server-web-push.cjs");
   const server = createPwaServer({
     origin: process.env.FFYON_PUBLIC_ORIGIN, secret: process.env.FFYON_SESSION_KEY,
     directory: fileURLToPath(new URL("./dist", import.meta.url)),
     ledgerDirectory: process.env.FFYON_LEDGER_DIRECTORY,
+    pushSender: webPush.sendNotification,
   });
   server.listen(Number(process.env.PORT || 8080), "0.0.0.0");
   process.on("SIGTERM", () => server.close());

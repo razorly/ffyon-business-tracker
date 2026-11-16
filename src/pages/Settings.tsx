@@ -46,6 +46,7 @@ import { toastDeleted } from "@/lib/undo";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/Layout";
 import { SiteConnection } from "@/components/SiteConnection";
+import { PushNotifications } from "@/components/PushNotifications";
 import { useSharedLedger } from "@/components/LedgerGate";
 import { SiteBusinessSettings } from "@/components/SiteBusinessSettings";
 import { LegacyIncomeReview } from "@/components/LegacyIncomeReview";
@@ -85,6 +86,7 @@ export function Settings() {
         </>}
         {section === "computer" && <>
           <SiteConnection />
+          {webApp && <PushNotifications />}
           <BackupCard />
           {!webApp && <TrayCard />}
           <AppearanceCard />
