@@ -1,16 +1,18 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { CalendarPlus, Check, Link2, MapPin, Pencil, Plus, Search, ShieldCheck, ShieldOff, Trash2, UserRound, Users } from "lucide-react";
+import { ArrowLeft, CalendarPlus, Check, Link2, MapPin, Pencil, Plus, Search, ShieldCheck, ShieldOff, Trash2, UserRound, Users } from "lucide-react";
 import {
   createClient,
   deleteClient,
   listClients,
   listAppointments,
   listTransactions,
+  saveClientNotes,
   upcomingForClient,
   updateClient,
   type ClientWithStats,
 } from "@/lib/db";
+import { isPwa } from "@/lib/access";
 import { useData, useLoad } from "@/lib/data";
 import { linkClientAccount } from "@/lib/sync";
 import { useAccess } from "@/components/AccessGate";
@@ -42,6 +44,9 @@ export function Clients() {
   const [linkBusy, setLinkBusy] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
   const [clientError, setClientError] = useState<string | null>(null);
+  const webApp = isPwa();
+  const profileHeading = useRef<HTMLHeadingElement>(null);
+  const clientList = useRef<HTMLDivElement>(null);
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -57,6 +62,17 @@ export function Clients() {
   }, [clients, search, sort]);
 
   const selected = clients.find((c) => c.id === selectedId) ?? null;
+  const profileId = selected?.id;
+  useEffect(() => {
+    if (profileId !== undefined && webApp && matchMedia("(max-width: 63.999rem)").matches) {
+      profileHeading.current?.focus({ preventScroll: true });
+      profileHeading.current?.scrollIntoView({ block: "center" });
+    }
+  }, [profileId, webApp]);
+  const backToClients = () => {
+    setSelectedId(null);
+    requestAnimationFrame(() => clientList.current?.focus());
+  };
   const [history, , historyError] = useLoad(
     () => (selectedId ? listTransactions({ clientId: selectedId }) : Promise.resolve([])),
     [selectedId],
@@ -85,7 +101,7 @@ export function Clients() {
       {clientError && <p role="alert" className="mb-4 text-sm text-bad">{clientError}</p>}
 
       <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-5">
-        <Card className="min-w-0 lg:col-span-3">
+        <Card className={cn("min-w-0 lg:col-span-3", webApp && selected && "hidden lg:block")}>
           <div className="flex flex-wrap items-center justify-between gap-3 px-5 pt-4 pb-3">
             <div className="relative w-full min-w-0 sm:w-60">
               <Search size={15} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
@@ -114,7 +130,7 @@ export function Clients() {
               {clients.length ? "Try another search." : "Clients appear when they book online or when you book them in. You can also add one here."}
             </EmptyState>
           ) : (
-            <div className="max-w-full overflow-x-auto" role="region" aria-label="Client list" tabIndex={0}>
+            <div ref={clientList} className="max-w-full overflow-x-auto" role="region" aria-label="Client list" tabIndex={0}>
             <table className="w-full min-w-[480px] text-[13.5px]">
               <thead>
                 <tr className="eyebrow border-y border-line bg-surface-2/60 text-left text-ink-2">
@@ -154,14 +170,17 @@ export function Clients() {
           <div className="h-2" />
         </Card>
 
-        <Card className="min-w-0 self-start lg:col-span-2">
+        <Card className={cn("min-w-0 self-start lg:col-span-2", webApp && !selected && "hidden lg:block")}>
           {selected ? (
             <>
+              {webApp && <div className="px-5 pt-4 lg:hidden">
+                <Button variant="ghost" size="sm" onClick={backToClients}><ArrowLeft size={15} /> All clients</Button>
+              </div>}
               <div className="flex flex-wrap items-start justify-between gap-3 px-5 pt-5">
                 <div className="flex min-w-0 basis-full items-center gap-3 sm:basis-0 sm:flex-1">
                   <Avatar name={selected.name} large />
                   <div className="min-w-0">
-                    <div className="break-words font-display text-[24px] leading-tight">{selected.name}</div>
+                    <h2 ref={profileHeading} tabIndex={-1} className="break-words font-display text-[24px] leading-tight">{selected.name}</h2>
                     <div className="break-words text-[13px] text-muted">{selected.phone || "No phone number"}</div>
                     {selected.email && <div className="mt-1 break-all text-[13px] text-muted">{selected.email}</div>}
                     <div className="mt-1 text-xs text-muted">{selected.account_id ? "Website account linked" : "No website account"}{selected.disabled ? " · disabled" : ""}</div>
@@ -181,7 +200,7 @@ export function Clients() {
                 {selected.disabled ? <Button size="sm" disabled={access.state !== "online"} onClick={async () => { try { await updateClient({ ...selected, disabled: 0 }); refresh(); toast.success("Client re-enabled"); } catch (e) { setClientError(e instanceof Error ? e.message : "Could not re-enable the client"); } }}><ShieldCheck size={14} /> Re-enable</Button> : null}
                 {!selected.account_id && selected.remote_id && <Button size="sm" disabled={access.state !== "online"} onClick={() => { setLinking(true); setAccountId(""); setLinkError(null); }}><Link2 size={14} /> Link website account</Button>}
               </div>
-              {selected.notes && <p className="mx-5 mt-3 break-words rounded-lg bg-surface-2 px-3 py-2 text-[13px] text-ink-2">{selected.notes}</p>}
+              <ClientNotes key={selected.id} client={selected} onSaved={refresh} />
               {selected.saved_address && selected.saved_postcode && <p className="mx-5 mt-3 whitespace-pre-line break-words text-[13px] text-ink-2"><MapPin size={13} className="mr-1 inline" />{selected.saved_address}<span className="block text-xs text-muted">{selected.saved_postcode}</span></p>}
               <div className="grid grid-cols-1 gap-2 px-5 pt-4 sm:grid-cols-3">
                 <MiniStat label="Visits" value={String(selected.visits)} />
@@ -279,7 +298,7 @@ export function Clients() {
         }}
       />
       <Modal open={!!toDelete} onClose={() => { if (!deleteBusy) setToDelete(null); }} title={toDelete?.account_id ? "Delete account?" : "Delete client?"} width="max-w-sm">
-        <p className="break-words text-sm text-ink-2"><b>{toDelete?.name}</b>{toDelete?.account_id ? "'s website account, contact details and all appointments" : "'s contact details and all appointments"} will be permanently removed. Recorded payments stay in financial history without client or booking details. This cannot be undone.</p>
+        <p className="break-words text-sm text-ink-2"><b>{toDelete?.name}</b>{toDelete?.account_id ? "'s website account, contact details, notes and all appointments" : "'s contact details, notes and all appointments"} will be permanently removed. Recorded payments stay in financial history without client or booking details. This cannot be undone.</p>
         {deleteError && <p role="alert" className="mt-3 text-sm text-bad">{deleteError}</p>}
         <div className="mt-5 flex flex-wrap justify-end gap-2"><Button disabled={deleteBusy} onClick={() => setToDelete(null)}>Keep client</Button><Button variant="danger" disabled={deleteBusy || access.state !== "online"} onClick={async () => { if (!toDelete) return; setDeleteBusy(true); setDeleteError(""); try { await deleteClient(toDelete.id); setSelectedId(null); setToDelete(null); refresh(); toast.success("Client removed. Payments retained."); } catch (cause) { setDeleteError(cause instanceof Error ? cause.message : "Could not delete the client"); } finally { setDeleteBusy(false); } }}><Trash2 size={14} />{deleteBusy ? "Deleting..." : toDelete?.account_id ? "Delete account" : "Delete client"}</Button></div>
       </Modal>
@@ -293,6 +312,55 @@ export function Clients() {
       </Modal>
     </>
   );
+}
+
+function ClientNotes({ client, onSaved }: { client: ClientWithStats; onSaved: () => void }) {
+  const [draft, setDraft] = useState<{ original: string | null; text: string } | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const startEditing = () => {
+    setError("");
+    setDraft({ original: client.notes, text: client.notes ?? "" });
+  };
+  return <section className="mx-5 mt-4 rounded-xl border border-line bg-surface-2 px-3 py-3">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <h3 className="font-display text-[19px] leading-tight">Client notes</h3>
+      <Button size="sm" onClick={startEditing}>
+        {client.notes ? <Pencil size={14} /> : <Plus size={14} />}
+        {client.notes ? "Edit notes" : "Add notes"}
+      </Button>
+    </div>
+    <p className={cn("mt-2 whitespace-pre-wrap break-words select-text text-sm", client.notes ? "text-ink-2" : "text-muted")}>
+      {client.notes || "No notes yet."}
+    </p>
+    <Modal open={!!draft} title="Client notes" onClose={() => { if (!busy) setDraft(null); }}>
+      <form className="space-y-4" onSubmit={async event => {
+        event.preventDefault();
+        if (!draft || busy) return;
+        setError("");
+        setBusy(true);
+        try {
+          await saveClientNotes(client.id, draft.text, draft.original);
+          onSaved();
+          setDraft(null);
+          toast.success(draft.text.trim() ? "Client notes saved" : "Client notes cleared");
+        } catch (cause) {
+          setError(cause instanceof Error ? cause.message : "Could not save client notes.");
+        } finally { setBusy(false); }
+      }}>
+        <p className="break-words text-sm text-ink-2">{client.name}</p>
+        <Field label="Private client notes">
+          <Textarea autoFocus rows={6} value={draft?.text ?? ""} disabled={busy}
+            onChange={event => setDraft(current => current && { ...current, text: event.target.value })} />
+        </Field>
+        {error && <p role="alert" className="text-sm text-bad">{error}</p>}
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button disabled={busy} onClick={() => setDraft(null)}>Cancel</Button>
+          <Button variant="primary" type="submit" disabled={busy || (draft?.original ?? "") === draft?.text}>Save notes</Button>
+        </div>
+      </form>
+    </Modal>
+  </section>;
 }
 
 function ClientForm({
@@ -334,7 +402,7 @@ function ClientForm({
     setBusy(true); setError(null);
     try {
       let id = client?.id;
-      if (id) await updateClient({ id, name, email, phone, notes, saved_address: savedAddress, saved_postcode: savedPostcode, cloud_revision: client?.cloud_revision }, client?.notes ?? null);
+      if (id) await updateClient({ id, name, email, phone, saved_address: savedAddress, saved_postcode: savedPostcode, cloud_revision: client?.cloud_revision });
       else id = await createClient({ name, email, phone, notes, saved_address: savedAddress, saved_postcode: savedPostcode });
       toast.success(client?.id ? "Client updated" : "Client added");
       onSaved(id);
@@ -353,9 +421,9 @@ function ClientForm({
         <Field label="Phone (optional)">
           <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="07…" disabled={access.state !== "online"} />
         </Field>
-        <Field label="Private staff notes (optional)">
+        {!client?.id && <Field label="Private client notes (optional)">
           <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Preferred shade, skin notes, allergies…" />
-        </Field>
+        </Field>}
         <Field label="Saved visit address (optional)"><Textarea maxLength={500} autoComplete="street-address" value={savedAddress} onChange={(event) => setSavedAddress(event.target.value)} disabled={access.state !== "online"} /></Field>
         <Field label="Saved postcode (optional)"><Input maxLength={12} autoComplete="postal-code" value={savedPostcode} onChange={(event) => setSavedPostcode(event.target.value.toUpperCase())} disabled={access.state !== "online"} /></Field>
         {error && <p role="alert" className="text-sm text-bad">{error}</p>}

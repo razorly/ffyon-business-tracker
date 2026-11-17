@@ -12,6 +12,8 @@ Changes and deletions made in the shared ledger appear on all connected devices.
 
 Shared records require access to the home network and online verification. The previous device ledger is kept for migration review. **Settings → This device → Shared ledger backup** saves a separate copy of the shared records to Files.
 
+Open **Clients**, select a client, and choose **Add notes** or **Edit notes** in **Client notes**. Saving an empty note clears it across approved devices. Staff notes are stored in the shared ledger. If another device changes the note while you are editing, the app keeps your draft and asks you to reopen the latest version.
+
 ## Push notifications
 
 Open the Home Screen app on iOS 16.4 or later. Go to **Settings → This device → Push notifications**, tap **Enable push notifications** and allow the iPhone prompt.

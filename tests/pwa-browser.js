@@ -33,6 +33,7 @@ const customer = {
   email: "", phone: "", saved_address: "", saved_postcode: "", disabled: false, revision: 1,
   updated_at: "2026-10-01T12:00:00Z",
 };
+const otherCustomer = { ...customer, id: "2cced26e-f0bb-4c6d-8d68-696b06c39942", name: "Another Client" };
 const settings = {
   booking_enabled: true, timezone: "Europe/London", slot_minutes: 30, horizon_days: 90, opening_hours: [], revision: 1,
 };
@@ -57,7 +58,7 @@ const mockSite = async (raw, { method, headers, body }) => {
   if (route === "redeem" || route === "session") return Response.json({ device: { id, name: authorized.name }, lease: {} });
   if (route === "sync") return Response.json({
     cursor: 1, changes: [], has_more: false,
-    snapshot: url.searchParams.has("cursor") ? null : { clients: [customer], appointments: [], services: [], blocks: [], settings, cursor: 1 },
+    snapshot: url.searchParams.has("cursor") ? null : { clients: [customer, otherCustomer], appointments: [], services: [], blocks: [], settings, cursor: 1 },
   });
   if (route === "mail/unread") return Response.json({ conversations: [], unread_count: 0 });
   if (route === "mail/conversations") return Response.json({ conversations: [], next_cursor: null });
@@ -190,7 +191,9 @@ try {
   const desktop = ledgerFixture();
   const seed = ledgerFixture();
   const date = backup.transactions[0].date;
-  desktop.exec(`INSERT INTO clients(id,name,remote_id,notes,cloud_revision) VALUES (122,'PWA Test Client','${customer.id}','Desktop private note',1);
+  desktop.exec(`INSERT INTO clients(id,name,remote_id,notes,cloud_revision) VALUES
+      (122,'PWA Test Client','${customer.id}','Desktop private note',1),
+      (123,'Another Client','${otherCustomer.id}',NULL,1);
     INSERT INTO transactions(type,date,amount_pence,description,created_at) VALUES ('expense','${date}',7590,'Desktop-only expense','${date} 06:00:00');`);
   await seedLedger(seed, desktop, desktopId);
   const ledgerUrl = `${origin}/api/ledger`;
@@ -212,18 +215,51 @@ try {
   catch (error) { throw new Error(await deleting.getByRole("alert").textContent({ timeout: 2000 }), { cause: error }); }
   await desktopExpense.waitFor({ state: "hidden" });
   await nav.getByRole("link", { name: "Clients" }).click();
-  await page.getByText(customer.name, { exact: true }).first().click();
+  await page.getByRole("button", { name: customer.name, exact: true }).click();
+  await page.getByRole("heading", { name: "Client notes" }).waitFor();
   await page.getByText("Desktop private note", { exact: true }).waitFor();
-  await page.getByRole("button", { name: "Edit client" }).click();
-  const clientEditor = page.getByRole("dialog", { name: "Edit client" });
-  await clientEditor.getByLabel("Private staff notes (optional)").fill("Edited from phone");
-  await clientEditor.getByRole("button", { name: "Save", exact: true }).click();
-  await clientEditor.waitFor({ state: "hidden" });
+  const editor = page.getByRole("dialog", { name: "Client notes" });
+  const notes = editor.getByLabel("Private client notes");
+  const save = editor.getByRole("button", { name: "Save notes" });
+  await page.getByRole("button", { name: "Edit notes" }).click();
+  assert.equal(await notes.inputValue(), "Desktop private note");
+  await notes.fill("Edited from phone\nSecond line");
+  await save.click();
+  await editor.waitFor({ state: "hidden" });
   const snapshot = await (await context.request.get(ledgerUrl, { headers: desktopHeaders })).json();
   const shared = ledgerFixture(Buffer.from(snapshot.content, "base64"));
   assert.deepEqual(shared.select("SELECT amount_pence FROM transactions"), [{ amount_pence: 4100 }]);
-  assert.equal(shared.select("SELECT notes FROM clients")[0].notes, "Edited from phone");
+  assert.equal(shared.select("SELECT notes FROM clients WHERE id=122")[0].notes, "Edited from phone\nSecond line");
+  assert.equal(shared.select("SELECT notes FROM clients WHERE id=123")[0].notes, null);
+  await page.getByRole("button", { name: "Edit notes" }).click();
+  await notes.fill("Unsaved phone draft");
+  shared.exec("UPDATE clients SET notes='Changed from desktop' WHERE id=122");
+  const changed = await context.request.put(ledgerUrl, { headers: desktopHeaders, data: {
+    ledger_id: snapshot.ledger_id, revision: snapshot.revision, operation_id: randomUUID(), content: Buffer.from(shared.export()).toString("base64"),
+  } });
+  assert.equal(changed.status(), 200);
   shared.close();
+  await save.click();
+  await editor.getByRole("alert").filter({ hasText: "changed on another device" }).waitFor();
+  assert.equal(await notes.inputValue(), "Unsaved phone draft");
+  await editor.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.getByText("Changed from desktop", { exact: true }).waitFor({ timeout: 12000 });
+  await page.getByRole("button", { name: "Edit notes" }).click();
+  await notes.fill("");
+  await save.click();
+  await page.getByText("No notes yet.", { exact: true }).waitFor();
+  const cleared = await (await context.request.get(ledgerUrl, { headers: desktopHeaders })).json();
+  const afterClear = ledgerFixture(Buffer.from(cleared.content, "base64"));
+  assert.equal(afterClear.select("SELECT notes FROM clients WHERE id=122")[0].notes, null);
+  afterClear.close();
+
+  await page.getByRole("button", { name: "All clients" }).click();
+  await page.getByRole("button", { name: otherCustomer.name, exact: true }).click();
+  await page.getByRole("button", { name: "Add notes" }).click();
+  await notes.fill("Notes for the second client");
+  await save.click();
+  await page.getByText("Notes for the second client", { exact: true }).waitFor();
+  assert.equal(requests.some(([method, route]) => method !== "GET" && route === "clients"), false, "Client notes must never be sent to the website.");
   await page.evaluate(() => navigator.serviceWorker.ready);
   await page.waitForFunction(() => !!navigator.serviceWorker.controller);
   assert.deepEqual(await page.evaluate(async () => {
@@ -231,7 +267,9 @@ try {
     return (await cache.keys()).map(request => new URL(request.url).pathname);
   }), ["/offline.html"]);
   revoked = true;
-  await page.reload();
+  // Re-check the existing app on focus, as an iPhone would when brought back
+  // to the foreground. Reloading here can cancel an in-flight ledger fetch.
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await page.getByRole("heading", { name: "Admin access required" }).waitFor();
   await nav.waitFor({ state: "hidden" });
   assert.deepEqual(errors, []);

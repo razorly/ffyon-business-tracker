@@ -288,15 +288,20 @@ export async function createClient(c: { name: string; email?: string; phone?: st
   const committed = await sharedMutation("clients", "POST", { id: remoteId, name: c.name.trim(), email: c.email ?? "", phone: c.phone ?? "", saved_address: c.saved_address ?? "", saved_postcode: c.saved_postcode ?? "" });
   const [client] = await db.select<Client[]>("SELECT * FROM clients WHERE remote_id = $1", [committed.id]);
   if (!client) throw new Error("Client saved online. Refresh the site connection before continuing.");
-  if (c.notes) await db.execute("UPDATE clients SET notes = $1 WHERE id = $2", [c.notes, client.id]);
+  if (c.notes?.trim()) await saveClientNotes(client.id, c.notes, null);
   return client.id;
 }
 
-export async function updateClient(c: Pick<Client, "id" | "name" | "phone" | "notes"> & Partial<Pick<Client, "email" | "disabled" | "cloud_revision" | "saved_address" | "saved_postcode">>, expectedNotes?: string | null) {
+export async function saveClientNotes(id: number, notes: string, expected: string | null) {
+  const db = await getDb();
+  const result = await db.execute("UPDATE clients SET notes = $1 WHERE id = $2 AND notes IS $3", [notes.trim() ? notes : null, id, expected]);
+  if (!result.rowsAffected) throw new Error("These notes changed on another device or the client was removed. Reopen the notes to see the latest version.");
+}
+
+export async function updateClient(c: Pick<Client, "id" | "name" | "phone"> & Partial<Pick<Client, "email" | "disabled" | "cloud_revision" | "saved_address" | "saved_postcode">>) {
   const db = await getDb();
   const [before] = await db.select<Client[]>("SELECT * FROM clients WHERE id = $1", [c.id]);
   if (!before) throw new Error("Client not found");
-  if (expectedNotes !== undefined && (before.notes ?? null) !== expectedNotes) throw new Error("The private notes changed on another device. Reopen the client to see them.");
   if (before.remote_id && (c.name.trim() !== before.name || (c.phone ?? "") !== (before.phone ?? "") || (c.email != null && c.email !== before.email) || (c.disabled != null && c.disabled !== before.disabled) || (c.saved_address !== undefined && c.saved_address !== before.saved_address) || (c.saved_postcode !== undefined && c.saved_postcode !== before.saved_postcode))) {
     await sharedMutation("clients", "PATCH", {
       id: before.remote_id, revision: c.cloud_revision ?? before.cloud_revision, name: c.name.trim(),
@@ -304,12 +309,12 @@ export async function updateClient(c: Pick<Client, "id" | "name" | "phone" | "no
       saved_address: c.saved_address ?? before.saved_address ?? "", saved_postcode: c.saved_postcode ?? before.saved_postcode ?? "",
     });
   }
-  const target = before.remote_id ? await getDb() : db;
-  const updated = await target.execute(
-    before.remote_id ? "UPDATE clients SET notes = $1 WHERE id = $2 AND notes IS $3" : "UPDATE clients SET notes = $1, name = $3, phone = $4, email = $5, saved_address=$6, saved_postcode=$7 WHERE id = $2 AND notes IS $8",
-    before.remote_id ? [c.notes || null, c.id, before.notes] : [c.notes || null, c.id, c.name.trim(), c.phone || null, c.email ?? before.email, c.saved_address ?? before.saved_address ?? "", c.saved_postcode ?? before.saved_postcode ?? "", before.notes],
+  if (before.remote_id) return;
+  const result = await db.execute(
+    "UPDATE clients SET name=$2, phone=$3, email=$4, saved_address=$5, saved_postcode=$6 WHERE id=$1",
+    [c.id, c.name.trim(), c.phone || null, c.email ?? before.email, c.saved_address ?? before.saved_address ?? "", c.saved_postcode ?? before.saved_postcode ?? ""],
   );
-  if (!updated.rowsAffected) throw new Error("The client changed. Reopen it before editing the notes.");
+  if (!result.rowsAffected) throw new Error("The client was removed. Refresh before making changes.");
 }
 
 export async function deleteClient(id: number): Promise<DeletedSnapshot> {
