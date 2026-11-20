@@ -34,6 +34,14 @@ const customer = {
   updated_at: "2026-10-01T12:00:00Z",
 };
 const otherCustomer = { ...customer, id: "2cced26e-f0bb-4c6d-8d68-696b06c39942", name: "Another Client" };
+const matchingBooking = {
+  id: randomUUID(), client_id: otherCustomer.id, service_id: null, service_name: "", date: "2026-11-18",
+  start_time: "19:00", time_confirmed: true, duration_min: 30, price_pence: 0, base_price_pence: 0,
+  discount_percent: 0, is_remote: false, visit_address: "", visit_postcode: "", notes: "Customer booking text",
+  status: "confirmed", revision: 1, proposed_date: null, proposed_start_time: null, proposed_time_confirmed: null,
+  series_id: null, created_at: "2026-11-17T09:00:00Z", updated_at: "2026-11-17T09:00:00Z",
+};
+let siteAppointments = [];
 const settings = {
   booking_enabled: true, timezone: "Europe/London", slot_minutes: 30, horizon_days: 90, opening_hours: [], revision: 1,
 };
@@ -58,7 +66,7 @@ const mockSite = async (raw, { method, headers, body }) => {
   if (route === "redeem" || route === "session") return Response.json({ device: { id, name: authorized.name }, lease: {} });
   if (route === "sync") return Response.json({
     cursor: 1, changes: [], has_more: false,
-    snapshot: url.searchParams.has("cursor") ? null : { clients: [customer, otherCustomer], appointments: [], services: [], blocks: [], settings, cursor: 1 },
+    snapshot: url.searchParams.has("cursor") ? null : { clients: [customer, otherCustomer], appointments: siteAppointments, services: [], blocks: [], settings, cursor: 1 },
   });
   if (route === "mail/unread") return Response.json({ conversations: [], unread_count: 0 });
   if (route === "mail/conversations") return Response.json({ conversations: [], next_cursor: null });
@@ -180,6 +188,18 @@ try {
   const backup = JSON.parse(await readFile(await download.path(), "utf8"));
   assert.equal(backup.transactions[0].amount_pence, 2350);
   backup.transactions[0].amount_pence = 4100;
+  const archivedClientId = backup.clients.find(client => client.remote_id === otherCustomer.id).id;
+  const earlierAppointment = {
+    id: 81, date: matchingBooking.date, start_time: "18:00", duration_min: 30, client_id: archivedClientId,
+    category_id: null, transaction_id: null, status: "confirmed", notes: "Earlier note for missing booking",
+    created_at: matchingBooking.created_at,
+  };
+  backup.appointments = [
+    earlierAppointment,
+    { ...earlierAppointment, id: 82, start_time: "19:00", remote_id: matchingBooking.id, notes: "Earlier appointment note" },
+    { ...earlierAppointment, id: 83, start_time: "20:00", client_id: null, notes: "Earlier unlinked note" },
+  ];
+  siteAppointments = [matchingBooking];
   await page.getByRole("button", { name: "Restore from backup" }).click();
   const [picker] = await Promise.all([
     page.waitForEvent("filechooser"), page.getByRole("button", { name: "Choose file" }).click(),
@@ -194,7 +214,9 @@ try {
   desktop.exec(`INSERT INTO clients(id,name,remote_id,notes,cloud_revision) VALUES
       (122,'PWA Test Client','${customer.id}','Desktop private note',1),
       (123,'Another Client','${otherCustomer.id}',NULL,1);
-    INSERT INTO transactions(type,date,amount_pence,description,created_at) VALUES ('expense','${date}',7590,'Desktop-only expense','${date} 06:00:00');`);
+    INSERT INTO transactions(type,date,amount_pence,description,created_at) VALUES ('expense','${date}',7590,'Desktop-only expense','${date} 06:00:00');
+    INSERT INTO appointments(date,start_time,duration_min,remote_id,client_id,status,cloud_revision,customer_notes,notes) VALUES
+      ('${matchingBooking.date}','19:00',30,'${matchingBooking.id}',123,'confirmed',1,'Customer booking text','Shared appointment note');`);
   await seedLedger(seed, desktop, desktopId);
   const ledgerUrl = `${origin}/api/ledger`;
   const seeded = await context.request.put(ledgerUrl, {
@@ -259,7 +281,57 @@ try {
   await notes.fill("Notes for the second client");
   await save.click();
   await page.getByText("Notes for the second client", { exact: true }).waitFor();
+
+  // Reviews work even for bookings absent from Schedule.
+  const reviewButton = page.getByRole("button", { name: "Review records" });
+  const reviewDialog = page.getByRole("dialog", { name: "Earlier records to review" });
+  await reviewButton.click();
+  const missing = reviewDialog.getByRole("listitem").filter({ hasText: "Earlier note for missing booking" });
+  const matched = reviewDialog.getByRole("listitem").filter({ hasText: "Earlier appointment note" });
+  const unlinked = reviewDialog.getByRole("listitem").filter({ hasText: "Earlier unlinked note" });
+  const addToClient = missing.getByRole("button", { name: "Add to client notes" });
+  await addToClient.waitFor();
+  await missing.getByText(/No matching appointment was found/).waitFor();
+  await unlinked.getByRole("button", { name: "Copy note" }).waitFor();
+  assert.equal(await unlinked.getByRole("button", { name: "Add to client notes" }).count(), 0);
+
+  const beforeReview = await (await context.request.get(ledgerUrl, { headers: desktopHeaders })).json();
+  const concurrent = ledgerFixture(Buffer.from(beforeReview.content, "base64"));
+  concurrent.exec("UPDATE clients SET notes='Newer note from desktop' WHERE id=123");
+  const concurrentSave = await context.request.put(ledgerUrl, { headers: desktopHeaders, data: {
+    ledger_id: beforeReview.ledger_id, revision: beforeReview.revision, operation_id: randomUUID(), content: Buffer.from(concurrent.export()).toString("base64"),
+  } });
+  concurrent.close();
+  assert.equal(concurrentSave.status(), 200);
+  await addToClient.click();
+  await reviewDialog.getByRole("alert").filter({ hasText: /changed/ }).waitFor();
+  await reviewDialog.getByRole("button", { name: "Refresh review" }).click();
+  await missing.getByText("Newer note from desktop", { exact: true }).waitFor();
+  await addToClient.click();
+  await missing.waitFor({ state: "hidden" });
+  await matched.getByRole("button", { name: "Add to appointment note" }).click();
+  await matched.waitFor({ state: "hidden" });
+  await unlinked.getByRole("button", { name: "Dismiss review" }).click();
+  await reviewDialog.waitFor({ state: "hidden" });
+  await reviewButton.waitFor({ state: "hidden" });
+  const reopened = await context.newPage();
+  reopened.on("pageerror", error => errors.push(error.message));
+  await reopened.goto(origin);
+  await reopened.getByRole("navigation", { name: "Business tracker" }).getByRole("link", { name: "Clients" }).waitFor();
+  assert.equal(await reopened.getByRole("button", { name: "Review records" }).count(), 0);
+  const reviewedSnapshot = await (await context.request.get(ledgerUrl, { headers: desktopHeaders })).json();
+  const reviewed = ledgerFixture(Buffer.from(reviewedSnapshot.content, "base64"));
+  assert.equal(reviewed.select("SELECT notes FROM clients WHERE id=123")[0].notes, "Newer note from desktop\n\nEarlier note for missing booking");
+  assert.deepEqual(reviewed.select("SELECT notes,customer_notes FROM appointments"), [{
+    notes: "Shared appointment note\n\nEarlier appointment note", customer_notes: "Customer booking text",
+  }]);
+  const phoneId = [...devicesById.keys()].find(id => id !== desktopId);
+  assert.deepEqual(JSON.parse(reviewed.select("SELECT review FROM ledger_imports WHERE device_id=$1", [phoneId])[0].review), {
+    entries: [], clients: [], appointments: [],
+  });
+  reviewed.close();
   assert.equal(requests.some(([method, route]) => method !== "GET" && route === "clients"), false, "Client notes must never be sent to the website.");
+  assert.equal(requests.some(([method, route]) => method !== "GET" && route.startsWith("appointments")), false, "Reviewing a note must never write a booking to the website.");
   await page.evaluate(() => navigator.serviceWorker.ready);
   await page.waitForFunction(() => !!navigator.serviceWorker.controller);
   assert.deepEqual(await page.evaluate(async () => {
@@ -272,8 +344,9 @@ try {
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await page.getByRole("heading", { name: "Admin access required" }).waitFor();
   await nav.waitFor({ state: "hidden" });
+  await reopened.close();
   assert.deepEqual(errors, []);
-  console.log("WebKit passed pairing, push opt-in and opt-out, Mail, backup restore, finance merge, synced notes and deletion, and revocation.");
+  console.log("WebKit passed pairing, push, Mail, backup restore, finance and note sync, appointment-note review and conflicts, and revocation.");
 } finally {
   await browser.close();
   server.close();

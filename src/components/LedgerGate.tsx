@@ -1,10 +1,12 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { AlertCircle, LoaderCircle } from "lucide-react";
+import { toast } from "sonner";
 import { isDesktop, isPwa } from "@/lib/access";
 import { exportAll, getDeviceDb, setSharedDatabase, type Backup } from "@/lib/db";
 import { money, ukDate } from "@/lib/format";
-import { reviewCount } from "@/lib/ledger-merge";
-import type { SharedLedger } from "@/lib/shared-ledger";
+import { reviewCount, type LedgerReview } from "@/lib/ledger-merge";
+import type { loadLedgerReview, resolveLedgerReview, SharedLedger } from "@/lib/shared-ledger";
+import { syncNow } from "@/lib/sync";
 import { Button, Modal } from "./ui";
 import { useAccess } from "./AccessGate";
 
@@ -48,6 +50,7 @@ function ApprovedLedger({ children, deviceId, online }: { children: ReactNode; d
           setSharedDatabase(latest ? service.getSharedDb : null);
           setLedger(latest);
         } else if (old && latest && latest.revision !== old.revision) {
+          if (latest.review !== old.review) setLedger(latest);
           window.dispatchEvent(new Event("ffyon-ledger-data-changed"));
         }
         setBlocked(false);
@@ -101,18 +104,48 @@ function ApprovedLedger({ children, deviceId, online }: { children: ReactNode; d
 
 export function LedgerStatus() {
   const { ledger, error, retry } = useSharedLedger();
+  const { device_id, state } = useAccess();
   const [opened, setOpened] = useState(false);
   const [archive, setArchive] = useState<Backup | null>(null);
-  const [archiveError, setArchiveError] = useState("");
-  const review = ledger?.review;
-  const count = review ? reviewCount(review) : 0;
-  const show = async () => {
-    setOpened(true);
-    setArchiveError("");
-    try { setArchive(await exportAll(await getDeviceDb())); }
-    catch { setArchiveError("Could not open the original records on this device."); }
+  const [details, setDetails] = useState<Awaited<ReturnType<typeof loadLedgerReview>> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [reviewError, setReviewError] = useState("");
+  const count = ledger ? reviewCount(ledger.review) : 0;
+
+  const loadReview = async () => {
+    if (!device_id || busy) return;
+    setBusy(true);
+    setDetails(null);
+    setReviewError("");
+    try {
+      setArchive(await exportAll(await getDeviceDb()));
+      if (state !== "online") return;
+      const service = await import("@/lib/shared-ledger");
+      await syncNow();
+      setDetails(await service.loadLedgerReview(device_id));
+    } catch (cause) { setReviewError(cause instanceof Error ? cause.message : "Could not open the earlier records."); }
+    finally { setBusy(false); }
   };
-  if (!error && !count) return null;
+  const resolve = async (kind: keyof LedgerReview, id: number, note?: Parameters<typeof resolveLedgerReview>[3]) => {
+    if (!device_id || busy) return;
+    setBusy(true);
+    setReviewError("");
+    try {
+      const { resolveLedgerReview } = await import("@/lib/shared-ledger");
+      const review = await resolveLedgerReview(device_id, kind, id, note);
+      setDetails(current => current && { ...current, review });
+      if (!reviewCount(review)) setOpened(false);
+      toast.success(note ? "Private note saved" : "Review dismissed. The device copy was kept.");
+    } catch (cause) { setReviewError(cause instanceof Error ? cause.message : "Could not save the review decision."); }
+    finally { setBusy(false); }
+  };
+
+  if (!error && !count && !opened) return null;
+  const review = details?.review ?? ledger?.review;
+  const archiveClients = new Map(archive?.clients.map(row => [row.id, row]));
+  const archiveAppointments = new Map(archive?.appointments?.map(row => [row.id, row]));
+  const archiveEntries = new Map(archive?.transactions.map(row => [row.id, row]));
+  const canResolve = !busy && state === "online";
   return <div className="mb-4 rounded-xl border border-line bg-surface p-3 text-sm" role="status">
     {error && <div className="flex flex-wrap items-center gap-2">
       <AlertCircle size={16} className="text-bad" /><p>{error}</p>
@@ -121,23 +154,56 @@ export function LedgerStatus() {
     {count > 0 && <div className="flex flex-wrap items-center gap-2">
       <AlertCircle size={16} className="text-ink-2" />
       <p>{count} earlier {count === 1 ? "record needs" : "records need"} review. The originals are kept on this device.</p>
-      <Button size="sm" onClick={() => void show()}>Review records</Button>
+      <Button size="sm" onClick={() => { setOpened(true); setArchive(null); void loadReview(); }}>Review records</Button>
     </div>}
-    <Modal open={opened} onClose={() => setOpened(false)} title="Earlier records to review">
-      <p className="text-sm text-ink-2">Check these against the shared ledger before adding them. Some may be earlier copies of changes or deletions.</p>
-      {archiveError && <p role="alert" className="mt-3 text-sm text-bad">{archiveError}</p>}
-      {!archive && !archiveError && <p className="mt-3 text-sm text-muted">Loading records…</p>}
+    <Modal open={opened} onClose={() => { if (!busy) setOpened(false); }} title="Earlier records to review" width="max-w-lg">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="max-w-xs text-sm text-ink-2">These are copies from before the update. Dismissing a review keeps the original on this device.</p>
+        <Button size="sm" disabled={busy} onClick={() => void loadReview()}>Refresh review</Button>
+      </div>
+      {reviewError && <p role="alert" className="mt-3 text-sm text-bad">{reviewError}</p>}
+      {state !== "online" && <p className="mt-3 text-sm">Connect to the home network to save or dismiss a review.</p>}
+      {!archive && busy && <p className="mt-3 text-sm text-muted">Loading records…</p>}
+      {review && !reviewCount(review) && <p className="mt-3 text-sm">All records have been reviewed.</p>}
       {archive && review && <ul className="mt-3 divide-y divide-line text-sm">
-        {archive.transactions.filter(row => review.entries.includes(row.id)).map(row => <li key={`entry-${row.id}`} className="py-3">
-          <strong>{row.type === "income" ? "Income" : "Expense"} · {money(row.amount_pence)} · {ukDate(row.date)}</strong>
-          <p className="break-words">{row.description || row.service_name || row.category_name_snapshot}</p>
-        </li>)}
-        {archive.clients.filter(row => review.clients.includes(row.id)).map(row => <li key={`client-${row.id}`} className="py-3">
-          <strong>Client note · {row.name}</strong><p className="whitespace-pre-wrap break-words select-text">{row.notes}</p>
-        </li>)}
-        {(archive.appointments ?? []).filter(row => review.appointments.includes(row.id)).map(row => <li key={`appointment-${row.id}`} className="py-3">
-          <strong>Appointment note · {ukDate(row.date)} · {row.start_time}</strong><p className="whitespace-pre-wrap break-words select-text">{row.notes}</p>
-        </li>)}
+        {review.entries.map(id => {
+          const row = archiveEntries.get(id);
+          return <li key={`entry-${id}`} className="space-y-2 py-3">
+            <strong>{row ? `${row.type === "income" ? "Income" : "Expense"} · ${money(row.amount_pence)} · ${ukDate(row.date)}` : "Earlier finance entry"}</strong>
+            <p className="break-words">{row ? row.description || row.service_name || row.category_name_snapshot : "The original entry is unavailable."}</p>
+            <Button size="sm" disabled={!canResolve} onClick={() => void resolve("entries", id)}>Dismiss review</Button>
+          </li>;
+        })}
+        {(["clients", "appointments"] as const).flatMap(kind => review[kind].map(id => {
+          const appointment = kind === "appointments" ? archiveAppointments.get(id) : undefined;
+          const client = kind === "clients" ? archiveClients.get(id) : appointment?.client_id == null ? undefined : archiveClients.get(appointment.client_id);
+          const text = kind === "clients" ? client?.notes : appointment?.notes;
+          const matchedAppointment = appointment?.remote_id ? details?.appointments.get(appointment.remote_id) : undefined;
+          const matchedClient = client?.remote_id ? details?.clients.get(client.remote_id) : undefined;
+          const target = matchedAppointment ?? matchedClient;
+          const title = kind === "clients" ? "Client note" : "Appointment note";
+          return <li key={`${kind}-${id}`} className="space-y-2 py-3">
+            <strong>{title}{client && ` · ${client.name}`}{appointment && ` · ${ukDate(appointment.date)}${appointment.time_confirmed ? ` · ${appointment.start_time}` : ""}`}</strong>
+            <p className="whitespace-pre-wrap break-words select-text">{text || "The original note is unavailable."}</p>
+            {details && text && !matchedAppointment && appointment && <p className="text-ink-2">No matching appointment was found in Schedule. {matchedClient ? "You can keep the note on the client’s profile." : "You can copy the note to keep it elsewhere."}</p>}
+            {text && target && <div className="rounded-lg bg-surface-2 p-2 text-ink-2">
+              {matchedAppointment
+                ? <p>Shared appointment · {matchedAppointment.client_name ?? "No client"} · {ukDate(matchedAppointment.date)}{matchedAppointment.time_confirmed ? ` · ${matchedAppointment.start_time}` : ""}</p>
+                : <p>Client notes · {matchedClient?.name}</p>}
+              {target.notes && <p className="mt-1 whitespace-pre-wrap break-words select-text">{target.notes}</p>}
+            </div>}
+            <div className="flex flex-wrap gap-2">
+              {text && target && <Button size="sm" variant="primary" disabled={!canResolve} onClick={() => void resolve(kind, id, {
+                table: matchedAppointment ? "appointments" : "clients", target, text, missingAppointmentId: matchedAppointment ? null : appointment?.remote_id,
+              })}>{target.notes === text ? "Mark as reviewed" : matchedAppointment ? "Add to appointment note" : "Add to client notes"}</Button>}
+              {text && <Button size="sm" onClick={async () => {
+                try { await navigator.clipboard.writeText(text); toast.success("Private note copied"); }
+                catch { setReviewError("Select the earlier note to copy it."); }
+              }}>Copy note</Button>}
+              <Button size="sm" disabled={!canResolve} onClick={() => void resolve(kind, id)}>Dismiss review</Button>
+            </div>
+          </li>;
+        }))}
       </ul>}
     </Modal>
   </div>;

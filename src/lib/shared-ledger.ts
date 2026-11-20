@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { isPwa, requireOnlineAccess } from "./access";
 import { openBrowserSqlite } from "./browser-sqlite";
-import { exportAll, getDeviceDb, type Db } from "./db";
+import { exportAll, getDeviceDb, type Db, type Statement } from "./db";
 import { emptyReview, hasLegacyActivity, mergeLegacyLedger, parseReview, seedLedger, type LedgerReview } from "./ledger-merge";
 import { pwaLedgerRequest } from "./pwa-access";
 
@@ -19,6 +19,12 @@ export interface SharedLedger {
   revision: number;
   review: LedgerReview;
 }
+
+interface SharedNote { remote_id: string; notes: string | null }
+interface SharedClientNote extends SharedNote { name: string }
+interface SharedAppointmentNote extends SharedNote { date: string; start_time: string; time_confirmed: number; client_name: string | null }
+type ReviewNoteSave = { table: "clients" | "appointments"; target: SharedNote; text: string; missingAppointmentId?: string | null };
+const importReview = (deviceId: string): Statement => ({ sql: "SELECT review FROM ledger_imports WHERE device_id=$1", params: [deviceId] });
 
 const lastLedgerKey = "ffyon-shared-ledger-id";
 export const LEDGER_REFRESH = "ffyon-ledger-refresh";
@@ -107,10 +113,10 @@ async function saveLedger(base: LoadedLedger, bytes: Uint8Array) {
 
 export async function reconcileLedger(deviceId: string, active?: SharedLedger): Promise<SharedLedger | null> {
   let snapshot = await fetchLedger(true);
-  if (active?.id === snapshot.ledger_id) return { ...active, revision: snapshot.revision };
+  if (active && active.id === snapshot.ledger_id && active.revision === snapshot.revision) return active;
   try {
-    const local = await getDeviceDb();
     if (!snapshot.bytes) {
+      const local = await getDeviceDb();
       if (!hasLegacyActivity(await exportAll(local))) return null;
       const copy = await openBrowserSqlite();
       try {
@@ -121,15 +127,62 @@ export async function reconcileLedger(deviceId: string, active?: SharedLedger): 
     }
     const copy = await openBrowserSqlite(snapshot.bytes);
     try {
-      const [known] = copy.select<{ review: string }[]>("SELECT review FROM ledger_imports WHERE device_id=$1", [deviceId]);
-      if (known) return finish(snapshot, parseReview(known.review));
-      const review = mergeLegacyLedger(copy, await exportAll(local), deviceId);
+      const { sql, params } = importReview(deviceId);
+      const [known] = copy.select<{ review: string }[]>(sql, params);
+      if (known) {
+        const review = active && known.review === JSON.stringify(active.review) ? active.review : parseReview(known.review);
+        return finish(snapshot, review);
+      }
+      const review = mergeLegacyLedger(copy, await exportAll(await getDeviceDb()), deviceId);
       return finish(await saveLedger(snapshot, copy.export()), review);
     } finally { copy.close(); }
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("409:")) fetchedAt = 0;
     throw error;
   }
+}
+
+export async function loadLedgerReview(deviceId: string) {
+  const db = await getSharedDb();
+  const [[stored], clients, appointments] = await db.readBatch<[{ review: string }[], SharedClientNote[], SharedAppointmentNote[]]>([
+    importReview(deviceId),
+    { sql: "SELECT remote_id, name, notes FROM clients WHERE remote_id IS NOT NULL" },
+    { sql: `SELECT a.remote_id, a.date, a.start_time, a.time_confirmed, a.notes, c.name AS client_name
+        FROM appointments a LEFT JOIN clients c ON c.id=a.client_id WHERE a.remote_id IS NOT NULL` },
+  ]);
+  return {
+    review: stored ? parseReview(stored.review) : emptyReview(),
+    clients: new Map(clients.map(row => [row.remote_id, row])),
+    appointments: new Map(appointments.map(row => [row.remote_id, row])),
+  };
+}
+
+export async function resolveLedgerReview(deviceId: string, kind: keyof LedgerReview, id: number, note?: ReviewNoteSave) {
+  const db = await getSharedDb();
+  const { sql, params } = importReview(deviceId);
+  const [stored] = await db.select<{ review: string }[]>(sql, params);
+  const review = stored ? parseReview(stored.review) : emptyReview();
+  if (!review[kind].includes(id)) return review;
+
+  const statements: Statement[] = [];
+  if (note) {
+    const { table, target, text, missingAppointmentId } = note;
+    const [current] = await db.select<{ notes: string | null }[]>(`SELECT notes FROM ${table} WHERE remote_id=$1`, [target.remote_id]);
+    if (!current || current.notes !== target.notes) throw new Error("The shared note changed. Refresh the review before saving.");
+    if (missingAppointmentId) {
+      const matches = await db.select<{ id: number }[]>("SELECT id FROM appointments WHERE remote_id=$1", [missingAppointmentId]);
+      if (matches.length) throw new Error("The matching appointment is now available. Refresh the review to save the note there.");
+    }
+    if (target.notes !== text) statements.push({
+      sql: `UPDATE ${table} SET notes=$1 WHERE remote_id=$2 AND notes IS $3`,
+      params: [target.notes ? `${target.notes}\n\n${text}` : text, target.remote_id, target.notes], expectedRows: 1,
+    });
+  }
+  review[kind] = review[kind].filter(rowId => rowId !== id);
+  statements.push({ sql: "UPDATE ledger_imports SET review=$1 WHERE device_id=$2", params: [JSON.stringify(review), deviceId], expectedRows: 1 });
+  await db.batch(statements);
+  window.dispatchEvent(new Event(LEDGER_REFRESH));
+  return review;
 }
 
 function finish(snapshot: LoadedLedger, review: LedgerReview) {

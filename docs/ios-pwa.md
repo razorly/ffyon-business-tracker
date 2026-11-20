@@ -10,6 +10,8 @@ Update each desktop app to 0.7.0 or later, and open it and the iPhone app on the
 
 Changes and deletions made in the shared ledger appear on all connected devices. Kept copies of earlier data cannot recreate a recorded deletion. The earlier apps kept separate ledgers and only stored the records that survived on each device. A deletion made before the upgrade may leave no history to identify it.
 
+Open **Review records** on the device that shows the notice. Use **Add to appointment note** to recover a private note on its matching appointment, or **Add to client notes** if the appointment is missing and the client is linked. Existing shared notes are kept. You can also **Copy note** or **Dismiss review**, which clears the notice for that record and keeps the original device copy.
+
 Shared records require access to the home network and online verification. The previous device ledger is kept for migration review. **Settings → This device → Shared ledger backup** saves a separate copy of the shared records to Files.
 
 Open **Clients**, select a client, and choose **Add notes** or **Edit notes** in **Client notes**. Saving an empty note clears it across approved devices. Staff notes are stored in the shared ledger. If another device changes the note while you are editing, the app keeps your draft and asks you to reopen the latest version.
