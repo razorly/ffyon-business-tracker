@@ -9,6 +9,7 @@ import { isoDate, money, percentChange, timeLabel } from "@/lib/format";
 import { useInbox } from "@/lib/inbox";
 import { useAccess } from "@/components/AccessGate";
 import { PageHeader } from "@/components/Layout";
+import { useSharedLedger } from "@/components/LedgerGate";
 import { PaymentRow, RequestRow, useNeedsYou } from "@/components/NeedsYou";
 import { Button, Card, ErrorText, LoadError, Loading, SectionHeading } from "@/components/ui";
 
@@ -19,6 +20,7 @@ const paidNote = (row: AppointmentRow) => row.transaction_id != null ? "Paid" : 
 export function Today() {
   const { openNewAppointment, openEditAppointment, refresh } = useData();
   const access = useAccess();
+  const { ledger } = useSharedLedger();
   const online = access.state === "online";
   const { requests, payments, error: inboxError, loading: inboxLoading, mail, mailError } = useInbox();
   const now = useBusinessNow();
@@ -28,7 +30,7 @@ export function Today() {
   const thisMonth = monthRange(now);
 
   const [monthly, monthlyLoading, monthlyError] = useLoad<MonthTotal[]>(() => monthlyTotals(months[0] + "-01", thisMonth.to), [thisMonth.from], []);
-  const [clientsThisMonth, , clientsError] = useLoad(() => distinctClients(thisMonth.from, thisMonth.to), [thisMonth.from], 0);
+  const [clientsThisMonth, clientsLoading, clientsError] = useLoad(() => distinctClients(thisMonth.from, thisMonth.to), [thisMonth.from], 0);
   const [dayRows, dayLoading, dayError] = useLoad(() => listAppointments({ from: today, to: tomorrow }), [today, tomorrow], []);
   const confirmed = (date: string) => dayRows.filter(row => row.date === date && row.status === "confirmed")
     .sort((a, b) => b.time_confirmed - a.time_confirmed || a.start_time.localeCompare(b.start_time));
@@ -47,7 +49,7 @@ export function Today() {
   const todo = requests.length + payments.length;
   const inboxPending = inboxLoading && todo === 0;
 
-  const summary = [format(now, "EEEE d MMMM"), plural(todayAppointments.length, "appointment") + " today", todo > 0 && `${plural(todo, "thing")} need${todo === 1 ? "s" : ""} you`].filter(Boolean).join(" · ");
+  const summary = [format(now, "EEEE d MMMM"), !dayLoading && !dayError && plural(todayAppointments.length, "appointment") + " today", !inboxError && todo > 0 && `${plural(todo, "thing")} need${todo === 1 ? "s" : ""} you`].filter(Boolean).join(" · ");
 
   return (
     <>
@@ -73,7 +75,9 @@ export function Today() {
                   </Link>
                 </li>}
               </ul>}
-            {!online && requests.length > 0 && <p className="border-t border-line px-5 py-3 text-small text-ink-2">Reconnect to accept or decline booking requests. Payments can still be confirmed.</p>}
+            {!online && requests.length > 0 && <p className="border-t border-line px-5 py-3 text-small text-ink-2">
+              {ledger ? "Reconnect to answer booking requests and confirm payments." : "Reconnect to accept or decline booking requests. Payments can still be confirmed."}
+            </p>}
           </Card>
 
           <Card aria-labelledby="today-heading" role="region">
@@ -97,7 +101,7 @@ export function Today() {
             <dl className="mt-4 divide-y divide-line text-small">
               <FigureLine label="Income" value={figure(cur.income)} />
               <FigureLine label="Expenses" value={figure(cur.expense)} />
-              <FigureLine label="Clients seen" value={clientsError ? "Unavailable" : String(clientsThisMonth)} />
+              <FigureLine label="Clients seen" value={clientsError ? "Unavailable" : clientsLoading ? "…" : String(clientsThisMonth)} />
             </dl>
             <Link to="/finances" className="flex min-h-11 items-center gap-1 border-t border-line text-small font-medium text-ink-2 hover:text-ink">Open money <ChevronRight size={16} aria-hidden /></Link>
           </Card>
@@ -108,7 +112,7 @@ export function Today() {
               <p className="text-small text-ink-2">{format(addDays(now, 1), "EEEE d MMMM")}</p>
             </div>
             {tomorrowAppointments.length ? <ul className="divide-y divide-line border-t border-line">{tomorrowAppointments.map(row => <AppointmentLine key={row.id} row={row} compact onOpen={() => openEditAppointment(row)} />)}</ul>
-              : <p className="border-t border-line px-5 py-4 text-ink-2">{dayLoading ? "Loading…" : "Nothing booked yet."}</p>}
+              : <p className="border-t border-line px-5 py-4 text-ink-2">{dayError ? "Tomorrow's appointments are unavailable." : dayLoading ? "Loading…" : "Nothing booked yet."}</p>}
           </Card>
         </div>
       </div>
@@ -127,15 +131,15 @@ function FigureLine({ label, value }: { label: string; value: string }) {
 
 function AppointmentLine({ row, onOpen, compact }: { row: AppointmentRow; onOpen: () => void; compact?: boolean }) {
   const paid = row.transaction_id != null;
-  return <li>
-    <button type="button" onClick={onOpen} className="flex w-full min-w-0 cursor-pointer items-center gap-4 px-5 py-3 text-left hover:bg-surface-2/60">
-      <span className="tabular w-16 shrink-0 font-semibold">{row.time_confirmed === 0 ? "To agree" : timeLabel(row.start_time)}</span>
-      <span className="min-w-0 flex-1">
+  return <li className="@container">
+    <button type="button" onClick={onOpen} className="grid w-full min-w-0 cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1 px-5 py-3 text-left hover:bg-surface-2/60 @min-[24rem]:grid-cols-[4rem_minmax(0,1fr)_auto]">
+      <span className="tabular col-start-1 row-start-1 font-semibold">{row.time_confirmed === 0 ? "To agree" : timeLabel(row.start_time)}</span>
+      <span className="col-span-2 row-start-2 min-w-0 @min-[24rem]:col-span-1 @min-[24rem]:col-start-2 @min-[24rem]:row-start-1">
         <span className="block break-words font-medium">{row.client_name || "Client"}</span>
         {!compact && <span className="block break-words text-small text-ink-2">{row.service_name || row.category_name || "Appointment"} · {row.duration_min} min{row.is_remote ? <> · <MapPin size={13} className="inline" aria-hidden /> home visit</> : ""}</span>}
         {compact && <span className="block break-words text-small text-ink-2">{row.service_name || row.category_name || "Appointment"}</span>}
       </span>
-      {!compact && <span className={`tabular flex shrink-0 items-center gap-1 text-small ${paid ? "font-medium text-good" : "text-ink-2"}`}>{paid && <Check size={15} aria-hidden />}{paidNote(row)}</span>}
+      {!compact && <span className={`tabular col-start-2 row-start-1 flex items-center gap-1 text-small @min-[24rem]:col-start-3 ${paid ? "font-medium text-good" : "text-ink-2"}`}>{paid && <Check size={15} aria-hidden />}{paidNote(row)}</span>}
     </button>
   </li>;
 }

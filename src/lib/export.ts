@@ -126,6 +126,7 @@ export async function loadBackup(): Promise<number | null> {
  */
 const AUTO_KEY = "ffyon-autobackup";
 const KEEP = 10;
+let backupQueue: Promise<unknown> = Promise.resolve();
 // Preserve the existing automatic-backup family and retention across the rebrand.
 const FILE_PREFIX = "ffyon-backup-";
 
@@ -172,7 +173,13 @@ const inFolder = (dir: string, name: string) => `${dir.replace(/[\\/]+$/, "")}/$
  * Writes today's backup unless one has already been written today.
  * Returns the file written, or null if there was nothing to do.
  */
-export async function runAutoBackup(force = false): Promise<string | null> {
+export function runAutoBackup(force = false): Promise<string | null> {
+  const task = backupQueue.then(() => writeDailyBackup(force));
+  backupQueue = task.catch(() => {});
+  return task;
+}
+
+async function writeDailyBackup(force: boolean): Promise<string | null> {
   const cfg = readAutoBackup();
   if (!cfg || !isTauri()) return null;
   const today = isoDate(new Date());
@@ -180,7 +187,7 @@ export async function runAutoBackup(force = false): Promise<string | null> {
 
   const path = inFolder(cfg.dir, `${FILE_PREFIX}${today}.json`);
   await invoke("protected_write_text_file", { path, data: JSON.stringify(await exportAll(), null, 2) });
-  writeAutoBackup({ ...cfg, lastRun: today });
+  if (readAutoBackup()?.dir === cfg.dir) writeAutoBackup({ ...cfg, lastRun: today });
   await pruneBackups(cfg.dir);
   return path;
 }

@@ -24,7 +24,7 @@ function storage() {
 async function snapshot(id: string, updated?: Snapshot): Promise<Snapshot | undefined> {
   const db = await storage();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction("ledgers", updated ? "readwrite" : "readonly");
+    const tx = updated ? db.transaction("ledgers", "readwrite", { durability: "strict" }) : db.transaction("ledgers", "readonly");
     const ledger = tx.objectStore("ledgers");
     const request = updated ? ledger.put(updated, id) : ledger.get(id);
     tx.oncomplete = () => resolve(updated ? undefined : request.result);

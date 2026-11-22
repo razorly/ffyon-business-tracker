@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 import { Badge, Button, Notice } from "./ui";
 import { useAccess } from "./AccessGate";
 import { BrandLogo } from "./BrandLogo";
-import { LedgerStatus } from "./LedgerGate";
+import { LedgerStatus, useSharedLedger } from "./LedgerGate";
 
 /** The four places she works in, then the two she visits. To do lives on Today. */
 const main = [
@@ -110,9 +110,12 @@ async function retrySync(refresh: () => void) {
 /** Plain words first; the technical reason is there for whoever is helping her fix it. */
 function ConnectionNotice() {
   const access = useAccess();
+  const { ledger } = useSharedLedger();
   const { refresh } = useData();
   const sync = useSync();
-  if (access.state !== "online") return <Notice>You're offline. You can still take payments and add private notes. Bookings need a connection.</Notice>;
+  if (access.state !== "online") return <Notice>{ledger
+    ? "You're offline. Reconnect to update bookings, record payments or edit private notes."
+    : "You're offline. You can still take payments and add private notes. Bookings need a connection."}</Notice>;
   if (sync.state !== "error") return null;
   return <Notice tone="bad" action={<Button size="sm" onClick={() => void retrySync(refresh)}><RefreshCw size={14} aria-hidden /> Try again</Button>}>
     Couldn't update just now. What you see may be a little out of date.

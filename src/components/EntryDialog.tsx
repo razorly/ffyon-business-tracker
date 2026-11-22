@@ -57,9 +57,11 @@ export function EntryDialog() {
   const ready = loaded && loadedFor === entry;
   const [saving, setSaving] = useState(false);
   const amountRef = useRef<HTMLInputElement>(null);
+  const operationId = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     if (!entry.open) return;
+    operationId.current = undefined;
     let alive = true;
     setLoading(true);
     setLoaded(false);
@@ -180,6 +182,7 @@ export function EntryDialog() {
       let clientId: number | null = linkedAppointment ? editing!.client_id : null;
       if (!linkedAppointment && type === "income" && client.name.trim()) {
         clientId = client.id ?? await createClient({ name: client.name });
+        if (client.id == null) setClient({ ...client, id: clientId });
       }
       const preserveAttribution = !!editing && type === editing.type && (type === "expense"
         ? categoryId === String(editing.category_id ?? "")
@@ -201,7 +204,7 @@ export function EntryDialog() {
         ...(!preserveAttribution ? { income_kind: type === "expense" ? null : incomeService ? "service" as const : "other" as const } : {}),
       };
       if (editing) await updateTransaction(editing.id, input, editing);
-      else await createTransaction(input);
+      else await createTransaction(input, operationId.current ??= crypto.randomUUID());
       toast.success(`${editing ? "Updated" : "Recorded"} ${type === "income" ? "income" : "expense"} of ${money(pence)}`);
       refresh();
       closeEntry();

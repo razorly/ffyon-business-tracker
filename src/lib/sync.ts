@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { isPwa, requireOnlineAccess } from "./access";
 import { pwaAdminRequest } from "./pwa-access";
-import { getAppointment, getDb, listAppointments, listClients, type AppointmentRow, type AppointmentStatus, type ClientWithStats, type Statement } from "./db";
+import { getAppointment, getDb, listAppointments, listClients, type AppointmentRow, type AppointmentStatus, type ClientWithStats, type Db, type Statement } from "./db";
 
 export interface CloudClient { id: string; account_id: string | null; name: string; email: string; phone: string; saved_address: string; saved_postcode: string; disabled: boolean; revision: number; updated_at: string; merged_into?: string | null }
 export interface CloudService { id: string; name: string; description: string; duration_min: number; price_pence: number; discount_percent: number; booking_price_pence: number; active: boolean; revision: number }
@@ -242,8 +242,8 @@ async function deletionState(db: Awaited<ReturnType<typeof getDb>>, response: Sy
     if (row.key.startsWith("import-target-appointment-")) remove = deletedAppointments.has(row.key.slice(26)) || appointmentLocalIds.has(Number(row.value));
     if (row.key === "mutation-pending" || row.key === "import-pending") {
       try {
-        const pending = JSON.parse(row.value) as { selection?: ImportSelection };
-        remove = referencesDeleted(pending) || !!pending.selection?.clientIds.some((id) => clientLocalIds.has(id)) || !!pending.selection?.appointmentIds.some((id) => appointmentLocalIds.has(id));
+        const pending = JSON.parse(row.value) as { body?: unknown; selection?: ImportSelection };
+        remove = referencesDeleted(pending.body ?? pending) || !!pending.selection?.clientIds.some((id) => clientLocalIds.has(id)) || !!pending.selection?.appointmentIds.some((id) => appointmentLocalIds.has(id));
       } catch { remove = true; }
       if (remove && row.key === "import-pending") statements.push({ sql: "DELETE FROM sync_state WHERE key LIKE 'import-target-%'" });
     }
@@ -254,8 +254,8 @@ async function deletionState(db: Awaited<ReturnType<typeof getDb>>, response: Sy
   return { deletedClients, deletedAppointments, statements };
 }
 
-export function applySyncResponse(response: SyncResponse, prefixStatements: Statement[] = []): Promise<void> {
-  return queueSyncResponse(response, prefixStatements);
+export function applySyncResponse(response: SyncResponse, prefixStatements: Statement[] = [], database?: Db): Promise<void> {
+  return queueSyncResponse(response, prefixStatements, database && { db: database, cursor: null, fullSyncAt: null });
 }
 
 interface SyncRequest { db: Awaited<ReturnType<typeof getDb>>; cursor: number | null; fullSyncAt: string | null }
@@ -369,7 +369,67 @@ async function mutate(operation: string, method: string, body: Record<string, un
   await mutateAndSync(operation, method, body);
 }
 
-interface PendingMutation { operation: string; method: string; body: Record<string, unknown> }
+export type PrivateBookingDetails =
+  | { target: "client"; notes: string }
+  | { target: "appointment" | "series"; note?: { value: string | null; expected: string | null }; category?: { id: number | null; expected: number | null } };
+
+interface PendingMutation {
+  operation: string;
+  method: string;
+  body: Record<string, unknown>;
+  privateDetails?: PrivateBookingDetails;
+  siteCommitted?: true;
+}
+
+function privateStatements(pending: PendingMutation): Statement[] {
+  const details = pending.privateDetails;
+  if (!details) return [];
+  if (details.target === "client") return [{
+    sql: "UPDATE clients SET notes=$1 WHERE remote_id=$2 AND (notes IS NULL OR notes IS $1)",
+    params: [details.notes, pending.body.id], expectedRows: 1,
+  }];
+  const series = details.target === "series";
+  const target = series ? pending.body.series_id : pending.body.id;
+  const expectedRows = series ? (pending.body.dates as string[]).length : 1;
+  const where = series ? "series_id=$2" : "remote_id=$2";
+  const statements: Statement[] = [];
+  if (details.note) statements.push({
+    sql: `UPDATE appointments SET notes=$1 WHERE ${where} AND (notes IS $3 OR notes IS $1)`,
+    params: [details.note.value, target, details.note.expected], expectedRows,
+  });
+  if (details.category) statements.push({
+    sql: `UPDATE appointments SET category_id=$1 WHERE ${where} AND (category_id IS $3 OR category_id IS $1)`,
+    params: [details.category.id, target, details.category.expected], expectedRows,
+  });
+  return statements;
+}
+
+const pendingQuery = "SELECT value FROM sync_state WHERE key='mutation-pending'";
+
+export async function pendingPrivateDetails() {
+  const [row] = await (await getDb()).select<{ value: string }[]>(pendingQuery);
+  if (!row) return null;
+  const pending = JSON.parse(row.value) as PendingMutation;
+  if (!pending.siteCommitted || !pending.privateDetails) return null;
+  const details = pending.privateDetails;
+  return {
+    id: String(pending.body.operation_id),
+    notes: details.target === "client" ? details.notes : details.note?.value ?? null,
+  };
+}
+
+export async function discardPendingPrivateDetails(id: string) {
+  const db = await getDb();
+  const [row] = await db.select<{ value: string }[]>(pendingQuery);
+  const pending = row && JSON.parse(row.value) as PendingMutation;
+  if (!pending?.siteCommitted || !pending.privateDetails || pending.body.operation_id !== id) {
+    throw new Error("The pending save changed. Check the connection again.");
+  }
+  await db.batch([{
+    sql: "DELETE FROM sync_state WHERE key='mutation-pending' AND value=$1", params: [row.value], expectedRows: 1,
+  }]);
+}
+
 function requestIdentity(operation: string, method: string, body: Record<string, unknown>) {
   const comparable = { ...body };
   delete comparable.operation_id;
@@ -379,36 +439,51 @@ function requestIdentity(operation: string, method: string, body: Record<string,
   return JSON.stringify(Object.keys(comparable).sort().map((key) => [key, comparable[key]]));
 }
 
-export function mutateAndSync(operation: string, method: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+export function mutateAndSync(operation: string, method: string, body: Record<string, unknown>, privateDetails?: PrivateBookingDetails): Promise<Record<string, unknown>> {
   const task = mutationQueue.then(async () => {
     await requireOnlineAccess();
     const db = await getDb();
-    const [stored] = await db.select<{ value: string }[]>("SELECT value FROM sync_state WHERE key='mutation-pending'");
+    const [stored] = await db.select<{ value: string }[]>(pendingQuery);
     let pending: PendingMutation;
     if (stored) {
       pending = JSON.parse(stored.value) as PendingMutation;
-      if (pending.operation !== operation || pending.method !== method || requestIdentity(operation, method, pending.body) !== requestIdentity(operation, method, body)) throw new Error("Retry the previous shared change before starting another. Use Retry Sync in the site connection settings.");
+      if (pending.operation !== operation || pending.method !== method || requestIdentity(operation, method, pending.body) !== requestIdentity(operation, method, body) ||
+          JSON.stringify(pending.privateDetails) !== JSON.stringify(privateDetails)) throw new Error("Retry the previous shared change before starting another. Use Check connection in Settings.");
     } else {
-      pending = { operation, method, body: { operation_id: crypto.randomUUID(), ...body } };
+      pending = { operation, method, body: { operation_id: crypto.randomUUID(), ...body }, privateDetails };
       await db.execute("INSERT INTO sync_state(key,value) VALUES ('mutation-pending',$1)", [JSON.stringify(pending)]);
     }
-    const clearPending = async () => {
-      const current = await getDb();
-      await current.execute("DELETE FROM sync_state WHERE key='mutation-pending' AND value=$1", [JSON.stringify(pending)]);
-    };
-    try {
-      const response = await adminRequest<{ client?: CloudClient; aliases?: Record<string, string> }>(pending.operation, pending.method, pending.body);
-      if (pending.operation === "clients/link" && response.aliases && response.client) await applyClientAliases(response.client, response.aliases);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (/^4\d\d:/.test(message)) await clearPending().catch(() => {});
-      if (/^409:.*\btime overlaps another appointment or time off\b/i.test(message)) {
-        await syncNow({ full: true }).catch(() => {});
+    const removePending = "DELETE FROM sync_state WHERE key='mutation-pending' AND value=$1";
+    if (!pending.siteCommitted) {
+      try {
+        const response = await adminRequest<{ client?: CloudClient; aliases?: Record<string, string> }>(pending.operation, pending.method, pending.body);
+        if (pending.operation === "clients/link" && response.aliases && response.client) await applyClientAliases(response.client, response.aliases);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (/^4\d\d:/.test(message)) await db.execute(removePending, [JSON.stringify(pending)]).catch(() => {});
+        if (/^409:.*\btime overlaps another appointment or time off\b/i.test(message)) {
+          await syncNow({ full: true }).catch(() => {});
+        }
+        throw error;
       }
-      throw error;
+      if (pending.privateDetails) {
+        const committed = { ...pending, siteCommitted: true as const };
+        await db.execute("UPDATE sync_state SET value=$1 WHERE key='mutation-pending' AND value=$2",
+          [JSON.stringify(committed), JSON.stringify(pending)]);
+        pending = committed;
+      }
     }
     await syncAfterWrite();
-    await clearPending();
+    // Commit the private details and clear the retry record in the same ledger revision.
+    const [current] = await db.select<{ value: string }[]>(pendingQuery);
+    if (current?.value === JSON.stringify(pending)) {
+      try {
+        await db.batch([...privateStatements(pending), { sql: removePending, params: [current.value], expectedRows: 1 }]);
+      } catch (error) {
+        if (!pending.privateDetails) throw error;
+        throw new Error("The website change was saved. Private details are still pending. Use Check connection in Settings to retry or review them.");
+      }
+    }
     return pending.body;
   });
   mutationQueue = task.catch(() => {});
@@ -430,10 +505,10 @@ async function applyClientAliases(client: CloudClient, aliases: Record<string, s
 
 export async function retryPendingMutation() {
   const db = await getDb();
-  const [stored] = await db.select<{ value: string }[]>("SELECT value FROM sync_state WHERE key='mutation-pending'");
+  const [stored] = await db.select<{ value: string }[]>(pendingQuery);
   if (stored) {
     const pending = JSON.parse(stored.value) as PendingMutation;
-    await mutateAndSync(pending.operation, pending.method, pending.body);
+    await mutateAndSync(pending.operation, pending.method, pending.body, pending.privateDetails);
   }
   const [imported] = await db.select<{ value: string }[]>("SELECT value FROM sync_state WHERE key='import-pending'");
   if (imported) await importLegacyRecords((JSON.parse(imported.value) as { selection: ImportSelection }).selection);

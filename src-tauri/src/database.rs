@@ -3,7 +3,7 @@ use std::{path::Path, sync::Mutex, time::Duration};
 use rusqlite::{
     hooks::{AuthAction, AuthContext, Authorization},
     types::{Value as SqlValue, ValueRef},
-    Connection, DatabaseName,
+    Connection, MAIN_DB,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -110,7 +110,7 @@ fn open(path: &Path) -> Result<DatabaseState, String> {
             "ffyon-pre-{upgrade}-{stamp}-{}.db",
             uuid::Uuid::new_v4()
         ));
-        conn.backup(DatabaseName::Main, backup, None)
+        conn.backup(MAIN_DB, backup, None::<fn(rusqlite::backup::Progress)>)
             .map_err(|e| format!("The pre-upgrade backup could not be created: {e}"))?;
     }
     conn.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE IF NOT EXISTS _ffyon_migrations(version INTEGER PRIMARY KEY);")
@@ -136,7 +136,7 @@ fn open(path: &Path) -> Result<DatabaseState, String> {
         .map_err(|e| e.to_string())?;
     }
     tx.commit().map_err(|e| e.to_string())?;
-    conn.authorizer(Some(authorize_sql));
+    conn.authorizer(Some(authorize_sql)).map_err(|e| e.to_string())?;
     Ok(DatabaseState(Mutex::new(conn)))
 }
 
@@ -262,7 +262,7 @@ fn select(conn: &Connection, sql: &str, params: Vec<Value>) -> Result<Vec<Value>
     if !stmt.readonly() || stmt.column_count() == 0 {
         return Err("Only read-only queries may use db_select".into());
     }
-    let names: Vec<String> = stmt.column_names().iter().map(|n| n.to_string()).collect();
+    let names: Vec<String> = stmt.column_names().map(str::to_owned).collect();
     let values = sql_params(params)?;
     bind_parameters(&mut stmt, &values)?;
     let mut rows = stmt.raw_query();
@@ -383,7 +383,7 @@ mod tests {
         conn.execute_batch("INSERT INTO clients(id,name) VALUES (1,'Snapshot customer');
             INSERT INTO transactions(id,type,date,amount_pence,client_id) VALUES (1,'income','2026-10-01',2500,1);
             INSERT INTO appointments(date,start_time,client_id,transaction_id) VALUES ('2026-10-01','09:00',1,1);").unwrap();
-        conn.authorizer(Some(authorize_sql));
+        conn.authorizer(Some(authorize_sql)).unwrap();
         let rows = read_batch(&mut conn, vec![
             Statement { sql: "SELECT id FROM clients".into(), params: vec![] },
             Statement { sql: "SELECT id,amount_pence FROM transactions".into(), params: vec![] },
@@ -400,7 +400,7 @@ mod tests {
     fn changed_row_expectations_roll_back_all_undo_statements() {
         let mut conn = Connection::open_in_memory().unwrap();
         for migration in crate::migrations() { conn.execute_batch(migration.sql).unwrap(); }
-        conn.authorizer(Some(authorize_sql));
+        conn.authorizer(Some(authorize_sql)).unwrap();
         let result = batch_checked(&mut conn, vec![
             Statement { sql: "INSERT INTO transactions(type,date,amount_pence) VALUES ('income','2026-10-01',2500)".into(), params: vec![] },
             Statement { sql: "UPDATE appointments SET transaction_id=last_insert_rowid() WHERE id=999 AND transaction_id IS NULL".into(), params: vec![] },
@@ -412,10 +412,10 @@ mod tests {
 
     #[test]
     fn authorizer_blocks_file_access_schema_and_credentials() {
-        let conn = Connection::open_in_memory().unwrap();
+        let mut conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("CREATE TABLE clients(id INTEGER); CREATE TABLE secrets(token TEXT);")
             .unwrap();
-        conn.authorizer(Some(authorize_sql));
+        conn.authorizer(Some(authorize_sql)).unwrap();
         assert!(conn.prepare("SELECT * FROM clients").is_ok());
         assert!(conn.prepare("SELECT * FROM secrets").is_err());
         assert!(conn
@@ -471,7 +471,7 @@ mod tests {
 
     #[test]
     fn v7_upgrade_preserves_existing_quotes_contacts_notes_and_payments() {
-        let conn = Connection::open_in_memory().unwrap();
+        let mut conn = Connection::open_in_memory().unwrap();
         for migration in crate::migrations().into_iter().take(6) {
             conn.execute_batch(migration.sql).unwrap();
         }
@@ -522,7 +522,7 @@ mod tests {
             2500
         );
 
-        conn.authorizer(Some(authorize_sql));
+        conn.authorizer(Some(authorize_sql)).unwrap();
         conn.execute_batch("UPDATE clients SET saved_address='12 Example Lane',saved_postcode='SW1A 1AA' WHERE id=1;
             INSERT INTO appointments(date,start_time,time_confirmed,is_remote,visit_address,visit_postcode,price_pence,base_price_pence,discount_percent,status)
             VALUES ('2026-10-03','00:00',0,1,'12 Example Lane','SW1A 1AA',2000,2500,20,'confirmed');").unwrap();
@@ -743,7 +743,7 @@ mod tests {
         for migration in crate::migrations() {
             conn.execute_batch(migration.sql).unwrap();
         }
-        conn.authorizer(Some(authorize_sql));
+        conn.authorizer(Some(authorize_sql)).unwrap();
         let result = batch(&mut conn, vec![
             Statement { sql: "INSERT INTO clients(name) VALUES ($1)".into(), params: vec![Value::from("Rollback client")] },
             Statement { sql: "INSERT INTO transactions(type,date,amount_pence) VALUES ('income','2026-10-01',-1)".into(), params: vec![] },
@@ -758,11 +758,11 @@ mod tests {
 
     #[test]
     fn named_parameter_positions_match_browser_adapter_with_unused_values() {
-        let conn = Connection::open_in_memory().unwrap();
+        let mut conn = Connection::open_in_memory().unwrap();
         for migration in crate::migrations() {
             conn.execute_batch(migration.sql).unwrap();
         }
-        conn.authorizer(Some(authorize_sql));
+        conn.authorizer(Some(authorize_sql)).unwrap();
         execute(
             &conn,
             Statement {

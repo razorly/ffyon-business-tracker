@@ -77,7 +77,8 @@ export function createPushService({ directory, key, vapid, origin, verify, readA
     return stored ??= file.read().then(value => value?.subscriptions ?? []).catch(error => { stored = undefined; throw error; });
   }
   async function save(next) {
-    await file.write({ subscriptions: next });
+    try { await file.write({ subscriptions: next }); }
+    catch (error) { stored = undefined; throw error; }
     stored = Promise.resolve(next);
   }
   function serialize(work) {

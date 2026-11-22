@@ -63,6 +63,7 @@ async function authorize(session: Session, current: number) {
   if (bytes.length !== 32 || !session.installation || !session.id) throw new Error("The tracker returned an invalid session.");
   const key = await crypto.subtle.importKey("raw", bytes, "AES-GCM", false, ["encrypt", "decrypt"]);
   if (current !== revision) return status;
+  if (status.device_id && status.device_id !== session.id) ++revision;
   database = { id: session.installation, key };
   verifiedUntil = Date.now() + 30_000;
   return publish({ state: "online", device_id: session.id, device_name: session.name, expires_at: null, error: null });
@@ -78,6 +79,7 @@ export function checkPwaAccess() {
       return await authorize(session, current);
     } catch (error) {
       if (current !== revision) return status;
+      if (status.state === "online") ++revision;
       if (error instanceof PwaError && error.status === 401) return publish(locked());
       const message = error instanceof PwaError ? error.message : error instanceof TypeError || (error instanceof DOMException && error.name === "TimeoutError")
         ? "Reconnect to the tracker to verify this device." : error instanceof Error ? error.message : "Could not verify this device.";
@@ -108,8 +110,16 @@ export async function pwaDatabaseKey() {
 
 export async function pwaAdminRequest<T>(operation: string, method: string, body?: unknown, query?: Record<string, string>) {
   const search = query ? "?" + new URLSearchParams(query) : "";
+  return authorizedRequest<T>(`admin/${operation}${search}`, method, body);
+}
+
+async function authorizedRequest<T>(path: string, method: string, body?: unknown) {
   const current = revision;
-  try { return await request<T>(`admin/${operation}${search}`, method, body); }
+  try {
+    const value = await request<T>(path, method, body);
+    if (current !== revision) throw new Error("The approved session changed. Open the tracker again.");
+    return value;
+  }
   catch (error) {
     if (current === revision && error instanceof PwaError && error.status === 401) {
       ++revision;
@@ -120,10 +130,10 @@ export async function pwaAdminRequest<T>(operation: string, method: string, body
 }
 
 export function pwaLedgerRequest<T>(revision?: number, body?: unknown) {
-  return request<T>(revision === undefined ? "ledger" : `ledger?revision=${revision}`, body === undefined ? "GET" : "PUT", body);
+  return authorizedRequest<T>(revision === undefined ? "ledger" : `ledger?revision=${revision}`, body === undefined ? "GET" : "PUT", body);
 }
 
 export interface PwaPushStatus { enabled: boolean; public_key: string }
-export const getPwaPush = () => request<PwaPushStatus>("push", "GET");
-export const enablePwaPush = (subscription: PushSubscriptionJSON) => request<PwaPushStatus>("push", "PUT", subscription);
-export const disablePwaPush = () => request<PwaPushStatus>("push", "DELETE");
+export const getPwaPush = () => authorizedRequest<PwaPushStatus>("push", "GET");
+export const enablePwaPush = (subscription: PushSubscriptionJSON) => authorizedRequest<PwaPushStatus>("push", "PUT", subscription);
+export const disablePwaPush = () => authorizedRequest<PwaPushStatus>("push", "DELETE");

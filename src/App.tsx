@@ -1,5 +1,5 @@
-import { lazy, Suspense, useEffect, type ReactNode } from "react";
-import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
+import { Component, lazy, Suspense, useEffect, type ReactNode } from "react";
+import { HashRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { Toaster, toast } from "sonner";
 import { DataProvider } from "@/lib/data";
 import { InboxProvider } from "@/lib/inbox";
@@ -16,6 +16,7 @@ import { SyncBridge } from "@/components/SyncBridge";
 import { isDesktop, isPwa } from "@/lib/access";
 import { LedgerGate } from "@/components/LedgerGate";
 import { useData } from "@/lib/data";
+import { Button, Card } from "@/components/ui";
 const MailPage = lazy(() => import("@/pages/Mail").then(module => ({ default: module.MailPage })));
 const Today = lazy(() => import("@/pages/Today").then(module => ({ default: module.Today })));
 const Schedule = lazy(() => import("@/pages/Schedule").then(module => ({ default: module.Schedule })));
@@ -24,7 +25,23 @@ const Clients = lazy(() => import("@/pages/Clients").then(module => ({ default: 
 const Settings = lazy(() => import("@/pages/Settings").then(module => ({ default: module.Settings })));
 
 function Page({ children }: { children: ReactNode }) {
-  return <Suspense fallback={<p className="py-6 text-small text-ink-2" role="status">Loading…</p>}>{children}</Suspense>;
+  const section = useLocation().pathname.split("/")[1];
+  return <PageBoundary key={section}>
+    <Suspense fallback={<p className="py-6 text-small text-ink-2" role="status">Loading…</p>}>{children}</Suspense>
+  </PageBoundary>;
+}
+
+class PageBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return <Card className="space-y-3 p-5">
+      <h1 className="text-heading font-semibold">This page couldn't open</h1>
+      <p className="text-small text-ink-2" role="alert">Reload the tracker to try again.</p>
+      <Button variant="primary" onClick={() => window.location.reload()}>Reload tracker</Button>
+    </Card>;
+  }
 }
 
 function Shell() {

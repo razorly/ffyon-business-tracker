@@ -53,7 +53,11 @@ function fixtureDatabase() {
       batch: (statements) => serialized(() => {
         sqlite.run("BEGIN");
         try {
-          const result = statements.map((statement) => execute(statement.sql, statement.params));
+          const result = statements.map((statement) => {
+            const written = execute(statement.sql, statement.params);
+            if (statement.expectedRows != null && written.rowsAffected !== statement.expectedRows) throw new Error("The record changed.");
+            return written;
+          });
           sqlite.run("COMMIT");
           return result;
         } catch (error) { sqlite.run("ROLLBACK"); throw error; }
@@ -75,7 +79,7 @@ async function application(fixture) {
     switch (command) {
       case "db_select": return fixture.db.select(args.sql, args.params);
       case "db_execute": return fixture.db.execute(args.sql, args.params);
-      case "db_batch": return fixture.db.batch(args.statements);
+      case "db_batch": return fixture.db.batch(args.statements.map((statement, index) => ({ ...statement, expectedRows: args.expectedRows?.[index] })));
       case "access_status": return { state: "online", device_id: "fixture", device_name: "Fixture", expires_at: 2_000_000_000, error: null };
       default: throw new Error(`Unexpected native command; network and customer emails are forbidden: ${command}`);
     }
@@ -250,5 +254,22 @@ test("unknown quoted amounts need an explicit received amount before leaving pay
     await app.markAppointmentPaid(301, 1800);
     assert.deepEqual(await ids(app, "2026-12-01T18:00:00Z"), []);
     assert.equal(fixture.select("SELECT amount_pence FROM transactions")[0].amount_pence, 1800);
+  } finally { fixture.close(); }
+});
+
+test("a stale payment undo cannot remove a replacement receipt or an amended amount", async () => {
+  const fixture = fixtureDatabase();
+  try {
+    const app = await application(fixture);
+    appointment(fixture, 301);
+    const first = await app.markAppointmentPaid(301, 2200);
+    assert.ok(first);
+    await app.markAppointmentUnpaid(301, { id: first, amountPence: 2200 });
+    const replacement = await app.markAppointmentPaid(301, 2500);
+    assert.ok(replacement && replacement !== first);
+    await assert.rejects(app.markAppointmentUnpaid(301, { id: first, amountPence: 2200 }), /recorded payment changed/);
+    await assert.rejects(app.markAppointmentUnpaid(301, { id: replacement, amountPence: 2200 }), /changed/i);
+    assert.deepEqual(fixture.select("SELECT id, amount_pence FROM transactions"), [{ id: replacement, amount_pence: 2500 }]);
+    assert.equal(fixture.select("SELECT transaction_id FROM appointments WHERE id=301")[0].transaction_id, replacement);
   } finally { fixture.close(); }
 });

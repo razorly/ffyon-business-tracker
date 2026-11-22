@@ -201,6 +201,110 @@ test("a calendar conflict refreshes the original booking without resubmitting th
   } finally { fixture.close(); }
 });
 
+test("an interrupted client save recovers private notes after restart without creating a second online client", async () => {
+  const fixture = fixtureDatabase();
+  try {
+    const { client } = sharedRecords();
+    const attempts = [];
+    let onlineClient;
+    fixture.adminRequest = ({ operation, body }) => {
+      if (operation === "sync") return snapshot({ clients: onlineClient ? [onlineClient] : [], cursor: 2 });
+      assert.equal(operation, "clients");
+      attempts.push(normalize(body));
+      assert.equal(JSON.stringify(body).includes("Private shade"), false);
+      onlineClient ??= { ...client, id: body.id };
+      if (attempts.length === 1) throw new Error("Fixture lost the website response after commit");
+      return {};
+    };
+    const app = await application(fixture);
+    await assert.rejects(app.createClient({ name: client.name, notes: "Private shade" }), /lost the website response/);
+    fixture.setFailure(sql => {
+      if (sql.startsWith("UPDATE clients SET notes=")) throw new Error("Fixture interrupted the private save");
+    });
+    const sync = await application(fixture, "src/lib/sync.ts");
+    await assert.rejects(sync.retryPendingMutation(), /Private details are still pending/);
+    assert.deepEqual(attempts, [attempts[0], attempts[0]]);
+    assert.equal((await sync.pendingPrivateDetails()).notes, "Private shade");
+    assert.deepEqual(fixture.select("SELECT notes FROM clients"), [{ notes: null }]);
+    fixture.setFailure(null);
+    await sync.retryPendingMutation();
+    assert.equal(attempts.length, 2, "A confirmed operation must not be sent back to the website");
+    assert.deepEqual(fixture.select("SELECT notes FROM clients"), [{ notes: "Private shade" }]);
+    assert.equal(await sync.pendingPrivateDetails(), null);
+    assert.deepEqual(fixture.select("SELECT value FROM sync_state WHERE key='mutation-pending'"), []);
+  } finally { fixture.close(); }
+});
+
+test("a private appointment draft survives a conflicting note after the website edit commits", async () => {
+  const fixture = fixtureDatabase();
+  try {
+    const { client, appointment, service } = sharedRecords();
+    const sync = await application(fixture, "src/lib/sync.ts");
+    await sync.applySyncResponse(snapshot({ clients: [client], appointments: [appointment], services: [service] }));
+    fixture.execute("UPDATE appointments SET notes='Original private note'");
+    const app = await application(fixture);
+    const [before] = await app.listAppointments();
+    let calls = 0;
+    fixture.adminRequest = ({ operation, body }) => {
+      if (operation === "sync") return snapshot({ clients: [client], appointments: [appointment], services: [service], cursor: 2 });
+      assert.equal(operation, "appointments");
+      assert.equal(body.date, "2026-10-11");
+      assert.equal(body.notes, undefined);
+      assert.equal(++calls, 1);
+      fixture.execute("UPDATE appointments SET notes='Another device saved this'");
+      appointment.date = body.date;
+      appointment.revision++;
+      return {};
+    };
+    await assert.rejects(app.updateAppointment(before.id, { ...before, date: "2026-10-11", notes: "Keep my draft too" }, before.cloud_revision, before.notes), /Private details are still pending/);
+    assert.deepEqual(fixture.select("SELECT date,notes FROM appointments"), [{ date: "2026-10-11", notes: "Another device saved this" }]);
+    await assert.rejects(sync.retryPendingMutation(), /Private details are still pending/);
+    const pending = await sync.pendingPrivateDetails();
+    assert.equal(pending.notes, "Keep my draft too");
+    await assert.rejects(sync.discardPendingPrivateDetails("a different operation"), /pending save changed/);
+    await sync.discardPendingPrivateDetails(pending.id);
+    assert.equal(await sync.pendingPrivateDetails(), null);
+    assert.deepEqual(fixture.select("SELECT notes FROM appointments"), [{ notes: "Another device saved this" }]);
+  } finally { fixture.close(); }
+});
+
+test("retrying one finance form after a lost acknowledgement records the money once", async () => {
+  const fixture = fixtureDatabase();
+  try {
+    const operationId = webcrypto.randomUUID();
+    const input = { type: "expense", date: "2026-10-11", amount_pence: 1425, category_id: null, client_id: null, description: "Supplies" };
+    const app = await application(fixture, "src/lib/db.ts", db => db.setSharedDatabase(async () => ({
+      ...fixture.db,
+      async batch(statements) {
+        await fixture.db.batch(statements);
+        throw new Error("Fixture lost the response after commit");
+      },
+    })));
+    await assert.rejects(app.createTransaction(input, operationId), /lost the response after commit/);
+    const reopened = await application(fixture);
+    const id = await reopened.createTransaction(input, operationId);
+    assert.deepEqual(fixture.select("SELECT id,amount_pence FROM transactions"), [{ id, amount_pence: 1425 }]);
+    await assert.rejects(reopened.createTransaction({ ...input, amount_pence: 1700 }, operationId), /already recorded/);
+    await reopened.deleteTransaction(id);
+    await assert.rejects(reopened.createTransaction(input, operationId), /then removed/);
+    assert.deepEqual(fixture.select("SELECT id FROM transactions"), []);
+  } finally { fixture.close(); }
+});
+
+test("restore and reset leave unfinished website changes intact", async () => {
+  const fixture = fixtureDatabase();
+  try {
+    fixture.execute("INSERT INTO transactions(type,date,amount_pence) VALUES ('income','2026-10-11',1900)");
+    fixture.execute("INSERT INTO sync_state(key,value) VALUES ('mutation-pending','disposable pending change')");
+    const app = await application(fixture);
+    const backup = await app.exportAll();
+    await assert.rejects(app.restoreAll({ ...backup, transactions: [] }), /finish the pending change/);
+    await assert.rejects(app.wipeAll(), /finish the pending change/);
+    assert.deepEqual(fixture.select("SELECT amount_pence FROM transactions"), [{ amount_pence: 1900 }]);
+    assert.deepEqual(fixture.select("SELECT value FROM sync_state WHERE key='mutation-pending'"), [{ value: "disposable pending change" }]);
+  } finally { fixture.close(); }
+});
+
 test("an in-flight sync keeps the response with the database that supplied its cursor", async () => {
   const device = fixtureDatabase();
   const shared = fixtureDatabase();

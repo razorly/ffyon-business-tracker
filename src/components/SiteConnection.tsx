@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Copy, KeyRound, RefreshCw, Trash2, Unplug } from "lucide-react";
 import { toast } from "sonner";
 import { checkAccess, disconnectDevice, isPwa } from "@/lib/access";
-import { createPairingCode, listDevices, retryPendingMutation, revokeDevice, syncNow, type Device } from "@/lib/sync";
+import { createPairingCode, discardPendingPrivateDetails, listDevices, pendingPrivateDetails, retryPendingMutation, revokeDevice, syncNow, type Device } from "@/lib/sync";
 import { useData, useLoad } from "@/lib/data";
 import { useAccess } from "./AccessGate";
 import { Actions, Button, Card, CardHeader, ConfirmModal, ErrorText, LoadError, Modal } from "./ui";
@@ -19,6 +19,8 @@ export function SiteConnection() {
   const [devices, loading, loadError] = useLoad(() => access.state === "online" ? listDevices() : Promise.resolve([]), [access.state], []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pending, , pendingError] = useLoad(() => access.state === "online" ? pendingPrivateDetails() : Promise.resolve(null), [access.state], null);
+  const [discard, setDiscard] = useState<string | null>(null);
   const [pairing, setPairing] = useState<{ code: string; expires_at: string | number } | null>(null);
   const [revoke, setRevoke] = useState<Device | null>(null);
   const [disconnect, setDisconnect] = useState(false);
@@ -44,11 +46,32 @@ export function SiteConnection() {
           {access.expires_at && <Help className="tabular">Works offline until {seen(access.expires_at * 1000)}</Help>}
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button disabled={busy} onClick={() => void run(async () => { const status = await checkAccess(); if (status.state === "online") { await retryPendingMutation(); await syncNow({ full: true }); refresh(); toast.success("Connection checked"); } else throw new Error(status.error || "Could not reach the site"); })}><RefreshCw size={16} aria-hidden /> Check connection</Button>
+          <Button disabled={busy} onClick={() => void run(async () => {
+            const status = await checkAccess();
+            if (status.state !== "online") throw new Error(status.error || "Could not reach the site");
+            try {
+              await retryPendingMutation();
+              await syncNow({ full: true });
+              toast.success("Connection checked");
+            } finally { refresh(); }
+          })}><RefreshCw size={16} aria-hidden /> Check connection</Button>
           <Button disabled={busy || !online} variant="primary" onClick={() => void run(async () => { setPairing(await createPairingCode()); setNow(Date.now()); })}><KeyRound size={16} aria-hidden /> Add a device</Button>
         </div>
       </div>
       {error && <ErrorText>{error}</ErrorText>}
+      <LoadError error={pendingError} onRetry={refresh} />
+      {pending && <div className="space-y-2 rounded-lg border border-line p-3">
+        <p className="font-medium">Private details waiting to save</p>
+        <Help>The website change is saved. Check the connection to retry the private details. If the note has changed elsewhere, you can copy this version before clearing the pending save.</Help>
+        {pending.notes && <p className="whitespace-pre-wrap break-words select-text text-small">{pending.notes}</p>}
+        <div className="flex flex-wrap gap-2">
+          {pending.notes && <Button size="sm" disabled={busy} onClick={async () => {
+            try { await navigator.clipboard.writeText(pending.notes!); toast.success("Private note copied"); }
+            catch { setError("Select the pending note to copy it."); }
+          }}>Copy pending note</Button>}
+          <Button size="sm" disabled={busy} onClick={() => setDiscard(pending.id)}>Clear pending details</Button>
+        </div>
+      </div>}
       <div className="border-t border-line pt-4">
         <SubHeading>Devices that can open the tracker</SubHeading>
         {loading ? <Help className="mt-1">Loading devices…</Help> : !online ? <Help className="mt-1">Reconnect to see and remove devices.</Help> : <ul className="mt-1 divide-y divide-line">
@@ -77,6 +100,8 @@ export function SiteConnection() {
     </Modal>
     <ConfirmModal open={!!revoke} onClose={() => setRevoke(null)} title="Remove this device?" confirmLabel="Remove" message={<>{revoke?.name} will lose access the next time it connects, or when its offline access runs out.</>} onConfirm={() => { if (revoke) void run(async () => { await revokeDevice(revoke.id); refresh(); if (revoke.id === access.device_id) await checkAccess(); toast.success("Device removed"); }); }} />
     <ConfirmModal open={disconnect} onClose={() => setDisconnect(false)} title={`Disconnect this ${deviceLabel}?`} confirmLabel="Disconnect" message={`Your records stay on this ${deviceLabel}. Pair it again to reopen the tracker.`} onConfirm={() => { void run(async () => { await disconnectDevice(); }); }} />
+    <ConfirmModal open={!!discard} onClose={() => setDiscard(null)} title="Clear the pending private details?" confirmLabel="Clear pending details" message="Any private details shown here will be discarded. Copy the pending note first if you want to keep it."
+      onConfirm={async () => { if (discard) { await discardPendingPrivateDetails(discard); refresh(); } }} />
     {busy && <span className="sr-only" role="status">Working</span>}
   </Card>;
 }

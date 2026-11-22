@@ -283,12 +283,12 @@ export async function listClients(): Promise<ClientWithStats[]> {
 }
 
 export async function createClient(c: { name: string; email?: string; phone?: string | null; notes?: string | null; saved_address?: string; saved_postcode?: string }) {
-  const db = await getDb();
   const remoteId = crypto.randomUUID();
-  const committed = await sharedMutation("clients", "POST", { id: remoteId, name: c.name.trim(), email: c.email ?? "", phone: c.phone ?? "", saved_address: c.saved_address ?? "", saved_postcode: c.saved_postcode ?? "" });
+  const committed = await sharedMutation("clients", "POST", { id: remoteId, name: c.name.trim(), email: c.email ?? "", phone: c.phone ?? "", saved_address: c.saved_address ?? "", saved_postcode: c.saved_postcode ?? "" },
+    c.notes?.trim() ? { target: "client", notes: c.notes } : undefined);
+  const db = await getDb();
   const [client] = await db.select<Client[]>("SELECT * FROM clients WHERE remote_id = $1", [committed.id]);
   if (!client) throw new Error("Client saved online. Refresh the site connection before continuing.");
-  if (c.notes?.trim()) await saveClientNotes(client.id, c.notes, null);
   return client.id;
 }
 
@@ -383,16 +383,38 @@ export async function getTransaction(id: number): Promise<TransactionRow | null>
   return rows[0] ? transactionRowColour(rows[0]) : null;
 }
 
-export async function createTransaction(t: TransactionInput) {
+export async function createTransaction(t: TransactionInput, operationId?: string) {
   const db = await getDb();
+  const receiptKey = operationId && `entry-created-${operationId}`;
+  const prior = receiptKey ? await entryCreationReceipt(db, receiptKey, t) : null;
+  if (prior != null) return prior;
   const attribution = await transactionAttribution(db, t);
-  const res = await db.execute(
-    `INSERT INTO transactions (type, date, amount_pence, category_id, client_id, description, service_id, service_name, category_name_snapshot, income_kind)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-    [t.type, t.date, t.amount_pence, attribution.category_id, t.client_id, t.description || null,
-      attribution.service_id, attribution.service_name, attribution.category_name_snapshot, attribution.income_kind],
-  );
-  return res.lastInsertId as number;
+  const insert = "INSERT INTO transactions (type, date, amount_pence, category_id, client_id, description, service_id, service_name, category_name_snapshot, income_kind)";
+  const values = "$1, $2, $3, $4, $5, $6, $7, $8, $9, $10";
+  const params = [t.type, t.date, t.amount_pence, attribution.category_id, t.client_id, t.description || null,
+    attribution.service_id, attribution.service_name, attribution.category_name_snapshot, attribution.income_kind];
+  if (!receiptKey) return (await db.execute(`${insert} VALUES (${values})`, params)).lastInsertId!;
+  const [result] = await db.batch([
+    { sql: `${insert} SELECT ${values} WHERE NOT EXISTS (SELECT 1 FROM sync_state WHERE key=$11)`, params: [...params, receiptKey] },
+    { sql: "INSERT INTO sync_state(key,value) SELECT $1,CAST(last_insert_rowid() AS TEXT) WHERE changes() > 0", params: [receiptKey] },
+  ]);
+  if (result.rowsAffected) return result.lastInsertId!;
+  const existing = await entryCreationReceipt(db, receiptKey, t);
+  if (existing != null) return existing;
+  throw new Error("Refresh Money to check whether the entry was recorded before trying again.");
+}
+
+async function entryCreationReceipt(db: Db, key: string, input: TransactionInput) {
+  const [receipt] = await db.select<(Omit<Transaction, "id"> & { id: number | null })[]>(`
+    SELECT t.* FROM sync_state s LEFT JOIN transactions t ON t.id=CAST(s.value AS INTEGER) WHERE s.key=$1`, [key]);
+  if (!receipt) return null;
+  if (receipt.id == null) throw new Error("This entry was already recorded and then removed. Open a new entry to record it again.");
+  if (receipt.type !== input.type || receipt.date !== input.date || receipt.amount_pence !== input.amount_pence ||
+      receipt.client_id !== input.client_id || receipt.category_id !== input.category_id ||
+      receipt.service_id !== (input.service_id ?? null) || receipt.description !== (input.description || null)) {
+    throw new Error("This entry was already recorded. Open it in Money to make changes.");
+  }
+  return receipt.id;
 }
 
 function unchangedEntry(current: Transaction, expected?: Transaction) {
@@ -522,13 +544,13 @@ export async function getAppointment(id: number): Promise<AppointmentRow | null>
 }
 
 export async function createAppointment(a: AppointmentInput, seriesId: string | null = null) {
-  const db = await getDb();
   const remoteId = crypto.randomUUID();
   const input = await cloudAppointmentInput(a);
-  const committed = await sharedMutation("appointments", "POST", { id: remoteId, ...input, status: "confirmed", series_id: seriesId });
+  const committed = await sharedMutation("appointments", "POST", { id: remoteId, ...input, status: "confirmed", series_id: seriesId },
+    appointmentPrivateDetails("appointment", a));
+  const db = await getDb();
   const [row] = await db.select<Appointment[]>("SELECT * FROM appointments WHERE remote_id = $1", [committed.id]);
   if (!row) throw new Error("Appointment saved online. Refresh the site connection before continuing.");
-  await db.execute("UPDATE appointments SET notes = $1, category_id = $2 WHERE id = $3", [a.notes || null, a.category_id, row.id]);
   return row.id;
 }
 
@@ -536,11 +558,18 @@ export async function createAppointment(a: AppointmentInput, seriesId: string | 
 export async function createAppointmentSeries(a: AppointmentInput, dates: string[]) {
   const seriesId = crypto.randomUUID();
   const input = await cloudAppointmentInput(a);
-  const committed = await sharedMutation("appointments/series", "POST", { id: crypto.randomUUID(), ...input, status: "confirmed", dates, series_id: seriesId });
+  const committed = await sharedMutation("appointments/series", "POST", { id: crypto.randomUUID(), ...input, status: "confirmed", dates, series_id: seriesId },
+    appointmentPrivateDetails("series", a));
   const db = await getDb();
   const rows = await db.select<{ id: number }[]>("SELECT id FROM appointments WHERE series_id = $1 ORDER BY date, start_time", [committed.series_id]);
-  await db.execute("UPDATE appointments SET notes = $1, category_id = $2 WHERE series_id = $3", [a.notes || null, a.category_id, committed.series_id]);
   return rows.map((row) => row.id);
+}
+
+function appointmentPrivateDetails(target: "appointment" | "series", input: AppointmentInput, before?: Appointment): import("./sync").PrivateBookingDetails | undefined {
+  const notes = input.notes || null;
+  const note = notes !== (before?.notes ?? null) ? { value: notes, expected: before?.notes ?? null } : undefined;
+  const category = input.category_id !== (before?.category_id ?? null) ? { id: input.category_id, expected: before?.category_id ?? null } : undefined;
+  if (note || category) return { target, note, category };
 }
 
 /** How many of a repeating booking are still to come from `fromDate` on. */
@@ -576,13 +605,15 @@ export async function deleteAppointmentSeries(seriesId: string, fromDate: string
 /** Shared booking edits never rewrite money already recorded. */
 export async function updateAppointment(id: number, a: AppointmentInput, expectedRevision?: number, expectedNotes?: string | null) {
   const db = await getDb();
-  const before = await getAppointment(id);
+  const [before] = await db.select<Appointment[]>("SELECT * FROM appointments WHERE id=$1", [id]);
   if (!before) throw new Error("Appointment not found");
   if (expectedNotes !== undefined && (before.notes ?? null) !== expectedNotes) throw new Error("The private notes changed on another device. Reopen the appointment to see them.");
   const details = bookingDetails(a, before);
   const beforeDetails = bookingDetails(before);
   const detailsChanged = Object.entries(details).some(([field, value]) => value !== beforeDetails[field as keyof typeof beforeDetails]);
   const changed = a.date !== before.date || a.start_time !== before.start_time || a.duration_min !== before.duration_min || a.client_id !== before.client_id || a.price_pence !== before.price_pence || (a.service_id !== undefined && a.service_id !== before.service_id) || (a.customer_notes !== undefined && a.customer_notes !== before.customer_notes) || detailsChanged || a.save_visit_address === true;
+  const local = { sql: "UPDATE appointments SET notes=$1, category_id=$2 WHERE id=$3 AND notes IS $4 AND category_id IS $5",
+    params: [a.notes || null, a.category_id, id, before.notes, before.category_id], expectedRows: 1 };
   if (before.remote_id && changed) {
     const patch: Record<string, unknown> = { id: before.remote_id, revision: expectedRevision ?? before.cloud_revision, action: "edit" };
     for (const field of ["date", "duration_min", "price_pence"] as const) if (a[field] !== before[field]) patch[field] = a[field];
@@ -596,7 +627,8 @@ export async function updateAppointment(id: number, a: AppointmentInput, expecte
       if (!client?.remote_id) throw new Error("Choose an explicitly linked shared customer.");
       patch.client_id = client.remote_id;
     }
-    await sharedMutation("appointments", "PATCH", patch);
+    await sharedMutation("appointments", "PATCH", patch, appointmentPrivateDetails("appointment", a, before));
+    return;
   } else if (!before.remote_id && changed) {
     const serviceId = a.service_id === undefined ? before.service_id : a.service_id;
     let serviceName = before.service_name;
@@ -607,19 +639,18 @@ export async function updateAppointment(id: number, a: AppointmentInput, expecte
       if (saved && !saved.active) throw new Error("Choose an active service for this appointment.");
       serviceName = saved?.name ?? "";
     }
-    await db.execute(`UPDATE appointments SET date=$1, start_time=$2, duration_min=$3, client_id=$4, price_pence=$5,
+    await db.batch([local, { sql: `UPDATE appointments SET date=$1, start_time=$2, duration_min=$3, client_id=$4, price_pence=$5,
       service_id=$6, customer_notes=$7, time_confirmed=$8, is_remote=$9, visit_address=$10, visit_postcode=$11,
-      base_price_pence=$12, discount_percent=$13, service_name=$14 WHERE id=$15`, [a.date, details.time_confirmed ? a.start_time : "00:00", a.duration_min, a.client_id,
+      base_price_pence=$12, discount_percent=$13, service_name=$14 WHERE id=$15`, params: [a.date, details.time_confirmed ? a.start_time : "00:00", a.duration_min, a.client_id,
       a.price_pence, serviceId, a.customer_notes ?? before.customer_notes ?? "", details.time_confirmed ? 1 : 0,
-      details.is_remote ? 1 : 0, details.visit_address, details.visit_postcode, details.base_price_pence, details.discount_percent, serviceName, id]);
+      details.is_remote ? 1 : 0, details.visit_address, details.visit_postcode, details.base_price_pence, details.discount_percent, serviceName, id], expectedRows: 1 }]);
     if (a.save_visit_address && details.is_remote && a.client_id != null) {
       const [client] = await db.select<Client[]>("SELECT * FROM clients WHERE id=$1", [a.client_id]);
       if (client) await updateClient({ ...client, saved_address: details.visit_address, saved_postcode: details.visit_postcode });
     }
+    return;
   }
-  const notesDb = before.remote_id && changed ? await getDb() : db;
-  const updated = await notesDb.execute("UPDATE appointments SET notes = $1, category_id = $2 WHERE id = $3 AND notes IS $4", [a.notes || null, a.category_id, id, before.notes]);
-  if (!updated.rowsAffected) throw new Error("The appointment changed. Reopen it before editing the notes.");
+  await db.batch([local]);
 }
 
 /** Permanent deletion removes booking details, never the money received. */
@@ -670,25 +701,17 @@ async function resolveUnfinishedImport(db: Db, clientIds: number[], appointmentI
   }
 }
 
-async function linkedTransactionId(id: number): Promise<number | null> {
-  const db = await getDb();
-  const rows = await db.select<{ transaction_id: number | null }[]>(
-    "SELECT transaction_id FROM appointments WHERE id = $1",
-    [id],
-  );
-  return rows[0]?.transaction_id ?? null;
-}
-
 /** The money moment: the appointment gets an income entry and starts counting. */
-export async function markAppointmentPaid(id: number, amountPence?: number) {
+export async function markAppointmentPaid(id: number, amountPence?: number, expectedRevision?: number): Promise<number | null> {
   const db = await getDb();
   const a = await getAppointment(id);
   if (!a) throw new Error("Appointment not found");
-  if (a.transaction_id != null) return; // already paid — never create a second entry
+  if (a.transaction_id != null) return null;
+  if (expectedRevision !== undefined && expectedRevision !== a.cloud_revision) throw new Error("The appointment changed. Reopen it before recording payment.");
   if (a.status !== "confirmed") throw new Error("Only a confirmed appointment can be marked paid.");
   const amount = amountPence ?? a.price_pence;
   if (amount == null || !Number.isSafeInteger(amount) || amount <= 0) throw new Error("Add the amount received before marking this paid");
-  await db.batch([
+  const [receipt] = await db.batch([
     { sql: `INSERT INTO transactions (type, date, amount_pence, category_id, client_id, description,
         service_id, service_name, category_name_snapshot, income_kind)
       SELECT 'income', a.date, $1,
@@ -698,9 +721,14 @@ export async function markAppointmentPaid(id: number, amountPence?: number) {
         COALESCE(cat.name,''),
         CASE WHEN COALESCE(a.service_id,cat.service_id) IS NOT NULL OR COALESCE(a.service_name,'')!='' THEN 'service' ELSE cat.income_kind END
       FROM appointments a LEFT JOIN categories cat ON cat.id=a.category_id
-      WHERE a.id = $2 AND a.transaction_id IS NULL AND a.status = 'confirmed'`, params: [amount, id] },
+      WHERE a.id=$2 AND a.transaction_id IS NULL AND a.status='confirmed'
+        AND a.remote_id IS $3 AND a.cloud_revision=$4 AND a.date=$5 AND a.price_pence IS $6`,
+      params: [amount, id, a.remote_id, a.cloud_revision, a.date, a.price_pence] },
     { sql: "UPDATE appointments SET transaction_id = last_insert_rowid() WHERE id = $1 AND transaction_id IS NULL AND changes() > 0", params: [id] },
   ]);
+  if (receipt.rowsAffected) return receipt.lastInsertId!;
+  if ((await getAppointment(id))?.transaction_id != null) return null;
+  throw new Error("The appointment changed. Reopen it before recording payment.");
 }
 
 /** Lifecycle changes preserve local payments. */
@@ -718,13 +746,17 @@ export async function setAppointmentStatus(id: number, status: AppointmentStatus
 }
 
 /** Undoes a payment: the income entry is removed, so the money leaves the totals again. */
-export async function markAppointmentUnpaid(id: number) {
+export async function markAppointmentUnpaid(id: number, expected?: { id: number; amountPence?: number | null }) {
   const db = await getDb();
-  const txId = await linkedTransactionId(id);
+  const [appointment] = await db.select<{ transaction_id: number | null }[]>("SELECT transaction_id FROM appointments WHERE id=$1", [id]);
+  const txId = appointment?.transaction_id;
+  if (expected && txId !== expected.id) throw new Error("The recorded payment changed. Reopen the appointment before removing it.");
   if (txId == null) return;
   await db.batch([
-    { sql: "UPDATE appointments SET transaction_id = NULL WHERE id = $1 AND transaction_id = $2", params: [id, txId] },
-    { sql: "DELETE FROM transactions WHERE id = $1 AND changes() > 0", params: [txId] },
+    { sql: `UPDATE appointments SET transaction_id=NULL WHERE id=$1 AND transaction_id=$2
+        AND EXISTS (SELECT 1 FROM transactions WHERE id=$2 AND ($3 IS NULL OR amount_pence=$3))`,
+      params: [id, txId, expected?.amountPence ?? null], expectedRows: 1 },
+    { sql: "DELETE FROM transactions WHERE id=$1", params: [txId], expectedRows: 1 },
   ]);
 }
 
@@ -768,10 +800,10 @@ export async function upcomingForClient(clientId: number, from: string): Promise
   )).map(appointmentRowColour);
 }
 
-async function sharedMutation(operation: string, method: string, body: Record<string, unknown>) {
+async function sharedMutation(operation: string, method: string, body: Record<string, unknown>, privateDetails?: import("./sync").PrivateBookingDetails) {
   await requireOnlineAccess();
   const sync = await import("./sync");
-  return sync.mutateAndSync(operation, method, body);
+  return sync.mutateAndSync(operation, method, body, privateDetails);
 }
 
 async function cloudAppointmentInput(a: AppointmentInput) {
@@ -1153,19 +1185,31 @@ export function normalizeBackup(data: unknown): Backup {
   return { app: "ffyon-business-tracker", version: 4, exported_at: str(b.exported_at) ? b.exported_at : new Date().toISOString(), categories, clients, transactions, appointments };
 }
 
+const unfinishedChanges = "key IN ('mutation-pending','import-pending')";
+const requireNoPendingChanges: Statement = { sql: `UPDATE sync_state SET value=value WHERE ${unfinishedChanges}`, expectedRows: 0 };
+
+async function getResettableDeviceDb() {
+  if (sharedDb) throw new Error("These records are shared across devices. Delete or update individual records to keep the ledger in sync.");
+  const db = await getDeviceDb();
+  const [pending] = await db.select<{ key: string }[]>(`SELECT key FROM sync_state WHERE ${unfinishedChanges} LIMIT 1`);
+  if (pending) throw new Error("Use Check connection in Settings to finish the pending change before replacing these records.");
+  return db;
+}
+
 export async function wipeAll() {
-  const db = await getDb();
-  await db.batch(["DELETE FROM appointments", "DELETE FROM transactions", "DELETE FROM clients", "DELETE FROM sync_state"].map((sql) => ({ sql })));
+  const db = await getResettableDeviceDb();
+  await db.batch([requireNoPendingChanges, ...["DELETE FROM appointments", "DELETE FROM transactions", "DELETE FROM clients", "DELETE FROM sync_state WHERE key NOT LIKE 'deleted-%'"].map((sql) => ({ sql }))]);
   await rebuildMirrorIfOnline();
 }
 
 /** Replaces everything in the database with the backup's contents. */
 export async function restoreAll(b: Backup) {
   const normalized = normalizeBackup(b);
-  const db = await getDb();
+  const db = await getResettableDeviceDb();
   const [current] = await db.select<{ n: number }[]>("SELECT (SELECT COUNT(*) FROM clients WHERE remote_id IS NOT NULL) + (SELECT COUNT(*) FROM appointments WHERE remote_id IS NOT NULL) AS n");
   const hasSharedRecords = normalized.clients.some((client) => client.remote_id) || (normalized.appointments ?? []).some((appointment) => appointment.remote_id) || (current?.n ?? 0) > 0;
   const statements: Statement[] = [
+    requireNoPendingChanges,
     ...["DELETE FROM appointments", "DELETE FROM transactions", "DELETE FROM clients", "DELETE FROM categories", "DELETE FROM sync_state", "DELETE FROM cloud_services", "DELETE FROM cloud_blocks", "DELETE FROM cloud_settings"].map((sql) => ({ sql })),
     ...normalized.categories.map(categoryStatement), ...normalized.clients.map(clientStatement),
     ...normalized.transactions.map(transactionStatement), ...(normalized.appointments ?? []).map(appointmentStatement),
@@ -1175,7 +1219,7 @@ export async function restoreAll(b: Backup) {
     const sync = await import("./sync");
     const response = await sync.adminRequest<import("./sync").SyncResponse>("sync", "GET");
     if (!response.snapshot || response.has_more || response.changes.length) throw new Error("The site did not return a complete snapshot. The backup was not restored.");
-    await sync.applySyncResponse(response, statements);
+    await sync.applySyncResponse(response, statements, db);
   } else {
     await db.batch(statements);
   }

@@ -415,7 +415,7 @@ export function ErrorText({ children, className }: { children: ReactNode; classN
 export function Notice({ children, action, tone = "info", className }: { children: ReactNode; action?: ReactNode; tone?: "info" | "bad"; className?: string }) {
   return (
     <div role={tone === "bad" ? "alert" : "status"} className={cn("mb-4 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border bg-surface px-4 py-3 text-small", tone === "bad" ? "border-bad/40 text-bad" : "border-line text-ink-2", className)}>
-      <div className="min-w-0 flex-1 break-words">{children}</div>
+      <div className="min-w-0 flex-[1_1_14rem] break-words">{children}</div>
       {action}
     </div>
   );

@@ -9,7 +9,8 @@ export function encryptedJson(directory, name, key) {
       let data;
       try { data = await readFile(path); }
       catch (error) { if (error.code === "ENOENT") return null; throw error; }
-      const cipher = createDecipheriv("aes-256-gcm", key, data.subarray(0, 12)).setAuthTag(data.subarray(12, 28));
+      if (data.length < 28) throw new Error("The encrypted file is incomplete.");
+      const cipher = createDecipheriv("aes-256-gcm", key, data.subarray(0, 12), { authTagLength: 16 }).setAuthTag(data.subarray(12, 28));
       return JSON.parse(Buffer.concat([cipher.update(data.subarray(28)), cipher.final()]));
     },
     async write(value) {
@@ -22,6 +23,11 @@ export function encryptedJson(directory, name, key) {
         try { await file.writeFile(Buffer.concat([iv, cipher.getAuthTag(), data])); await file.sync(); }
         finally { await file.close(); }
         await rename(temporary, path);
+        // Persist the directory entry as well as the file on the Linux server.
+        if (process.platform === "linux") {
+          const parent = await open(directory, "r");
+          try { await parent.sync(); } finally { await parent.close(); }
+        }
       } finally { await rm(temporary, { force: true }).catch(() => {}); }
     },
   };

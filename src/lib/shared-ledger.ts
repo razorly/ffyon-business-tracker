@@ -100,7 +100,8 @@ async function saveLedger(base: LoadedLedger, bytes: Uint8Array) {
     saved = await request<Receipt>(undefined, body);
   }
   if (current !== generation) throw new Error("The ledger session changed. Check your records before retrying.");
-  if (!saved.ledger_id || !Number.isSafeInteger(saved.revision) || saved.applied_revision !== base.revision + 1) {
+  if (!saved.ledger_id || (base.ledger_id && saved.ledger_id !== base.ledger_id) ||
+      !Number.isSafeInteger(saved.revision) || saved.revision < saved.applied_revision || saved.applied_revision !== base.revision + 1) {
     throw new Error("The server could not confirm the save. Refresh before trying again.");
   }
   const result = { ledger_id: saved.ledger_id, revision: saved.applied_revision, bytes };
@@ -133,7 +134,10 @@ export async function reconcileLedger(deviceId: string, active?: SharedLedger): 
         const review = active && known.review === JSON.stringify(active.review) ? active.review : parseReview(known.review);
         return finish(snapshot, review);
       }
-      const review = mergeLegacyLedger(copy, await exportAll(await getDeviceDb()), deviceId);
+      const local = await getDeviceDb();
+      const pending = await local.select<{ key: string }[]>("SELECT key FROM sync_state WHERE key IN ('mutation-pending','import-pending')");
+      if (pending.length) throw new Error("Use Check connection in Settings to finish the change on this device before joining the shared ledger.");
+      const review = mergeLegacyLedger(copy, await exportAll(local), deviceId);
       return finish(await saveLedger(snapshot, copy.export()), review);
     } finally { copy.close(); }
   } catch (error) {
@@ -204,6 +208,7 @@ export async function getSharedDb(): Promise<Db> {
     if (!snapshot.bytes) throw new Error("The shared ledger could not be loaded.");
     const db = await openBrowserSqlite(snapshot.bytes);
     try {
+      if (opened !== generation) throw new Error("The ledger session changed. Try again.");
       if (rebased && observations.some(({ read, result }) => JSON.stringify(read(db)) !== result)) {
         throw new Error("The records changed on another device. Refresh and try again.");
       }

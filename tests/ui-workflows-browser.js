@@ -28,6 +28,7 @@ async function run() {
     for (const width of [1280, 375, 320]) evidence.push(await workflows(browser, width, output));
     evidence.push(await failureState(browser, output));
     evidence.push(await loaderScope(browser));
+    evidence.push(await routeRecovery(browser, output));
     await writeFile(resolve(output, "evidence.json"), JSON.stringify({ evidence, nativeLimit: "Disposable browser IPC/SQLite fixtures. Does not verify WebView2, native notifications or credential storage." }, null, 2));
     console.log(JSON.stringify({ evidence }, null, 2));
   } finally { await browser.close(); }
@@ -45,7 +46,7 @@ async function workflows(browser, width, output) {
     // Today replaced the dashboard: the confirmed bookings of the day sit in their own region.
     const todayList = page.getByRole("region", { name: /^Today ·/ });
     await todayList.getByRole("button", { name: /UI Workflow Customer/ }).waitFor();
-    assert.ok((await page.getByText(records.clients[0].name, { exact: true }).first().boundingBox()).width >= 90, "Today's client name must remain readable at narrow widths");
+    assert.ok((await todayList.getByText(records.clients[0].name, { exact: true }).boundingBox()).width >= 135, "Today's client name must remain readable at narrow widths");
     await capture(page, output, `dashboard-${width}.png`);
     await page.locator('nav a[title="Diary"]').click();
     await page.getByRole("heading", { name: "Diary", exact: true }).waitFor();
@@ -220,6 +221,27 @@ async function loaderScope(browser) {
     assert.deepEqual(clocks, [{ date: "2026-10-03", hour: 0, minute: 30 }, { date: "2026-12-31", hour: 23, minute: 30 }, { valid: 120050, overflow: null }]);
     return { scopedLoaderNeverShowsPreviousClientData: true, londonClockAndExactSafePence: true };
   } finally { await page.close(); }
+}
+
+async function routeRecovery(browser, output) {
+  const page = await browser.newPage();
+  const fixture = await installDesktopFixture(page, data());
+  const financesModule = /\/src\/pages\/Finances\.tsx(?:\?|$)/;
+  try {
+    await page.route(financesModule, route => route.abort());
+    await page.goto(url, { waitUntil: "networkidle" });
+    await page.getByRole("heading", { level: 1, name: /^Good / }).waitFor();
+    await page.locator('nav a[title="Money"]').click();
+    await page.getByRole("heading", { name: "This page couldn't open" }).waitFor();
+    await capture(page, output, "route-load-failure.png");
+    await page.locator('nav a[title="Today"]').click();
+    await page.getByRole("heading", { level: 1, name: /^Good / }).waitFor();
+    await page.locator('nav a[title="Money"]').click();
+    await page.unroute(financesModule);
+    await page.getByRole("button", { name: "Reload tracker" }).click();
+    await page.getByRole("heading", { level: 1, name: "Money" }).waitFor();
+    return { failedPageKeepsNavigation: true, reloadRestoresPage: true };
+  } finally { await page.close(); fixture.close(); }
 }
 
 async function until(page, condition) {

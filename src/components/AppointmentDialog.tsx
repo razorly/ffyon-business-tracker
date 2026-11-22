@@ -336,8 +336,9 @@ export function AppointmentDialog() {
     if (pence == null || !Number.isSafeInteger(pence) || pence <= 0) return setError("Enter the amount received before recording payment");
     setBusy(true);
     try {
-      await markAppointmentPaid(editing.id, pence);
-      toast.success(`${money(pence)} recorded as income`);
+      const receipt = await markAppointmentPaid(editing.id, pence, editing.cloud_revision);
+      if (receipt == null) toast.info("Payment already recorded");
+      else toast.success(`${money(pence)} recorded as income`);
       refresh();
       onClose();
     } catch (e) {
@@ -348,10 +349,10 @@ export function AppointmentDialog() {
   };
 
   const markUnpaid = async () => {
-    if (!editing || busy || !ready) return;
+    if (!editing || editing.transaction_id == null || busy || !ready) return;
     setBusy(true);
     try {
-      await markAppointmentUnpaid(editing.id);
+      await markAppointmentUnpaid(editing.id, { id: editing.transaction_id, amountPence: editing.paid_amount_pence });
       toast.success("Payment removed from income");
       refresh();
       onClose();

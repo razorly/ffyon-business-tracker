@@ -109,22 +109,29 @@ export function TrayBridge() {
         openEditAppointment(appointment);
         return toast.info("Add a price to this one before marking it paid");
       }
+      let receipt: number | null;
       try {
-        await markAppointmentPaid(id);
+        receipt = await markAppointmentPaid(id, appointment.price_pence, appointment.cloud_revision);
       } catch (e) {
         console.error(e);
         return toast.error("Couldn't mark that paid — open the schedule and try there");
       }
       refresh();
+      if (receipt == null) return toast.info("Payment already recorded");
       const who = appointment.client_name ?? (appointment.service_name || appointment.category_name || "Appointment");
+      const amount = appointment.price_pence;
       toast.success(`${money(appointment.price_pence)} recorded as income`, {
         description: who,
         duration: TOAST_MS,
         action: {
           label: "Undo",
           onClick: async () => {
-            await markAppointmentUnpaid(id);
-            refresh();
+            try {
+              await markAppointmentUnpaid(id, { id: receipt, amountPence: amount });
+              refresh();
+            } catch (error) {
+              toast.error(error instanceof Error ? error.message : "Couldn't undo that payment");
+            }
           },
         },
       });

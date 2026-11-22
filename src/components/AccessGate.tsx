@@ -80,7 +80,7 @@ function LockedScreen({ status, onStatus }: { status: AccessStatus; onStatus: (v
         </div>
         {status.state === "checking" ? <Loading label="Checking this device" className="px-0" /> : <>
           {(error ?? status.error) && <ErrorText className="mt-4">{error ?? status.error}</ErrorText>}
-          {status.device_id && <Button className="mt-4" disabled={busy} onClick={retry}><RefreshCw size={16} aria-hidden /> Verify connection</Button>}
+          {(status.device_id || (webApp && status.error)) && <Button className="mt-4" disabled={busy} onClick={retry}><RefreshCw size={16} aria-hidden /> Verify connection</Button>}
           {!webApp && <div className="mt-5"><Segmented label="How to connect" className="w-full" value={mode} onChange={setMode} options={[{ value: "pair", label: "Pair device" }, { value: "owner", label: "Set up first admin" }]} /></div>}
           <form onSubmit={pairing} className="mt-5 space-y-4">
             <Field label={webApp ? "Device name" : "Computer name"}><Input autoComplete="off" maxLength={80} value={name} onChange={(e) => setName(e.target.value)} placeholder={webApp ? "e.g. Salon iPhone" : "e.g. Salon Mac"} disabled={busy || !!setup} /></Field>

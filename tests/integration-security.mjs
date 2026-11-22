@@ -646,6 +646,37 @@ test("automatic backup retention removes only valid dated backups", async () => 
   } finally { fixture.close(); }
 });
 
+test("an active backup does not turn automatic backups back on after the owner disables them", async () => {
+  const fixture = fixtureDatabase();
+  try {
+    let config = JSON.stringify({ dir: "C:/fixture-backups", lastRun: null });
+    fixture.storage = { getItem: () => config, setItem: (_, value) => { config = value; }, removeItem: () => { config = null; } };
+    const started = Promise.withResolvers();
+    const finish = Promise.withResolvers();
+    let writes = 0;
+    fixture.nativeRequest = async (command) => {
+      if (command === "protected_write_text_file") {
+        writes++;
+        started.resolve();
+        await finish.promise;
+        return;
+      }
+      if (command === "protected_read_dir") return [];
+      throw new Error(`Unexpected command: ${command}`);
+    };
+    const exports = await application(fixture, "src/lib/export.ts");
+    const first = exports.runAutoBackup();
+    await started.promise;
+    const second = exports.runAutoBackup();
+    exports.writeAutoBackup(null);
+    finish.resolve();
+    assert.ok(await first);
+    assert.equal(await second, null);
+    assert.equal(exports.readAutoBackup(), null);
+    assert.equal(writes, 1);
+  } finally { fixture.close(); }
+});
+
 test("invalid calendar dates and cross-midnight edits cannot corrupt finances or the diary", async () => {
   const fixture = fixtureDatabase();
   try {
@@ -673,7 +704,7 @@ test("a delayed unpaid action cannot unlink a replacement receipt", async () => 
     const original = fixture.db.batch;
     let intervened = false;
     fixture.db.batch = (statements) => {
-      if (!intervened && statements[0].sql.includes("SET transaction_id = NULL")) {
+      if (!intervened && /SET transaction_id\s*=\s*NULL/.test(statements[0].sql)) {
         intervened = true;
         // Another action replaced the receipt after this action read the old ID.
         fixture.execute("DELETE FROM transactions WHERE id=201");
@@ -682,7 +713,7 @@ test("a delayed unpaid action cannot unlink a replacement receipt", async () => 
       }
       return original(statements);
     };
-    await app.markAppointmentUnpaid(id);
+    await assert.rejects(app.markAppointmentUnpaid(id), /record changed/i);
     assert.equal((await app.getAppointment(id)).transaction_id, 202);
     assert.equal(fixture.select("SELECT SUM(amount_pence) AS income FROM transactions")[0].income, 2700);
   } finally { fixture.close(); }

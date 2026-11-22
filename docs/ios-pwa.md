@@ -12,9 +12,11 @@ Changes and deletions made in the shared ledger appear on all connected devices.
 
 Open **Review records** on the device that shows the notice. Use **Add to appointment note** to recover a private note on its matching appointment, or **Add to client notes** if the appointment is missing and the client is linked. Existing shared notes are kept. You can also **Copy note** or **Dismiss review**, which clears the notice for that record and keeps the original device copy.
 
-Shared records require access to the home network and online verification. The previous device ledger is kept for migration review. **Settings → This device → Shared ledger backup** saves a separate copy of the shared records to Files.
+Shared records require access to the home network and online verification. The previous device ledger is kept for migration review. **Settings → This device → Save backup** saves a separate copy of the shared records to Files.
 
 Open **Clients**, select a client, and choose **Add notes** or **Edit notes** in **Client notes**. Saving an empty note clears it across approved devices. Staff notes are stored in the shared ledger. If another device changes the note while you are editing, the app keeps your draft and asks you to reopen the latest version.
+
+If a website booking or client change is saved before its private details can be recorded, open **Settings → This device → Check connection** to retry. If another device already changed the note, copy the pending draft and review the current note before clearing the pending details.
 
 ## Push notifications
 
@@ -35,6 +37,10 @@ tar -czf ffyon-pwa-bundle.tar.gz -C pwa server.mjs ledger.mjs encrypted-json.mjs
 Copy the archive and the three files in `pwa/k3s` to a staging directory on a host with the home cluster's kubeconfig. Run `sh deploy.sh ffyon-pwa-bundle.tar.gz` there. The script validates the manifests against the cluster, uploads a versioned bundle and waits for rollout and the home TLS certificate. Redeploy using the same procedure. Existing bundle ConfigMaps allow Kubernetes rollout undo while those ConfigMaps are retained.
 
 The `ffyon/ffyon-ledger` NAS claim holds encrypted ledger snapshots and push subscriptions. Keep the NAS data and `ffyon/ffyon-session` Secret together for recovery. The server delivers alerts through Apple’s Web Push service. The booking and mail site verifies device approval and continues to serve bookings, clients and mail. Finances and staff notes stay on the home cluster.
+
+## Ledger recovery
+
+The server acknowledges a ledger revision after writing both `ledger.v1` and `ledger-replica.v1`. On startup it uses the newest readable copy and repairs a missing or damaged peer. If both files are damaged, saves fail closed. Restore the NAS files and matching Secret from the same backup before restarting the tracker. Keep a separate NAS backup for volume loss. Both live copies are on the same claim.
 
 ## Browser regression test
 

@@ -38,9 +38,10 @@ export function useNeedsYou() {
         toast.info("This appointment no longer needs payment confirmation");
         return;
       }
-      await markAppointmentPaid(row.id, amount);
+      const receipt = await markAppointmentPaid(row.id, amount, row.cloud_revision);
       refresh();
-      toast.success(`${money(amount)} recorded as income`);
+      if (receipt == null) toast.info("Payment already recorded");
+      else toast.success(`${money(amount)} recorded as income`);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not confirm this payment");
     } finally { setBusy(null); }

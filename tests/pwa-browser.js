@@ -379,6 +379,7 @@ try {
   await browser.close();
   server.close();
   await rm(join(ledgerDirectory, "ledger.v1"), { force: true });
+  await rm(join(ledgerDirectory, "ledger-replica.v1"), { force: true });
   await rm(join(ledgerDirectory, "push.v1"), { force: true });
   await rmdir(ledgerDirectory);
 }
