@@ -1114,7 +1114,7 @@ dependencies = [
 
 [[package]]
 name = "ffyon-tracker"
-version = "0.7.5"
+version = "0.7.6"
 dependencies = [
  "apple-native-keyring-store",
  "base64 0.22.1",

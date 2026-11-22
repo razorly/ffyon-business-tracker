@@ -3,6 +3,8 @@ import { NavLink, Outlet } from "react-router-dom";
 import { CalendarDays, Mail, Plus, RefreshCw, SlidersHorizontal, Sun, Users, Wallet } from "lucide-react";
 import { useData } from "@/lib/data";
 import { useInbox } from "@/lib/inbox";
+import { businessNow } from "@/lib/dates";
+import { isoDate } from "@/lib/format";
 import { getSyncState, retryPendingMutation, subscribeSync, syncNow } from "@/lib/sync";
 import { checkAccess, isPwa } from "@/lib/access";
 import { cn } from "@/lib/utils";
@@ -24,7 +26,7 @@ const side = [
 ];
 
 export function Layout() {
-  const { openNewEntry } = useData();
+  const { openNewAppointment, openNewEntry } = useData();
   const { requests, payments, mail } = useInbox();
   const webApp = isPwa();
   // Today counts appointments needing her; unread email has its own badge on Mail.
@@ -77,7 +79,10 @@ export function Layout() {
       </main>
       {webApp && <nav className="pwa-tabs" aria-label="Main">
         {main.slice(0, 2).map(tab(badge, describe))}
-        <button type="button" className="pwa-tab-new" aria-label="New" onClick={() => openNewEntry()}><span><Plus size={24} aria-hidden /></span></button>
+        <button type="button" className="pwa-tab-new" aria-label="New"
+          onClick={() => openNewAppointment({ date: isoDate(businessNow()), start_time: "09:00", fromEntry: true })}>
+          <span><Plus size={24} aria-hidden /></span>
+        </button>
         {main.slice(2).map(tab(badge, describe))}
       </nav>}
     </div>

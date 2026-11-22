@@ -168,8 +168,17 @@ try {
   await page.getByRole("heading", { name: "Mail", exact: true }).waitFor();
   await fits("mail");
   await nav.getByRole("button", { name: "New", exact: true }).click();
+  const booking = page.getByRole("dialog", { name: "New appointment", exact: true });
+  await booking.waitFor();
+  assert.equal(await booking.getByRole("button", { name: "Booking", exact: true }).getAttribute("aria-pressed"), "true");
+  await booking.getByRole("button", { name: /^Today/, pressed: true }).waitFor();
+  await fits("new-booking");
+  await booking.getByRole("button", { name: "Money out", exact: true }).click();
   const entry = page.getByRole("dialog", { name: "New", exact: true });
-  await entry.getByRole("button", { name: "Money in", exact: true }).click();
+  await entry.getByRole("button", { name: "Record expense" }).waitFor();
+  await entry.getByRole("button", { name: "Cancel" }).click();
+  await nav.getByRole("button", { name: "New", exact: true }).click();
+  await booking.getByRole("button", { name: "Money in", exact: true }).click();
   await page.screenshot({ path: resolve(output, "new-iphone.png") });
   await entry.getByLabel(/^Amount/).fill("23.50");
   await entry.getByRole("button", { name: "Record income" }).click();
