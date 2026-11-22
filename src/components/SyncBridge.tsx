@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useData } from "@/lib/data";
-import { getSyncState, syncNow } from "@/lib/sync";
+import { getSyncState, subscribeSync, syncNow } from "@/lib/sync";
 import { useAccess } from "./AccessGate";
 
 export function SyncBridge() {
@@ -8,15 +8,18 @@ export function SyncBridge() {
   const { state } = useAccess();
   useEffect(() => {
     if (state !== "online") return;
-    let alive = true;
     let running = false;
+    let previous = getSyncState();
+    const unsubscribe = subscribeSync(next => {
+      if (next.state !== "synced") return;
+      if (next.cursor !== previous.cursor || next.last_full_sync_at !== previous.last_full_sync_at) refresh();
+      previous = next;
+    });
     const pull = async () => {
       if (running || document.visibilityState !== "visible") return;
       running = true;
-      const cursor = getSyncState().cursor;
       try {
-        const next = await syncNow();
-        if (alive && (cursor == null || next.cursor !== cursor)) refresh();
+        await syncNow();
       } catch { /* The connection status shows background failures. */ }
       finally { running = false; }
     };
@@ -27,7 +30,7 @@ export function SyncBridge() {
     window.addEventListener("online", foreground);
     document.addEventListener("visibilitychange", foreground);
     return () => {
-      alive = false;
+      unsubscribe();
       clearInterval(timer);
       window.removeEventListener("focus", foreground);
       window.removeEventListener("online", foreground);

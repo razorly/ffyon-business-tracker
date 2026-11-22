@@ -70,7 +70,7 @@ function fixtureDatabase({ through = Infinity } = {}) {
   };
 }
 
-async function application(fixture, entry = "src/lib/db.ts") {
+async function application(fixture, entry = "src/lib/db.ts", configureDb) {
   assert.equal(typeof vm.SourceTextModule, "function", "Run with node --experimental-vm-modules --test tests/features-integration.mjs");
   const context = vm.createContext({
     console, crypto: webcrypto, TextEncoder, TextDecoder, URL, setTimeout, clearTimeout, setInterval, clearInterval,
@@ -133,6 +133,7 @@ async function application(fixture, entry = "src/lib/db.ts") {
   const module = await load(path.join(root, entry));
   await module.link(linker);
   await module.evaluate();
+  if (configureDb) configureDb((await load(path.join(root, "src/lib/db.ts"))).namespace);
   return module.namespace;
 }
 
@@ -149,6 +150,84 @@ function sharedRecords() {
 function snapshot({ clients = [], appointments = [], services = [], cursor = 1 } = {}) {
   return { snapshot: { clients, appointments, services, blocks: [], settings: { booking_enabled: true, timezone: "Europe/London", slot_minutes: 30, horizon_days: 90, opening_hours: [], revision: 1 }, cursor }, changes: [], cursor, has_more: false };
 }
+
+test("periodic full sync restores a booking behind the cursor and preserves local data", async () => {
+  const fixture = fixtureDatabase();
+  try {
+    const { client, appointment, service } = sharedRecords();
+    const existing = { ...appointment, id: "00000000-0000-4000-8000-000000000302" };
+    const sync = await application(fixture, "src/lib/sync.ts");
+    await sync.applySyncResponse(snapshot({ clients: [client], appointments: [existing], services: [service], cursor: 7 }));
+    fixture.execute("UPDATE sync_state SET value=? WHERE key='last-full-sync'", [now]);
+    const [{ id: clientLocalId }] = fixture.select("SELECT id FROM clients");
+    fixture.execute("INSERT INTO transactions(id,type,date,amount_pence,client_id) VALUES (201,'income',?,2200,?)", [existing.date, clientLocalId]);
+    fixture.execute("UPDATE appointments SET notes='Private appointment note', transaction_id=201 WHERE remote_id=?", [existing.id]);
+    const queries = [];
+    fixture.adminRequest = ({ query }) => {
+      queries.push(normalize(query ?? null));
+      return query
+        ? { snapshot: null, changes: [], cursor: 7, has_more: false }
+        : snapshot({ clients: [client], appointments: [appointment, existing], services: [service], cursor: 7 });
+    };
+
+    const repaired = await sync.syncNow();
+    assert.equal(repaired.cursor, 7);
+    assert.ok(repaired.last_full_sync_at);
+    assert.deepEqual(fixture.select("SELECT date,status FROM appointments WHERE remote_id=?", [appointment.id]), [{ date: appointment.date, status: "confirmed" }]);
+    assert.deepEqual(fixture.select("SELECT notes,transaction_id FROM appointments WHERE remote_id=?", [existing.id]), [{ notes: "Private appointment note", transaction_id: 201 }]);
+    assert.deepEqual(fixture.select("SELECT amount_pence FROM transactions"), [{ amount_pence: 2200 }]);
+    await sync.syncNow();
+    assert.deepEqual(queries, [null, { cursor: "7", limit: "250" }]);
+  } finally { fixture.close(); }
+});
+
+test("a calendar conflict refreshes the original booking without resubmitting the rejected write", async () => {
+  const fixture = fixtureDatabase();
+  try {
+    const { client, appointment, service } = sharedRecords();
+    const sync = await application(fixture, "src/lib/sync.ts");
+    await sync.applySyncResponse(snapshot({ clients: [client], services: [service], cursor: 7 }));
+    const calls = [];
+    fixture.adminRequest = ({ operation, method, query }) => {
+      calls.push({ operation, method, query: normalize(query ?? null) });
+      if (operation === "appointments") throw "409: This time overlaps another appointment or time off. Choose another time.";
+      return snapshot({ clients: [client], appointments: [appointment], services: [service], cursor: 7 });
+    };
+
+    await assert.rejects(sync.mutateAndSync("appointments", "POST", { id: "duplicate" }), /overlaps another appointment/);
+    assert.deepEqual(calls, [{ operation: "appointments", method: "POST", query: null }, { operation: "sync", method: "GET", query: null }]);
+    assert.deepEqual(fixture.select("SELECT remote_id AS id FROM appointments"), [{ id: appointment.id }]);
+    assert.deepEqual(fixture.select("SELECT value FROM sync_state WHERE key='mutation-pending'"), []);
+  } finally { fixture.close(); }
+});
+
+test("an in-flight sync keeps the response with the database that supplied its cursor", async () => {
+  const device = fixtureDatabase();
+  const shared = fixtureDatabase();
+  try {
+    const { client, appointment, service } = sharedRecords();
+    const seed = await application(shared, "src/lib/sync.ts");
+    await seed.applySyncResponse(snapshot({ clients: [client], services: [service], cursor: 6 }));
+    let activateShared;
+    const sync = await application(device, "src/lib/sync.ts", db => {
+      activateShared = () => db.setSharedDatabase(async () => shared.db);
+    });
+    await sync.applySyncResponse(snapshot({ clients: [client], appointments: [appointment], services: [service], cursor: 7 }));
+    device.adminRequest = ({ query }) => {
+      assert.equal(query.cursor, "7");
+      activateShared();
+      return { snapshot: null, changes: [], cursor: 7, has_more: false };
+    };
+    await sync.syncNow();
+    assert.deepEqual(shared.select("SELECT value FROM sync_state WHERE key='cursor'"), [{ value: "6" }]);
+    device.adminRequest = ({ query }) => {
+      assert.equal(query.cursor, "6");
+      return { snapshot: null, changes: [{ sequence: 7, entity: "appointment", id: appointment.id, record: appointment }], cursor: 7, has_more: false };
+    };
+    await sync.syncNow();
+    assert.deepEqual(shared.select("SELECT remote_id AS id FROM appointments"), [{ id: appointment.id }]);
+  } finally { device.close(); shared.close(); }
+});
 
 test("feature schema upgrades preserve pre-feature quotes and payment links", () => {
   const fixture = fixtureDatabase({ through: 6 });

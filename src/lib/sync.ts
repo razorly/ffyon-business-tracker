@@ -13,12 +13,13 @@ export interface CloudSnapshot { clients: CloudClient[]; appointments: CloudAppo
 export interface CloudChange { sequence: number; entity: "client" | "appointment" | "service" | "block" | "settings"; id: string; record: CloudClient | CloudAppointment | CloudService | CloudBlock | BusinessSettings | null }
 export interface NotificationStatus { configured: boolean; pending: number; failed: number }
 export interface SyncResponse { snapshot: CloudSnapshot | null; changes: CloudChange[]; cursor: number; has_more: boolean; notifications?: NotificationStatus }
-export interface SyncState { state: "idle" | "syncing" | "synced" | "error"; last_synced_at: string | null; error: string | null; cursor: number | null; notifications: NotificationStatus | null }
+export interface SyncState { state: "idle" | "syncing" | "synced" | "error"; last_synced_at: string | null; last_full_sync_at: string | null; error: string | null; cursor: number | null; notifications: NotificationStatus | null }
 export interface ImportPreview { clients: ClientWithStats[]; appointments: AppointmentRow[]; services: CloudService[] }
 export interface ImportSelection { clientIds: number[]; appointmentIds: number[] }
 
-let state: SyncState = { state: "idle", last_synced_at: null, error: null, cursor: null, notifications: null };
-let running: Promise<SyncState> | null = null;
+const fullSyncInterval = 15 * 60_000;
+let state: SyncState = { state: "idle", last_synced_at: null, last_full_sync_at: null, error: null, cursor: null, notifications: null };
+let running: { task: Promise<SyncState>; full: boolean } | null = null;
 let mutationQueue: Promise<unknown> = Promise.resolve();
 let mirrorQueue: Promise<void> = Promise.resolve();
 const listeners = new Set<(state: SyncState) => void>();
@@ -35,37 +36,48 @@ export async function adminRequest<T = unknown>(operation: string, method: strin
   catch (error) { throw error instanceof Error ? error : new Error(String(error)); }
 }
 
-export function syncNow(): Promise<SyncState> {
-  if (running) return running;
-  running = (async () => {
+export function syncNow({ full = false }: { full?: boolean } = {}): Promise<SyncState> {
+  if (running) {
+    if (!full || running.full) return running.task;
+    return running.task.catch(() => {}).then(() => syncNow({ full: true }));
+  }
+  const task = (async () => {
     publish({ state: "syncing", error: null });
     try {
       await requireOnlineAccess();
+      // Keep the cursor and the applied page in the same database if joining
+      // the shared ledger switches the active database during the request.
       const db = await getDb();
-      const [stored] = await db.select<{ value: string }[]>("SELECT value FROM sync_state WHERE key = 'cursor'");
-      let cursor = stored ? Number(stored.value) : null;
-      if (cursor != null && (!Number.isSafeInteger(cursor) || cursor < 0)) cursor = null;
       for (;;) {
+        const [stored] = await db.select<{ value: string }[]>("SELECT value FROM sync_state WHERE key = 'cursor'");
+        const [lastFull] = await db.select<{ value: string }[]>("SELECT value FROM sync_state WHERE key = 'last-full-sync'");
+        const savedCursor = stored ? Number(stored.value) : NaN;
+        const elapsed = Date.now() - Date.parse(lastFull?.value ?? "");
+        const needsSnapshot = full || !Number.isSafeInteger(savedCursor) || savedCursor < 0 || !(elapsed >= 0 && elapsed < fullSyncInterval);
+        const cursor = needsSnapshot ? null : savedCursor;
         const response = await adminRequest<SyncResponse>("sync", "GET", undefined, cursor == null ? undefined : { cursor: String(cursor), limit: "250" });
-        await applySyncResponse(response);
+        if (cursor == null && (!response.snapshot || response.has_more)) throw new Error("The site did not return a complete snapshot.");
+        if (response.has_more && cursor != null && response.cursor <= cursor) throw new Error("The site returned a sync cursor that did not advance.");
+        const fullSyncAt = response.snapshot ? new Date().toISOString() : null;
+        await queueSyncResponse(response, [], { db, cursor, fullSyncAt });
         publish({ notifications: notificationStatus(response.notifications) });
-        if (response.has_more && (cursor != null && response.cursor <= cursor)) throw new Error("The site returned a sync cursor that did not advance.");
-        cursor = response.cursor;
-        if (!response.has_more) break;
+        if (!response.has_more) {
+          publish({ state: "synced", cursor: response.cursor, last_synced_at: new Date().toISOString(), last_full_sync_at: fullSyncAt ?? lastFull?.value ?? null, error: null });
+          return state;
+        }
       }
-      publish({ state: "synced", cursor, last_synced_at: new Date().toISOString(), error: null });
-      return state;
     } catch (error) {
       publish({ state: "error", error: error instanceof Error ? error.message : String(error) });
       throw error;
     } finally { running = null; }
   })();
-  return running;
+  running = { task, full };
+  return task;
 }
 
 /** A request already in flight may have read the site before this write committed. */
 async function syncAfterWrite(): Promise<SyncState> {
-  const active = running;
+  const active = running?.task;
   if (active) await active.catch(() => {});
   return syncNow();
 }
@@ -243,18 +255,28 @@ async function deletionState(db: Awaited<ReturnType<typeof getDb>>, response: Sy
 }
 
 export function applySyncResponse(response: SyncResponse, prefixStatements: Statement[] = []): Promise<void> {
-  const task = mirrorQueue.then(() => applySyncResponseNow(response, prefixStatements));
+  return queueSyncResponse(response, prefixStatements);
+}
+
+interface SyncRequest { db: Awaited<ReturnType<typeof getDb>>; cursor: number | null; fullSyncAt: string | null }
+
+function queueSyncResponse(response: SyncResponse, prefixStatements: Statement[], request?: SyncRequest): Promise<void> {
+  const task = mirrorQueue.then(() => applySyncResponseNow(response, prefixStatements, request));
   mirrorQueue = task.catch(() => {});
   return task;
 }
 
-async function applySyncResponseNow(response: SyncResponse, prefixStatements: Statement[]) {
+async function applySyncResponseNow(response: SyncResponse, prefixStatements: Statement[], request?: SyncRequest) {
   if (!Number.isSafeInteger(response.cursor) || response.cursor < 0 || !Array.isArray(response.changes)) throw new Error("Invalid site sync response.");
   if (response.snapshot && (!Array.isArray(response.snapshot.clients) || !Array.isArray(response.snapshot.appointments) || !Array.isArray(response.snapshot.services) || !Array.isArray(response.snapshot.blocks) || !response.snapshot.settings)) throw new Error("Invalid site snapshot.");
-  const db = await getDb();
+  const db = request?.db ?? await getDb();
   const [stored] = await db.select<{ value: string }[]>("SELECT value FROM sync_state WHERE key='cursor'");
   const previous = stored ? Number(stored.value) : 0;
+  if (request?.cursor != null && request.cursor !== previous) throw new Error("The schedule changed while syncing. Try again.");
   if (response.cursor < previous) throw new Error("The site returned an older sync cursor.");
+  if (request?.cursor != null && !response.snapshot && response.cursor !== (response.changes[response.changes.length - 1]?.sequence ?? request.cursor)) {
+    throw new Error("The site returned a sync cursor beyond the changes received.");
+  }
   if (!response.snapshot && response.changes.length === 0 && response.cursor === previous && prefixStatements.length === 0) {
     await db.batch(syncMetadata(response));
     return;
@@ -295,6 +317,10 @@ async function applySyncResponseNow(response: SyncResponse, prefixStatements: St
   }
   statements.push(...deleted.statements, linkedPaymentServices());
   statements.push(...syncMetadata(response));
+  if (response.snapshot) statements.push({
+    sql: "INSERT INTO sync_state(key,value) VALUES ('last-full-sync',$1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+    params: [request?.fullSyncAt ?? new Date().toISOString()],
+  });
   await db.batch(statements);
 }
 
@@ -374,7 +400,11 @@ export function mutateAndSync(operation: string, method: string, body: Record<st
       const response = await adminRequest<{ client?: CloudClient; aliases?: Record<string, string> }>(pending.operation, pending.method, pending.body);
       if (pending.operation === "clients/link" && response.aliases && response.client) await applyClientAliases(response.client, response.aliases);
     } catch (error) {
-      if (/^4\d\d:/.test(String(error instanceof Error ? error.message : error))) await clearPending().catch(() => {});
+      const message = error instanceof Error ? error.message : String(error);
+      if (/^4\d\d:/.test(message)) await clearPending().catch(() => {});
+      if (/^409:.*\btime overlaps another appointment or time off\b/i.test(message)) {
+        await syncNow({ full: true }).catch(() => {});
+      }
       throw error;
     }
     await syncAfterWrite();

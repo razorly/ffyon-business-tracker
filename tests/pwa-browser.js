@@ -211,12 +211,14 @@ try {
   const desktop = ledgerFixture();
   const seed = ledgerFixture();
   const date = backup.transactions[0].date;
+  const missingBooking = { ...matchingBooking, id: randomUUID(), start_time: "20:30", notes: "" };
   desktop.exec(`INSERT INTO clients(id,name,remote_id,notes,cloud_revision) VALUES
       (122,'PWA Test Client','${customer.id}','Desktop private note',1),
       (123,'Another Client','${otherCustomer.id}',NULL,1);
     INSERT INTO transactions(type,date,amount_pence,description,created_at) VALUES ('expense','${date}',7590,'Desktop-only expense','${date} 06:00:00');
     INSERT INTO appointments(date,start_time,duration_min,remote_id,client_id,status,cloud_revision,customer_notes,notes) VALUES
-      ('${matchingBooking.date}','19:00',30,'${matchingBooking.id}',123,'confirmed',1,'Customer booking text','Shared appointment note');`);
+      ('${matchingBooking.date}','19:00',30,'${matchingBooking.id}',123,'confirmed',1,'Customer booking text','Shared appointment note');
+    INSERT INTO sync_state VALUES ('cursor','1');`);
   await seedLedger(seed, desktop, desktopId);
   const ledgerUrl = `${origin}/api/ledger`;
   const seeded = await context.request.put(ledgerUrl, {
@@ -225,6 +227,7 @@ try {
   assert.equal(seeded.status(), 200);
   desktop.close();
   seed.close();
+  siteAppointments.push(missingBooking);
   ledgerAvailable = true;
 
   const desktopExpense = page.getByRole("row").filter({ hasText: "Desktop-only expense" });
@@ -322,9 +325,10 @@ try {
   const reviewedSnapshot = await (await context.request.get(ledgerUrl, { headers: desktopHeaders })).json();
   const reviewed = ledgerFixture(Buffer.from(reviewedSnapshot.content, "base64"));
   assert.equal(reviewed.select("SELECT notes FROM clients WHERE id=123")[0].notes, "Newer note from desktop\n\nEarlier note for missing booking");
-  assert.deepEqual(reviewed.select("SELECT notes,customer_notes FROM appointments"), [{
+  assert.deepEqual(reviewed.select("SELECT notes,customer_notes FROM appointments WHERE remote_id=$1", [matchingBooking.id]), [{
     notes: "Shared appointment note\n\nEarlier appointment note", customer_notes: "Customer booking text",
   }]);
+  assert.deepEqual(reviewed.select("SELECT start_time, transaction_id FROM appointments WHERE remote_id=$1", [missingBooking.id]), [{ start_time: "20:30", transaction_id: null }]);
   const phoneId = [...devicesById.keys()].find(id => id !== desktopId);
   assert.deepEqual(JSON.parse(reviewed.select("SELECT review FROM ledger_imports WHERE device_id=$1", [phoneId])[0].review), {
     entries: [], clients: [], appointments: [],
@@ -346,7 +350,7 @@ try {
   await nav.waitFor({ state: "hidden" });
   await reopened.close();
   assert.deepEqual(errors, []);
-  console.log("WebKit passed pairing, push, Mail, backup restore, finance and note sync, appointment-note review and conflicts, and revocation.");
+  console.log("WebKit passed pairing, push, Mail, backup restore, missed booking recovery, finance and note sync, appointment-note review and conflicts, and revocation.");
 } finally {
   await browser.close();
   server.close();
