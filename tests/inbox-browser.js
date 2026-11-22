@@ -109,50 +109,67 @@ async function inboxFlows(browser, width, output) {
     fixture.execute(`INSERT INTO appointments
       (id,remote_id,client_id,date,start_time,duration_min,price_pence,status,transaction_id,service_id,service_name)
       VALUES (201,?,101,?,'10:00',45,2200,'confirmed',201,?,?)`, [appointments[10].id, yesterday, service.id, service.name]);
+    // The To do page is gone: every old bookmark lands on Today, where "Needs you" holds the same work.
     const legacyUrl = new URL(url);
-    legacyUrl.hash = "/requests";
-    await page.goto(legacyUrl.href, { waitUntil: "networkidle" });
-    await page.getByRole("heading", { name: "To do", exact: true }).waitFor();
-    assert.equal(new URL(page.url()).hash, "#/todo", "Old Requests bookmarks must redirect to To do");
-    legacyUrl.hash = "/inbox";
-    await page.goto(legacyUrl.href, { waitUntil: "networkidle" });
-    await page.getByRole("heading", { name: "To do", exact: true }).waitFor();
-    assert.equal(new URL(page.url()).hash, "#/todo", "Old Inbox bookmarks must redirect to To do");
-    await page.locator('nav a[title="To do"]').click();
-    await page.getByRole("heading", { name: "To do", exact: true }).waitFor();
-    const requests = page.locator('section[aria-labelledby="requests-heading"]');
-    const payments = page.locator('section[aria-labelledby="payments-heading"]');
+    for (const [bookmark, label] of [["/requests", "Requests"], ["/inbox", "Inbox"], ["/todo", "To do"]]) {
+      legacyUrl.hash = bookmark;
+      await page.goto(legacyUrl.href, { waitUntil: "networkidle" });
+      await page.getByRole("region", { name: /^Needs you/ }).waitFor();
+      assert.equal(new URL(page.url()).hash, "#/", `Old ${label} bookmarks must redirect to Today`);
+    }
+    await page.locator('nav a[title="Today"]').click();
+    const needsYou = page.getByRole("region", { name: /^Needs you/ });
+    await needsYou.getByRole("heading", { name: /^Needs you/ }).waitFor();
+    const requestRows = needsYou.locator("li").filter({ has: page.getByRole("button", { name: /^(Decline|Keep time)$/ }) });
+    const paymentRows = needsYou.locator('li[data-testid^="payment-confirmation-"]');
     await until(page, () => fixture.select("SELECT COUNT(*) AS n FROM appointments")[0].n === appointments.length);
     const localIds = appointments.map(appointment => fixture.select("SELECT id FROM appointments WHERE remote_id=?", [appointment.id])[0].id);
     const paymentRow = (index) => page.getByTestId(`payment-confirmation-${localIds[index]}`);
+    const amountBox = (index) => paymentRow(index).getByRole("textbox", { name: `Amount received for ${clients[index].name}`, exact: true });
     await paymentRow(0).waitFor();
     await paymentRow(1).waitFor();
     await paymentRow(2).waitFor();
-    await requests.getByRole("button", { name: clients[3].name, exact: true }).waitFor();
-    await until(page, async () => await payments.locator('li[data-testid^="payment-confirmation-"]').count() === 3);
-    assert.equal(await requests.locator("li").count(), 1, "Website decisions stay separate from local payment confirmations");
+    await requestRows.getByRole("button", { name: clients[3].name, exact: true }).waitFor();
+    await until(page, async () => await paymentRows.count() === 3);
+    assert.equal(await requestRows.count(), 1, "Website decisions stay separate from local payment confirmations");
+    assert.equal(await needsYou.locator("li").count(), 4, "Needs you lists exactly the request and the three payments");
+    assert.equal(await requestRows.getByText("Booking request", { exact: true }).count(), 1);
+    assert.equal(await requestRows.getByRole("button", { name: "Accept", exact: true }).count(), 1);
+    assert.equal(await requestRows.getByRole("button", { name: /^(Paid|Confirm paid|Other amount)/ }).count(), 0, "A website request offers no payment controls");
+    assert.equal(await paymentRows.getByRole("button", { name: /^(Accept|Decline|Approve|Keep time)/ }).count(), 0, "A payment confirmation offers no website decision");
+    assert.equal(await paymentRows.getByText("Payment due", { exact: true }).count(), 3);
     assert.equal(await page.getByTestId("todo-badge").innerText(), "4");
-    assert.match(await page.locator('nav a[title="To do"]').getAttribute("aria-label"), /4 appointments needing attention/);
+    assert.match(await page.locator('nav a[title="Today"]').getAttribute("aria-label"), /^Today, 4 things need you$/);
+    assert.match(await page.getByRole("heading", { level: 1 }).locator("xpath=following-sibling::p").innerText(), /4 things need you/);
     for (let index = 3; index < clients.length; index++) assert.equal(await paymentRow(index).count(), 0, `${clients[index].name} must not appear in payment confirmations`);
-    assert.equal(await paymentRow(1).getByText(/Date only/).count(), 1, "Past confirmed date-only booking remains eligible");
-    assert.equal(await paymentRow(0).getByRole("textbox").inputValue(), "22.00");
-    assert.equal(await paymentRow(2).getByRole("textbox").inputValue(), "");
+    // A date-only booking is listed by its day alone; a timed one keeps its time.
+    assert.match(await paymentRow(0).locator("p").innerText(), /, 10am$/);
+    assert.doesNotMatch(await paymentRow(1).locator("p").innerText(), /\d(am|pm)/, "Past confirmed date-only booking remains eligible");
+    // An agreed price is one tap; the amount box holds that price once "Other amount" is asked for.
+    assert.equal(await paymentRow(0).getByRole("button", { name: "Paid £22.00", exact: true }).count(), 1);
+    assert.equal(await paymentRow(1).getByRole("button", { name: "Paid £18.00", exact: true }).count(), 1);
+    assert.equal(await amountBox(0).count(), 0);
+    assert.match(await paymentRow(2).locator("p").innerText(), /no agreed price$/);
+    assert.equal(await paymentRow(2).getByRole("button", { name: /^(Paid|Other amount)/ }).count(), 0, "Without an agreed price there is nothing to confirm in one tap");
+    assert.equal(await amountBox(2).inputValue(), "");
     assert.equal(await paymentRow(2).getByRole("button", { name: "Confirm paid", exact: true }).isDisabled(), true);
     await capture(page, output, `inbox-sections-${width}.png`);
-    await payments.getByRole("heading", { name: /^Payments to confirm/ }).scrollIntoViewIfNeeded();
+    await paymentRow(0).scrollIntoViewIfNeeded();
     await capture(page, output, `inbox-payment-confirmations-${width}.png`);
 
     await until(page, () => notifications().length === 1);
     assert.deepEqual(notifications()[0].args, { count: 3 }, "Desktop reminders contain only a count, not customer names or details");
     await repeatSync(page);
     await page.reload({ waitUntil: "networkidle" });
-    await page.getByRole("heading", { name: "To do", exact: true }).waitFor();
+    await needsYou.getByRole("heading", { name: /^Needs you/ }).waitFor();
     await paymentRow(0).waitFor();
     await repeatSync(page);
     await page.waitForTimeout(300);
     assert.equal(notifications().length, 1, "Repeated synchronization and restart must not repeat a delivered reminder");
 
-    await paymentRow(0).getByRole("textbox").fill("17.50");
+    await paymentRow(0).getByRole("button", { name: "Other amount", exact: true }).click();
+    assert.equal(await amountBox(0).inputValue(), "22.00");
+    await amountBox(0).fill("17.50");
     await paymentRow(0).scrollIntoViewIfNeeded();
     await capture(page, output, `inbox-actual-payment-${width}.png`);
     await paymentRow(0).locator("form").evaluate(form => { form.requestSubmit(); form.requestSubmit(); });
@@ -164,12 +181,12 @@ async function inboxFlows(browser, width, output) {
     assert.equal(paid.status, "confirmed");
     assert.deepEqual(fixture.select("SELECT amount_pence,service_id,service_name FROM transactions WHERE id=?", [paid.transaction_id])[0], { amount_pence: 1750, service_id: service.id, service_name: service.name });
     assert.equal(fixture.select("SELECT COUNT(*) AS n FROM transactions WHERE client_id=(SELECT client_id FROM appointments WHERE id=?)", [localIds[0]])[0].n, 1, "Two rapid UI submissions must create only one payment");
-    assert.equal(await requests.getByRole("button", { name: clients[3].name, exact: true }).count(), 1);
+    assert.equal(await requestRows.getByRole("button", { name: clients[3].name, exact: true }).count(), 1);
     assert.equal(records.appointments[3].status, "pending");
 
-    await paymentRow(2).getByRole("textbox").fill("0");
+    await amountBox(2).fill("0");
     assert.equal(await paymentRow(2).getByRole("button", { name: "Confirm paid", exact: true }).isDisabled(), true);
-    await paymentRow(2).getByRole("textbox").fill("18.50");
+    await amountBox(2).fill("18.50");
     await paymentRow(2).getByRole("button", { name: "Confirm paid", exact: true }).click();
     await paymentRow(2).waitFor({ state: "hidden" });
     await until(page, async () => await page.getByTestId("todo-badge").innerText() === "2");
@@ -178,9 +195,8 @@ async function inboxFlows(browser, width, output) {
     assert.equal(fixture.select("SELECT amount_pence FROM transactions WHERE id=?", [unknownPaid.transaction_id])[0].amount_pence, 1850);
     assert.equal(fixture.mutations.length, 0, "Quick payment confirmation must never mutate shared bookings, requests or email settings");
 
-    await page.locator('nav a[title="Settings"]').click();
-    await page.getByRole("button", { name: "This computer", exact: true }).click();
-    const reminders = page.getByRole("checkbox", { name: "Desktop payment reminders", exact: true });
+    await openDeviceSettings(page);
+    const reminders = page.getByRole("checkbox", { name: /^Desktop payment reminders/ });
     await reminders.waitFor();
     assert.equal(await reminders.isChecked(), true);
     await reminders.uncheck();
@@ -189,16 +205,16 @@ async function inboxFlows(browser, width, output) {
     await capture(page, output, `inbox-reminders-disabled-${width}.png`);
     Object.assign(records.appointments[8], { date: yesterday, revision: 2 });
     await repeatSync(page);
-    await page.locator('nav a[title="To do"]').click();
+    await page.locator('nav a[title="Today"]').click();
     await paymentRow(8).waitFor();
     await until(page, async () => await page.getByTestId("todo-badge").innerText() === "3");
-    assert.equal(notifications().length, 1, "Disabled desktop reminders leave the Inbox badge and payment section active");
+    assert.equal(notifications().length, 1, "Disabled desktop reminders leave the Today badge and payments to confirm active");
     await page.reload({ waitUntil: "networkidle" });
     await paymentRow(8).waitFor();
     await repeatSync(page);
     await page.waitForTimeout(300);
     assert.equal(notifications().length, 1, "Disabled desktop preference persists across restart");
-    await page.locator('nav a[title="Settings"]').click();
+    await openDeviceSettings(page);
     await reminders.waitFor();
     assert.equal(await reminders.isChecked(), false);
     await reminders.check();
@@ -214,16 +230,42 @@ async function inboxFlows(browser, width, output) {
     assert.equal(notifications().length, 2);
     assert.equal(fixture.mutations.length, 0, "Desktop reminder preferences and local payments must never upload financial data or send customer emails");
     assert.equal(fixture.select("SELECT COUNT(*) AS n FROM transactions")[0].n, 3);
+
+    // The same unpaid appointments are listed on Money; there the agreed price is confirmed in one tap.
+    await page.locator('nav a[title="Money"]').click();
+    const collect = page.getByRole("region", { name: "Still to collect", exact: true });
+    await collect.getByRole("heading", { name: "Still to collect", exact: true }).waitFor();
+    await until(page, async () => await collect.locator('li[data-testid^="payment-confirmation-"]').count() === 2);
+    assert.equal(await collect.getByTestId(`payment-confirmation-${localIds[1]}`).count(), 1);
+    assert.equal(await collect.getByTestId(`payment-confirmation-${localIds[8]}`).count(), 1);
+    assert.equal(await collect.getByText("£40.00", { exact: true }).count(), 1, "Still to collect totals the agreed prices");
+    await collect.scrollIntoViewIfNeeded();
+    await capture(page, output, `inbox-still-to-collect-${width}.png`);
+    await paymentRow(8).getByRole("button", { name: "Paid £22.00", exact: true }).click();
+    await paymentRow(8).waitFor({ state: "hidden" });
+    await until(page, async () => await page.getByTestId("todo-badge").innerText() === "2");
+    const tapped = fixture.select("SELECT transaction_id,price_pence FROM appointments WHERE id=?", [localIds[8]])[0];
+    assert.equal(tapped.price_pence, 2200);
+    assert.deepEqual(fixture.select("SELECT amount_pence,service_id,service_name FROM transactions WHERE id=?", [tapped.transaction_id])[0], { amount_pence: 2200, service_id: service.id, service_name: service.name });
+    assert.equal(fixture.select("SELECT COUNT(*) AS n FROM transactions")[0].n, 4);
+    assert.equal(await collect.getByTestId(`payment-confirmation-${localIds[1]}`).count(), 1);
+    assert.equal(fixture.mutations.length, 0, "Confirming the agreed price must never mutate shared bookings");
     assert.deepEqual(fixture.select("PRAGMA foreign_key_check"), []);
     assert.deepEqual(pageErrors, []);
     return {
-      viewport, legacyRequestsRouteRedirectsToInbox: true, separateRequestsAndCompletedPayments: true, excludesUnconfirmedCancelledRejectedNoShowPaidFreeAndFuture: true,
+      viewport, legacyBookmarksRedirectToToday: true, separateRequestsAndCompletedPayments: true, excludesUnconfirmedCancelledRejectedNoShowPaidFreeAndFuture: true,
       confirmedDateOnlyWaitsUntilFollowingDay: true, badgeIncludesRequestsAndPayments: true,
       actualAmountAndExactlyOnceQuickPayment: true, unknownPriceRequiresAmount: true,
       countOnlyNotificationsDeduplicatedAcrossSyncAndRestart: true, desktopPreferencePersistsAndKeepsInboxActive: true,
-      noSharedPaymentMutationsOrCustomerEmails: true,
+      moneyListsTheSamePaymentsAndConfirmsTheAgreedPriceInOneTap: true, noSharedPaymentMutationsOrCustomerEmails: true,
     };
   } finally { await page.close(); fixture.close(); }
+}
+
+// Settings opens on its list of sections on a phone and on the last section otherwise; either way the link is there.
+async function openDeviceSettings(page) {
+  await page.locator('nav a[title="Settings"]').click();
+  await page.getByRole("navigation", { name: "Settings sections", exact: true }).getByRole("link", { name: /^This computer/ }).click();
 }
 
 async function repeatSync(page) {

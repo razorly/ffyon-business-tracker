@@ -7,7 +7,7 @@
 
 - Production runs at [ffyon.home](https://ffyon.home/) in the `ffyon` namespace on the home k3s cluster, with Traefik and the home CA. Use the `install-k3s-home-app` skill for cluster access when available and follow the build, bundle and deploy instructions in [docs/ios-pwa.md](docs/ios-pwa.md). The deployment script uses an immutable bundle ConfigMap and waits for rollout and TLS readiness. Keep the archive below the ConfigMap limit and outside `pwa/dist/`.
 - Preserve the `ffyon-ledger` NAS claim and `ffyon-session` Secret across updates. They hold encrypted ledger and push state and the key material needed to open it. The desktop accepts the home endpoint through the bundled public CA certificate. Keep credentials and private keys out of source and deployment artifacts.
-- Approve the phone using the existing device pairing flow. iPhone Web Push requires a Home Screen installation and user opt-in. The server checks To do and Mail even while the app is closed. Push payloads contain counts and app links. A WebKit fixture can verify opt-in and fallback handling. Apple delivery needs a subscribed physical device.
+- Approve the phone using the existing device pairing flow. iPhone Web Push requires a Home Screen installation and user opt-in. The server checks Today's booking requests and payments, and Mail, even while the app is closed. Push payloads contain counts and app links. A WebKit fixture can verify opt-in and fallback handling. Apple delivery needs a subscribed physical device.
 
 ## Business data
 

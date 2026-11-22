@@ -20,7 +20,7 @@ Open **Clients**, select a client, and choose **Add notes** or **Edit notes** in
 
 Open the Home Screen app on iOS 16.4 or later. Go to **Settings → This device → Push notifications**, tap **Enable push notifications** and allow the iPhone prompt.
 
-The cluster checks for new booking requests, payments to confirm and unread mail about once a minute, even while the app is closed. Alerts show counts and link to **To do** or **Mail**. Payment alerts start when the shared ledger is available. The current queues stay visible in the app when you first enable alerts. Enable notifications separately on each iPhone.
+The cluster checks for new booking requests, payments to confirm and unread mail about once a minute, even while the app is closed. Alerts show counts and link to **Today** or **Mail**. Payment alerts start when the shared ledger is available. The current queues stay visible in the app when you first enable alerts. Enable notifications separately on each iPhone.
 
 ## Deployment
 

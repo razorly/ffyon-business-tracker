@@ -1,39 +1,54 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { differenceInCalendarDays, differenceInMonths, format, parseISO, subWeeks } from "date-fns";
 import { toast } from "sonner";
-import { ArrowLeft, CalendarPlus, Check, Link2, MapPin, Pencil, Plus, Search, ShieldCheck, ShieldOff, Trash2, UserRound, Users } from "lucide-react";
-import {
-  createClient,
-  deleteClient,
-  listClients,
-  listAppointments,
-  listTransactions,
-  saveClientNotes,
-  upcomingForClient,
-  updateClient,
-  type ClientWithStats,
-} from "@/lib/db";
-import { isPwa } from "@/lib/access";
+import { ChevronDown, Link2, Plus, Search, Trash2, UserRound, Users } from "lucide-react";
+import { createClient, deleteClient, listAppointments, listClients, updateClient, type ClientWithStats } from "@/lib/db";
 import { useData, useLoad } from "@/lib/data";
 import { linkClientAccount } from "@/lib/sync";
 import { useAccess } from "@/components/AccessGate";
-import { isoDate, money, shortDate, timeLabel, ukDate } from "@/lib/format";
+import { isoDate, money } from "@/lib/format";
 import { useBusinessNow } from "@/lib/dates";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/Layout";
-import { Button, Card, ConfirmModal, EmptyState, Field, Input, LoadError, Modal, Select, Textarea } from "@/components/ui";
-import { TransactionList } from "@/components/TransactionList";
+import { ClientProfile } from "@/components/ClientProfile";
+import { Actions, Avatar, Button, Card, Chip, ConfirmModal, EmptyState, ErrorText, Field, Input, ListRow, LoadError, Loading, Modal, Select, Textarea } from "@/components/ui";
 
 type SortKey = "name" | "total" | "recent";
-const STATUS: Record<string, string> = { pending: "Request", confirmed: "Confirmed", rejected: "Rejected", cancelled: "Cancelled", no_show: "No-show" };
+type Filter = "all" | "due";
+/** A client is due a visit when her last one was longer ago than this and nothing is booked. */
+const DUE_WEEKS = 6;
+
+const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
+
+/** "3 Oct", or "3 Oct 2025" when it was not this year: the short date Mail already uses, so a row stays on one line. */
+const briefDate = (iso: string, today: string) => format(parseISO(iso), iso.slice(0, 4) === today.slice(0, 4) ? "d MMM" : "d MMM yyyy");
+
+/** "5 days ago", "9 weeks ago", "4 months ago". */
+function since(date: string, today: string) {
+  const from = parseISO(date), to = parseISO(today);
+  const days = differenceInCalendarDays(to, from);
+  if (days < 1) return "today";
+  if (days < 14) return days === 1 ? "yesterday" : `${days} days ago`;
+  const months = differenceInMonths(to, from);
+  if (months < 3) return `${Math.floor(days / 7)} weeks ago`;
+  return months < 12 ? `${months} months ago` : "over a year ago";
+}
 
 export function Clients() {
   const access = useAccess();
-  const { refresh, openNewEntry, openNewAppointment, openEditAppointment } = useData();
+  const online = access.state === "online";
+  const { refresh } = useData();
   const today = isoDate(useBusinessNow());
+  const [params, setParams] = useSearchParams();
   const [clients, clientsLoading, clientsLoadError] = useLoad(listClients, [], []);
+  // Who already has something in the diary from today on. Null until it has loaded, so nobody is called due by mistake.
+  const [booked, , bookedError] = useLoad<Set<number> | null>(async () => new Set(
+    (await listAppointments({ from: today })).filter(row => (row.status === "confirmed" || row.status === "pending") && row.client_id != null).map(row => row.client_id!),
+  ), [today], null);
   const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<Filter>("all");
   const [sort, setSort] = useState<SortKey>("recent");
-  const [selectedId, setSelectedId] = useState<number | null>(null);
   const [editing, setEditing] = useState<Partial<ClientWithStats> | null>(null);
   const [toDelete, setToDelete] = useState<ClientWithStats | null>(null);
   const [toDisable, setToDisable] = useState<ClientWithStats | null>(null);
@@ -44,229 +59,125 @@ export function Clients() {
   const [linkBusy, setLinkBusy] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
   const [clientError, setClientError] = useState<string | null>(null);
-  const webApp = isPwa();
   const profileHeading = useRef<HTMLHeadingElement>(null);
   const clientList = useRef<HTMLDivElement>(null);
+
+  // The open client lives in the address (/clients?client=12), so Mail and other pages can link straight to her.
+  const linked = Number(params.get("client"));
+  const selectedId = Number.isSafeInteger(linked) && linked > 0 ? linked : null;
+  const select = (id: number | null) => setParams(id == null ? {} : { client: String(id) }, { replace: true });
+  const selected = clients.find(c => c.id === selectedId) ?? null;
+
+  const dueCutoff = isoDate(subWeeks(parseISO(today), DUE_WEEKS));
+  const isDue = (c: ClientWithStats) => !c.disabled && c.visits > 0 && !!c.last_visit && c.last_visit < dueCutoff && booked != null && !booked.has(c.id);
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
     return clients
-      .filter((c) => !q || c.name.toLowerCase().includes(q) || c.phone?.includes(q) || c.email?.toLowerCase().includes(q))
+      .filter(c => !q || c.name.toLowerCase().includes(q) || c.phone?.includes(q) || c.email?.toLowerCase().includes(q))
+      .filter(c => filter === "all" || isDue(c))
       .sort((a, b) =>
-        sort === "name"
-          ? a.name.localeCompare(b.name)
-          : sort === "total"
-            ? b.total_pence - a.total_pence
-            : (b.last_visit ?? "").localeCompare(a.last_visit ?? ""),
-      );
-  }, [clients, search, sort]);
+        sort === "name" ? a.name.localeCompare(b.name)
+          : sort === "total" ? b.total_pence - a.total_pence
+            : (b.last_visit ?? "").localeCompare(a.last_visit ?? ""));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clients, search, sort, filter, booked, dueCutoff]);
 
-  const selected = clients.find((c) => c.id === selectedId) ?? null;
+  // Under 1024px the profile takes the place of the list, so move focus with it.
   const profileId = selected?.id;
   useEffect(() => {
-    if (profileId !== undefined && webApp && matchMedia("(max-width: 63.999rem)").matches) {
+    if (profileId !== undefined && matchMedia("(max-width: 63.999rem)").matches) {
       profileHeading.current?.focus({ preventScroll: true });
       profileHeading.current?.scrollIntoView({ block: "center" });
     }
-  }, [profileId, webApp]);
+  }, [profileId]);
   const backToClients = () => {
-    setSelectedId(null);
+    select(null);
     requestAnimationFrame(() => clientList.current?.focus());
   };
-  const [history, , historyError] = useLoad(
-    () => (selectedId ? listTransactions({ clientId: selectedId }) : Promise.resolve([])),
-    [selectedId],
-    [],
-  );
-  const [upcoming, , upcomingError] = useLoad(
-    () => (selectedId ? upcomingForClient(selectedId, today) : Promise.resolve([])),
-    [selectedId, today],
-    [],
-  );
-  const [appointments, , appointmentsError] = useLoad(() => selectedId ? listAppointments({ clientId: selectedId }) : Promise.resolve([]), [selectedId], []);
-  // Upcoming requests and confirmed bookings are listed above; history is everything past or called off.
-  const pastAppointments = appointments.filter((a) => a.date < today || (a.status !== "confirmed" && a.status !== "pending")).sort((a, b) => b.date.localeCompare(a.date) || b.start_time.localeCompare(a.start_time)).slice(0, 12);
+
+  const enable = async (client: ClientWithStats) => {
+    setClientError(null);
+    try { await updateClient({ ...client, disabled: 0 }); refresh(); toast.success("Client re-enabled"); }
+    catch (e) { setClientError(e instanceof Error ? e.message : "Could not re-enable the client"); }
+  };
 
   const totalRevenue = clients.reduce((s, c) => s + c.total_pence, 0);
+  const dueLoading = filter === "due" && booked == null && !bookedError;
 
   return (
     <>
-      <PageHeader title="Clients" subtitle={`${clients.length} clients · ${money(totalRevenue)} lifetime income`}>
-        <Button variant="primary" disabled={access.state !== "online"} onClick={() => setEditing({ name: "", email: "", phone: "", notes: "" })}>
-          <Plus size={15} /> Add client
+      <PageHeader title="Clients" subtitle={`${plural(clients.length, "client")} · ${money(totalRevenue)} lifetime income`}>
+        <Button variant="primary" disabled={!online} onClick={() => setEditing({ name: "", email: "", phone: "", notes: "" })}>
+          <Plus size={16} aria-hidden /> Add client
         </Button>
       </PageHeader>
-      <LoadError error={clientsLoadError || historyError || upcomingError || appointmentsError} onRetry={refresh} />
-      {clientsLoading && <p role="status" className="mb-3 text-sm text-muted">Loading clients…</p>}
-      {clientError && <p role="alert" className="mb-4 text-sm text-bad">{clientError}</p>}
+      <LoadError error={clientsLoadError || bookedError} onRetry={refresh} />
+      {clientError && <ErrorText className="mb-4">{clientError}</ErrorText>}
 
-      <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-5">
-        <Card className={cn("min-w-0 lg:col-span-3", webApp && selected && "hidden lg:block")}>
-          <div className="flex flex-wrap items-center justify-between gap-3 px-5 pt-4 pb-3">
-            <div className="relative w-full min-w-0 sm:w-60">
-              <Search size={15} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
-              <Input aria-label="Search clients" className="w-full rounded-full pl-8" placeholder="Search clients" value={search} onChange={(e) => setSearch(e.target.value)} />
+      <div className="grid min-w-0 grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+        <Card className={cn("overflow-hidden", selected && "hidden lg:block")}>
+          <div className="flex flex-col gap-3 px-5 pb-3 pt-4">
+            <div className="relative min-w-0">
+              <Search size={18} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-2" aria-hidden />
+              <Input aria-label="Search clients" className="pl-10" placeholder="Search clients" value={search} onChange={e => setSearch(e.target.value)} />
             </div>
-            <div className="flex flex-wrap items-center gap-1 text-[13px] text-muted">
-              Sort
-              {(["recent", "total", "name"] as SortKey[]).map((k) => (
-                <button
-                  key={k}
-                  aria-pressed={sort === k}
-                  onClick={() => setSort(k)}
-                  className={cn(
-                    "rounded-full px-2.5 py-1 font-medium cursor-pointer",
-                    sort === k ? "bg-accent-soft text-ink" : "hover:text-ink",
-                  )}
-                >
-                  {k === "recent" ? "Recent" : k === "total" ? "Top spend" : "A–Z"}
-                </button>
-              ))}
+            <div className="flex flex-wrap items-center gap-2">
+              <Chip selected={filter === "all"} onClick={() => setFilter("all")}>All</Chip>
+              <Chip selected={filter === "due"} disabled={!!bookedError && filter !== "due"} onClick={() => setFilter("due")}>Due a visit</Chip>
+              <Select aria-label="Sort clients" className="ml-auto w-auto border-transparent text-small text-ink-2 read-only:bg-transparent hover:text-ink" value={sort} onChange={e => setSort(e.target.value as SortKey)}>
+                <option value="recent">Recent</option>
+                <option value="total">Top spend</option>
+                <option value="name">A to Z</option>
+              </Select>
             </div>
+            {filter === "due" && <p className="text-small text-ink-2">Clients whose last visit was more than {DUE_WEEKS} weeks ago, with nothing booked.</p>}
           </div>
 
-          {visible.length === 0 ? (
-            <EmptyState icon={<Users size={20} />} title={clients.length ? "No matches" : "No clients yet"}>
-              {clients.length ? "Try another search." : "Clients appear when they book online or when you book them in. You can also add one here."}
-            </EmptyState>
-          ) : (
-            <div ref={clientList} className="max-w-full overflow-x-auto" role="region" aria-label="Client list" tabIndex={0}>
-            <table className="w-full min-w-[480px] text-[13.5px]">
-              <thead>
-                <tr className="eyebrow border-y border-line bg-surface-2/60 text-left text-ink-2">
-                  <th className="py-2 pl-5 pr-3 font-medium">Client</th>
-                  <th className="px-3 py-2 text-right font-medium">Visits</th>
-                  <th className="px-3 py-2 text-right font-medium">Spent</th>
-                  <th className="py-2 pl-3 pr-5 text-right font-medium">Last visit</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-line">
-                {visible.map((c) => (
-                  <tr
-                    key={c.id}
-                    onClick={() => setSelectedId(c.id)}
-                    className={cn("cursor-pointer hover:bg-surface-2/50", selectedId === c.id && "bg-accent-soft hover:bg-accent-soft")}
-                  >
-                    <td className="py-2.5 pl-5 pr-3">
-                      <div className="flex items-center gap-2.5">
-                        <Avatar name={c.name} />
-                        <div>
-                          <div className="font-medium"><button type="button" aria-pressed={selectedId === c.id} onClick={() => setSelectedId(c.id)} className="text-left hover:underline">{c.name}</button>{!!c.disabled && <span className="ml-2 text-xs font-normal text-muted">Disabled</span>}</div>
-                          {c.phone && <div className="text-[12px] text-muted">{c.phone}</div>}
-                        </div>
-                      </div>
-                    </td>
-                    <td className="tabular px-3 py-2.5 text-right">{c.visits}</td>
-                    <td className="tabular px-3 py-2.5 text-right font-semibold">{money(c.total_pence)}</td>
-                    <td className="tabular py-2.5 pl-3 pr-5 text-right text-ink-2">
-                      {c.last_visit ? ukDate(c.last_visit) : "—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            </div>
-          )}
-          <div className="h-2" />
-        </Card>
-
-        <Card className={cn("min-w-0 self-start lg:col-span-2", webApp && !selected && "hidden lg:block")}>
-          {selected ? (
-            <>
-              {webApp && <div className="px-5 pt-4 lg:hidden">
-                <Button variant="ghost" size="sm" onClick={backToClients}><ArrowLeft size={15} /> All clients</Button>
-              </div>}
-              <div className="flex flex-wrap items-start justify-between gap-3 px-5 pt-5">
-                <div className="flex min-w-0 basis-full items-center gap-3 sm:basis-0 sm:flex-1">
-                  <Avatar name={selected.name} large />
-                  <div className="min-w-0">
-                    <h2 ref={profileHeading} tabIndex={-1} className="break-words font-display text-[24px] leading-tight">{selected.name}</h2>
-                    <div className="break-words text-[13px] text-muted">{selected.phone || "No phone number"}</div>
-                    {selected.email && <div className="mt-1 break-all text-[13px] text-muted">{selected.email}</div>}
-                    <div className="mt-1 text-xs text-muted">{selected.account_id ? "Website account linked" : "No website account"}{selected.disabled ? " · disabled" : ""}</div>
-                  </div>
-                </div>
-                <div className="ml-auto flex shrink-0 gap-0.5">
-                  <Button variant="ghost" size="icon" onClick={() => setEditing(selected)} aria-label="Edit client">
-                    <Pencil size={14} />
-                  </Button>
-                  <Button variant="ghost" size="icon" disabled={access.state !== "online" || !selected.remote_id || !!selected.disabled} onClick={() => setToDisable(selected)} title={selected.remote_id ? "Disable client" : "Import this client before managing website access"} aria-label="Disable client">
-                    <ShieldOff size={14} />
-                  </Button>
-                  <Button variant="ghost" size="icon" disabled={access.state !== "online"} onClick={() => { setDeleteError(""); setToDelete(selected); }} title={selected.account_id ? "Delete account" : "Delete client"} aria-label={selected.account_id ? "Delete account" : "Delete client"}><Trash2 size={14} /></Button>
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-2 px-5 pt-3">
-                {selected.disabled ? <Button size="sm" disabled={access.state !== "online"} onClick={async () => { try { await updateClient({ ...selected, disabled: 0 }); refresh(); toast.success("Client re-enabled"); } catch (e) { setClientError(e instanceof Error ? e.message : "Could not re-enable the client"); } }}><ShieldCheck size={14} /> Re-enable</Button> : null}
-                {!selected.account_id && selected.remote_id && <Button size="sm" disabled={access.state !== "online"} onClick={() => { setLinking(true); setAccountId(""); setLinkError(null); }}><Link2 size={14} /> Link website account</Button>}
-              </div>
-              <ClientNotes key={selected.id} client={selected} onSaved={refresh} />
-              {selected.saved_address && selected.saved_postcode && <p className="mx-5 mt-3 whitespace-pre-line break-words text-[13px] text-ink-2"><MapPin size={13} className="mr-1 inline" />{selected.saved_address}<span className="block text-xs text-muted">{selected.saved_postcode}</span></p>}
-              <div className="grid grid-cols-1 gap-2 px-5 pt-4 sm:grid-cols-3">
-                <MiniStat label="Visits" value={String(selected.visits)} />
-                <MiniStat label="Total spent" value={money(selected.total_pence)} />
-                <MiniStat label="Average" value={selected.visits ? money(Math.round(selected.total_pence / selected.visits)) : "—"} />
-              </div>
-              <div className="flex flex-wrap items-center justify-between gap-2 px-5 pt-5 pb-2">
-                <span className="eyebrow text-ink-2">Upcoming</span>
-                <Button
-                  size="sm"
-                  disabled={access.state !== "online" || !!selected.disabled}
-                  onClick={() =>
-                    openNewAppointment({ date: today, start_time: "09:00", clientId: selected.id })
-                  }
-                >
-                  <CalendarPlus size={14} /> Book
-                </Button>
-              </div>
-              {upcoming.length ? (
+          {clientsLoading && clients.length === 0 ? <Loading label="Loading clients" />
+            : dueLoading ? <Loading label="Checking the diary" />
+            : visible.length === 0 ? (
+              <EmptyState icon={<Users size={20} aria-hidden />} title={!clients.length ? "No clients yet" : filter === "due" && !search.trim() ? "No one is due a visit" : "No matches"}>
+                {!clients.length ? "Clients appear when they book online or when you book them in. You can also add one here."
+                  : filter === "due" && !search.trim() ? bookedError ? "The diary couldn't be checked. Retry above." : "Everyone has been in lately or is already booked."
+                  : "Try another search."}
+              </EmptyState>
+            ) : (
+              <div ref={clientList} role="region" aria-label="Client list" tabIndex={-1} className="border-t border-line outline-none lg:max-h-[70vh] lg:overflow-y-auto">
                 <ul className="divide-y divide-line">
-                  {upcoming.map((a) => (
-                    <li key={a.id}>
-                      <button
-                        onClick={() => openEditAppointment(a)}
-                        className="flex w-full items-center gap-3 px-5 py-2 text-left text-[13px] hover:bg-surface-2/60 cursor-pointer"
-                      >
-                        <span className="min-w-0 flex-1">
-                          <span className="font-medium">{shortDate(a.date)}</span>
-                          <span className="text-muted"> · {a.time_confirmed === 0 ? "Time to confirm" : timeLabel(a.start_time)}</span>
-                          {(a.service_name || a.category_name) && <span className="block text-[12px] text-muted">{a.service_name || a.category_name}</span>}
-                        </span>
-                        {a.transaction_id != null && <Check size={13} strokeWidth={3} className="shrink-0 text-good" />}
-                        {a.price_pence != null && <span className="tabular shrink-0">{money(a.price_pence)}</span>}
-                      </button>
+                  {visible.map(c => (
+                    <li key={c.id}>
+                      <ListRow className="focus-visible:outline-offset-[-2px]!" onClick={() => select(c.id)} selected={selectedId === c.id} aria-label={c.name} aria-describedby={`client-${c.id}-about client-${c.id}-spent`}
+                        leading={<Avatar name={c.name} />}
+                        title={<><span>{c.name}</span>{!!c.disabled && <span className="ml-2 text-small font-normal text-ink-2">Disabled</span>}</>}
+                        subtitle={<span id={`client-${c.id}-about`}>{c.visits > 0 && c.last_visit
+                          ? `Last visit ${filter === "due" ? since(c.last_visit, today) : briefDate(c.last_visit, today)} · ${plural(c.visits, "visit")}`
+                          : c.phone || "No visits yet"}</span>}
+                        trailing={<span id={`client-${c.id}-spent`} className="tabular shrink-0 font-semibold">{money(c.total_pence)}</span>} />
                     </li>
                   ))}
                 </ul>
-              ) : (
-                <p className="px-5 text-[13px] text-muted">Nothing booked.</p>
-              )}
-
-              <div className="eyebrow px-5 pt-5 pb-2 text-ink-2">Appointment history</div>
-              {pastAppointments.length ? <ul className="max-h-[300px] divide-y divide-line overflow-y-auto">
-                {pastAppointments.map((a) => <li key={a.id}><button onClick={() => openEditAppointment(a)} className="flex w-full flex-wrap items-center justify-between gap-2 px-5 py-2 text-left text-[13px] hover:bg-surface-2 cursor-pointer"><span>{shortDate(a.date)} · {a.time_confirmed === 0 ? "Time to confirm" : timeLabel(a.start_time)}<span className="block text-xs text-muted">{a.service_name || a.category_name || "Appointment"}{a.is_remote ? " · home visit" : ""}</span></span><span className="text-xs text-muted">{STATUS[a.status]}{a.transaction_id != null ? " · paid" : ""}</span></button></li>)}
-              </ul> : <p className="px-5 text-[13px] text-muted">No appointment history yet.</p>}
-
-              <div className="flex flex-wrap items-center justify-between gap-2 px-5 pt-5 pb-2">
-                <span className="eyebrow text-ink-2">Payments</span>
-                <Button size="sm" onClick={() => openNewEntry("income", selected.id)}>
-                  <Plus size={14} /> Record income
-                </Button>
               </div>
-              {history.length ? (
-                <div className="max-h-[420px] overflow-y-auto pb-2">
-                  <TransactionList rows={history} />
-                </div>
-              ) : (
-                <p className="px-5 pb-5 text-[13px] text-muted">No payments recorded yet.</p>
-              )}
-            </>
-          ) : (
-            <EmptyState icon={<UserRound size={20} />} title="Select a client">
-              See their bookings, payments and totals.
-            </EmptyState>
-          )}
+            )}
         </Card>
+
+        <div className={cn("min-w-0", !selected && "hidden lg:block")}>
+          {selected ? (
+            <ClientProfile key={selected.id} client={selected} today={today} online={online} headingRef={profileHeading}
+              onBack={backToClients}
+              onEdit={() => setEditing(selected)}
+              onLink={() => { setLinking(true); setAccountId(""); setLinkError(null); }}
+              onDisable={() => { setClientError(null); setToDisable(selected); }}
+              onEnable={() => void enable(selected)}
+              onDelete={() => { setDeleteError(""); setToDelete(selected); }} />
+          ) : (
+            <Card>
+              <EmptyState icon={<UserRound size={20} aria-hidden />} title="Select a client">
+                See their notes, bookings and payments.
+              </EmptyState>
+            </Card>
+          )}
+        </div>
       </div>
 
       <ClientForm
@@ -274,7 +185,7 @@ export function Clients() {
         onClose={() => setEditing(null)}
         onSaved={(id) => {
           refresh();
-          setSelectedId(id);
+          select(id);
         }}
       />
 
@@ -285,7 +196,7 @@ export function Clients() {
         confirmLabel="Disable"
         message={
           <>
-            <b>{toDisable?.name}</b> will lose website access. Appointments and financial history are preserved. Existing bookings are not cancelled.
+            <span className="font-semibold text-ink">{toDisable?.name}</span> will lose website access. Appointments and financial history are preserved. Existing bookings are not cancelled.
           </>
         }
         onConfirm={async () => {
@@ -298,69 +209,28 @@ export function Clients() {
         }}
       />
       <Modal open={!!toDelete} onClose={() => { if (!deleteBusy) setToDelete(null); }} title={toDelete?.account_id ? "Delete account?" : "Delete client?"} width="max-w-sm">
-        <p className="break-words text-sm text-ink-2"><b>{toDelete?.name}</b>{toDelete?.account_id ? "'s website account, contact details, notes and all appointments" : "'s contact details, notes and all appointments"} will be permanently removed. Recorded payments stay in financial history without client or booking details. This cannot be undone.</p>
-        {deleteError && <p role="alert" className="mt-3 text-sm text-bad">{deleteError}</p>}
-        <div className="mt-5 flex flex-wrap justify-end gap-2"><Button disabled={deleteBusy} onClick={() => setToDelete(null)}>Keep client</Button><Button variant="danger" disabled={deleteBusy || access.state !== "online"} onClick={async () => { if (!toDelete) return; setDeleteBusy(true); setDeleteError(""); try { await deleteClient(toDelete.id); setSelectedId(null); setToDelete(null); refresh(); toast.success("Client removed. Payments retained."); } catch (cause) { setDeleteError(cause instanceof Error ? cause.message : "Could not delete the client"); } finally { setDeleteBusy(false); } }}><Trash2 size={14} />{deleteBusy ? "Deleting..." : toDelete?.account_id ? "Delete account" : "Delete client"}</Button></div>
+        <p className="break-words text-ink-2"><span className="font-semibold text-ink">{toDelete?.name}</span>{toDelete?.account_id ? "'s website account, contact details, notes and all appointments" : "'s contact details, notes and all appointments"} will be permanently removed. Recorded payments stay in financial history without client or booking details. This cannot be undone.</p>
+        {deleteError && <ErrorText className="mt-3">{deleteError}</ErrorText>}
+        <Actions className="mt-5">
+          <Button disabled={deleteBusy} onClick={() => setToDelete(null)}>Keep client</Button>
+          <Button variant="danger" disabled={deleteBusy || !online} onClick={async () => { if (!toDelete) return; setDeleteBusy(true); setDeleteError(""); try { await deleteClient(toDelete.id); select(null); setToDelete(null); refresh(); toast.success("Client removed. Payments retained."); } catch (cause) { setDeleteError(cause instanceof Error ? cause.message : "Could not delete the client"); } finally { setDeleteBusy(false); } }}>
+            <Trash2 size={16} aria-hidden />{deleteBusy ? "Deleting…" : toDelete?.account_id ? "Delete account" : "Delete client"}
+          </Button>
+        </Actions>
       </Modal>
       <Modal open={linking && !!selected} onClose={() => { if (!linkBusy) setLinking(false); }} title="Link website account">
         <form className="space-y-4" onSubmit={async (e) => { e.preventDefault(); if (!selected || !accountId || linkBusy) return; setLinkBusy(true); setLinkError(null); try { await linkClientAccount(selected.id, accountId); refresh(); setLinking(false); toast.success("Website account linked"); } catch (cause) { setLinkError(cause instanceof Error ? cause.message : "Could not link the account"); } finally { setLinkBusy(false); } }}>
-          <p className="text-sm text-ink-2">Choose the existing website account belonging to {selected?.name}. Booking history is preserved.</p>
+          <p className="text-ink-2">Choose the existing website account belonging to {selected?.name}. Booking history is preserved.</p>
           <Field label="Website account"><Select disabled={linkBusy} value={accountId} onChange={(e) => setAccountId(e.target.value)}><option value="">Select an account</option>{clients.filter((c) => c.account_id && c.id !== selected?.id).map((c) => <option key={c.id} value={c.account_id!}>{c.name}{c.email ? ` · ${c.email}` : ""}</option>)}</Select></Field>
-          {linkError && <p role="alert" className="text-sm text-bad">{linkError}</p>}
-          <div className="flex justify-end gap-2"><Button type="button" disabled={linkBusy} onClick={() => setLinking(false)}>Cancel</Button><Button type="submit" variant="primary" disabled={linkBusy || !accountId || access.state !== "online"}><Link2 size={14} /> Link account</Button></div>
+          {linkError && <ErrorText>{linkError}</ErrorText>}
+          <Actions>
+            <Button disabled={linkBusy} onClick={() => setLinking(false)}>Cancel</Button>
+            <Button type="submit" variant="primary" disabled={linkBusy || !accountId || !online}><Link2 size={16} aria-hidden /> Link account</Button>
+          </Actions>
         </form>
       </Modal>
     </>
   );
-}
-
-function ClientNotes({ client, onSaved }: { client: ClientWithStats; onSaved: () => void }) {
-  const [draft, setDraft] = useState<{ original: string | null; text: string } | null>(null);
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const startEditing = () => {
-    setError("");
-    setDraft({ original: client.notes, text: client.notes ?? "" });
-  };
-  return <section className="mx-5 mt-4 rounded-xl border border-line bg-surface-2 px-3 py-3">
-    <div className="flex flex-wrap items-center justify-between gap-2">
-      <h3 className="font-display text-[19px] leading-tight">Client notes</h3>
-      <Button size="sm" onClick={startEditing}>
-        {client.notes ? <Pencil size={14} /> : <Plus size={14} />}
-        {client.notes ? "Edit notes" : "Add notes"}
-      </Button>
-    </div>
-    <p className={cn("mt-2 whitespace-pre-wrap break-words select-text text-sm", client.notes ? "text-ink-2" : "text-muted")}>
-      {client.notes || "No notes yet."}
-    </p>
-    <Modal open={!!draft} title="Client notes" onClose={() => { if (!busy) setDraft(null); }}>
-      <form className="space-y-4" onSubmit={async event => {
-        event.preventDefault();
-        if (!draft || busy) return;
-        setError("");
-        setBusy(true);
-        try {
-          await saveClientNotes(client.id, draft.text, draft.original);
-          onSaved();
-          setDraft(null);
-          toast.success(draft.text.trim() ? "Client notes saved" : "Client notes cleared");
-        } catch (cause) {
-          setError(cause instanceof Error ? cause.message : "Could not save client notes.");
-        } finally { setBusy(false); }
-      }}>
-        <p className="break-words text-sm text-ink-2">{client.name}</p>
-        <Field label="Private client notes">
-          <Textarea autoFocus rows={6} value={draft?.text ?? ""} disabled={busy}
-            onChange={event => setDraft(current => current && { ...current, text: event.target.value })} />
-        </Field>
-        {error && <p role="alert" className="text-sm text-bad">{error}</p>}
-        <div className="flex flex-wrap justify-end gap-2">
-          <Button disabled={busy} onClick={() => setDraft(null)}>Cancel</Button>
-          <Button variant="primary" type="submit" disabled={busy || (draft?.original ?? "") === draft?.text}>Save notes</Button>
-        </div>
-      </form>
-    </Modal>
-  </section>;
 }
 
 function ClientForm({
@@ -373,12 +243,14 @@ function ClientForm({
   onSaved: (id: number) => void;
 }) {
   const access = useAccess();
+  const offline = access.state !== "online";
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [notes, setNotes] = useState("");
   const [savedAddress, setSavedAddress] = useState("");
   const [savedPostcode, setSavedPostcode] = useState("");
+  const [more, setMore] = useState(false);
   const [lastClient, setLastClient] = useState<typeof client>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -392,13 +264,15 @@ function ClientForm({
     setNotes(client?.notes ?? "");
     setSavedAddress(client?.saved_address ?? "");
     setSavedPostcode(client?.saved_postcode ?? "");
+    // The home-visit address is tucked away unless she already has one.
+    setMore(Boolean(client?.saved_address || client?.saved_postcode));
     setError(null);
   }
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
-    if (Boolean(savedAddress.trim()) !== Boolean(savedPostcode.trim())) { setError("Enter both a saved address and postcode, or leave both blank."); return; }
+    if (Boolean(savedAddress.trim()) !== Boolean(savedPostcode.trim())) { setMore(true); setError("Enter both a saved address and postcode, or leave both blank."); return; }
     setBusy(true); setError(null);
     try {
       let id = client?.id;
@@ -413,57 +287,32 @@ function ClientForm({
 
   return (
     <Modal open={!!client} onClose={() => { if (!busy) onClose(); }} title={client?.id ? "Edit client" : "Add client"}>
-      <form onSubmit={submit}><fieldset disabled={busy} className="space-y-4">
+      <form onSubmit={submit}><fieldset disabled={busy} className="min-w-0 space-y-4">
         <Field label="Name">
-          <Input autoFocus required maxLength={200} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Sarah Jones" disabled={access.state !== "online"} />
+          <Input autoFocus required maxLength={200} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Sarah Jones" disabled={offline} />
         </Field>
-        <Field label="Email (optional)"><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={access.state !== "online"} /></Field>
         <Field label="Phone (optional)">
-          <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="07…" disabled={access.state !== "online"} />
+          <Input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="07…" disabled={offline} />
         </Field>
-        {!client?.id && <Field label="Private client notes (optional)">
+        <Field label="Email (optional)"><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={offline} /></Field>
+        {!client?.id && <Field label="Private client notes (optional)" hint="Only you see these notes.">
           <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Preferred shade, skin notes, allergies…" />
         </Field>}
-        <Field label="Saved visit address (optional)"><Textarea maxLength={500} autoComplete="street-address" value={savedAddress} onChange={(event) => setSavedAddress(event.target.value)} disabled={access.state !== "online"} /></Field>
-        <Field label="Saved postcode (optional)"><Input maxLength={12} autoComplete="postal-code" value={savedPostcode} onChange={(event) => setSavedPostcode(event.target.value.toUpperCase())} disabled={access.state !== "online"} /></Field>
-        {error && <p role="alert" className="text-sm text-bad">{error}</p>}
-        <div className="flex justify-end gap-2 pt-1">
-          <Button type="button" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" disabled={busy || !name.trim()}>
-            Save
+        <div>
+          <Button variant="ghost" size="sm" className="-ml-3" aria-expanded={more} onClick={() => setMore(value => !value)}>
+            <ChevronDown size={16} className={cn("transition-transform", more && "rotate-180")} aria-hidden /> More options
           </Button>
         </div>
+        {more && <>
+          <Field label="Saved visit address (optional)" hint="Used for home visits."><Textarea maxLength={500} autoComplete="street-address" value={savedAddress} onChange={(event) => setSavedAddress(event.target.value)} disabled={offline} /></Field>
+          <Field label="Saved postcode (optional)"><Input maxLength={12} autoComplete="postal-code" value={savedPostcode} onChange={(event) => setSavedPostcode(event.target.value.toUpperCase())} disabled={offline} /></Field>
+        </>}
+        {error && <ErrorText>{error}</ErrorText>}
+        <Actions>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button type="submit" variant="primary" disabled={busy || !name.trim()}>Save</Button>
+        </Actions>
       </fieldset></form>
     </Modal>
-  );
-}
-
-function Avatar({ name, large }: { name: string; large?: boolean }) {
-  const initials = name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((p) => p[0]!.toUpperCase())
-    .join("");
-  return (
-    <span
-      className={cn(
-        "flex shrink-0 items-center justify-center rounded-full bg-accent-soft font-display text-ink",
-        large ? "h-12 w-12 text-[18px]" : "h-8 w-8 text-[13px]",
-      )}
-    >
-      {initials || "?"}
-    </span>
-  );
-}
-
-function MiniStat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-xl bg-surface-2 px-3 py-2.5">
-      <div className="eyebrow text-[10px] text-ink-2">{label}</div>
-      <div className="mt-1 font-display text-[19px] leading-none">{value}</div>
-    </div>
   );
 }

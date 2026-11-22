@@ -1,6 +1,6 @@
 @import "tailwindcss";
 @import "@fontsource/dm-serif-display/latin-400.css";
-@import "@fontsource-variable/jost/wght.css";
+@import "@fontsource-variable/dm-sans/wght.css";
 
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
@@ -9,22 +9,26 @@
   color-scheme: light;
   --page: #faf7f4;
   --surface: #fff;
-  --surface-2: #f7e8e1;
-  --ink: #42291f;
-  --ink-2: #68574f;
-  --muted: #78645b;
-  --border: #e4d9d2;
-  --grid: #e4d9d2;
+  --surface-2: #f6e9e2;
+  --ink: #3b251c;
+  --ink-2: #6b574e;
+  --muted: #6b574e;
+  --border: #eadfd8;
+  --border-strong: #d9c9bf;
+  --grid: #eadfd8;
   --axis: #cbb8ac;
+  /* Decoration only (the logo heart, the now line). Rose text uses --rose-ink. */
   --rose: #b66d63;
+  --rose-ink: #a4574d;
 
   --accent: #42291f;
-  --accent-hover: #654032;
+  --accent-hover: #5a3a2d;
   --accent-ink: #fff;
-  --accent-soft: #f4dfd5;
+  --accent-soft: #f6e9e2;
 
   --good: #2c7a3a;
   --bad: #b3261e;
+  --bad-ink: #fff;
 
   /* Chart series — brand palette, validated for colour-blind separation (light) */
   --series-income: #9c4a2a;
@@ -39,11 +43,13 @@
   --surface-2: #36231b;
   --ink: #f8e1d8;
   --ink-2: #d9b8aa;
-  --muted: #a88a7d;
-  --border: rgba(248, 225, 216, 0.1);
+  --muted: #d9b8aa;
+  --border: rgba(248, 225, 216, 0.14);
+  --border-strong: rgba(248, 225, 216, 0.28);
   --grid: #3a261d;
   --axis: #54392c;
   --rose: #e69b89;
+  --rose-ink: #eea69b;
 
   --accent: #eea69b;
   --accent-hover: #f4b8ae;
@@ -52,6 +58,7 @@
 
   --good: #5cc26a;
   --bad: #f07a70;
+  --bad-ink: #2a1a14;
 
   /* Chart series — brand palette (dark steps) */
   --series-income: #a9552f;
@@ -67,17 +74,42 @@
   --color-ink-2: var(--ink-2);
   --color-muted: var(--muted);
   --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
   --color-rose: var(--rose);
+  --color-rose-ink: var(--rose-ink);
   --color-accent: var(--accent);
   --color-accent-hover: var(--accent-hover);
   --color-accent-ink: var(--accent-ink);
   --color-accent-soft: var(--accent-soft);
   --color-good: var(--good);
   --color-bad: var(--bad);
+  --color-bad-ink: var(--bad-ink);
   --color-income: var(--series-income);
   --color-expense: var(--series-expense);
-  --font-sans: "Jost Variable", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-sans: "DM Sans Variable", system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* The serif is for the logo, page titles and dialog titles only. Never numbers or buttons. */
   --font-display: "DM Serif Display", Georgia, "Times New Roman", serif;
+}
+
+/*
+ * The whole type scale. Six sizes, nothing in between:
+ *   text-label 12/16 · text-small 14/20 · text-body 16/24
+ *   text-heading 20/28 · text-title 28/36 · text-figure 36/44
+ * Weights are 400, 500 and 600. Sentence case, no letter-spacing.
+ */
+@theme {
+  --text-label: 0.75rem;
+  --text-label--line-height: 1rem;
+  --text-small: 0.875rem;
+  --text-small--line-height: 1.25rem;
+  --text-body: 1rem;
+  --text-body--line-height: 1.5rem;
+  --text-heading: 1.25rem;
+  --text-heading--line-height: 1.75rem;
+  --text-title: 1.75rem;
+  --text-title--line-height: 2.25rem;
+  --text-figure: 2.25rem;
+  --text-figure--line-height: 2.75rem;
 }
 
 html,
@@ -91,76 +123,10 @@ body {
   background: var(--page);
   color: var(--ink);
   font-family: var(--font-sans);
-  font-size: 14.5px;
+  font-size: 1rem;
+  line-height: 1.5rem;
   -webkit-font-smoothing: antialiased;
   user-select: none;
-}
-
-.pwa-header, .pwa-tabs { display: none; }
-.pwa #root { height: 100dvh; overflow: hidden; }
-.pwa .pwa-locked {
-  padding: max(2rem, env(safe-area-inset-top)) max(1.5rem, env(safe-area-inset-right))
-    max(2rem, env(safe-area-inset-bottom)) max(1.5rem, env(safe-area-inset-left));
-}
-.pwa .modal-root {
-  padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right))
-    max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
-}
-@media (max-width: 639px), (orientation: landscape) and (max-height: 500px) {
-  .pwa .app-layout { flex-direction: column; }
-  .pwa .app-layout > main {
-    min-height: 0;
-    padding-inline: env(safe-area-inset-left) env(safe-area-inset-right);
-  }
-  .pwa .pwa-sidebar { display: none; }
-  .pwa .pwa-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: .75rem;
-    flex: none;
-    padding: calc(8px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
-      8px max(16px, env(safe-area-inset-left));
-    border-bottom: 1px solid var(--line);
-    background: var(--surface);
-  }
-  .pwa .pwa-tabs {
-    display: grid;
-    grid-template-columns: repeat(7, minmax(0, 1fr));
-    flex: none;
-    padding: 4px env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
-    border-top: 1px solid var(--line);
-    background: var(--surface);
-  }
-  .pwa-tabs a {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 2px;
-    min-height: 48px;
-    color: var(--ink-2);
-    font-size: 10px;
-    white-space: nowrap;
-    border-radius: .5rem;
-  }
-  .pwa-tabs a[aria-current="page"] {
-    background: var(--accent-soft);
-    color: var(--ink);
-    font-weight: 600;
-  }
-  .pwa-tab-badge {
-    position: absolute;
-    top: -5px;
-    left: 14px;
-    border-radius: 999px;
-    background: var(--accent);
-    color: var(--accent-ink);
-    padding: 0 3px;
-    font-size: 9px;
-  }
-  .pwa input:not([type="checkbox"], [type="radio"]), .pwa select, .pwa textarea { font-size: 16px; }
-  .pwa [data-sonner-toaster] { --mobile-offset-bottom: calc(64px + env(safe-area-inset-bottom)); }
 }
 
 input,
@@ -170,11 +136,19 @@ td {
   user-select: text;
 }
 
-button:focus-visible,
-a:focus-visible,
-[tabindex]:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+/* In the base layer so a component's own focus utilities (an inset ring, say) can override it. */
+@layer base {
+  button:focus-visible,
+  a:focus-visible,
+  [tabindex]:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+}
+
+/* Fingers need 44px even where a mouse gets a compact control. */
+@media (pointer: coarse) {
+  .btn-sm { min-height: 2.75rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -185,15 +159,24 @@ a:focus-visible,
   }
 }
 
+/* Money, times and counts line up in columns. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Brand logo: her wordmark, unchanged ---------- */
+
 .brand-logo {
   display: flex;
   flex-direction: column;
   align-items: center;
   flex-shrink: 0;
-  color: var(--ink);
+  color: var(--accent);
   font-family: var(--font-display);
   font-weight: 400;
 }
+
+:root[data-theme="dark"] .brand-logo { color: var(--ink); }
 
 .brand-logo > span {
   position: relative;
@@ -217,6 +200,108 @@ a:focus-visible,
   line-height: 1.2;
 }
 
+/* The same logo, scaled for the phone header and the narrow rail. */
+.brand-logo[data-size="small"] > span { margin-right: 8px; font-size: 1.5rem; }
+.brand-logo[data-size="small"] .brand-logo-heart { right: -12px; width: 10px; height: 10px; }
+.brand-logo[data-size="small"] small { margin-top: 0; font-size: 0.875rem; }
+
+/* ---------- Dialogs: centred on desktop, a sheet from the bottom on a phone ---------- */
+
+.modal-root { padding: 1rem; }
+.modal-panel { border-radius: 1rem; }
+
+@media (max-width: 639px) {
+  .modal-root { align-items: flex-end; padding: 0; padding-top: max(1.5rem, env(safe-area-inset-top)); }
+  .modal-panel {
+    max-width: none !important;
+    border-radius: 1.25rem 1.25rem 0 0;
+    border-bottom: 0;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+/* Dialogs open below the title bar so the window controls stay reachable. */
+body:has(.window-titlebar) .modal-root { top: 36px; }
+
+/* ---------- iPhone app shell ---------- */
+
+.pwa-header, .pwa-tabs { display: none; }
+.pwa #root { height: 100dvh; overflow: hidden; }
+.pwa .pwa-locked {
+  padding: max(2rem, env(safe-area-inset-top)) max(1.5rem, env(safe-area-inset-right))
+    max(2rem, env(safe-area-inset-bottom)) max(1.5rem, env(safe-area-inset-left));
+}
+@media (max-width: 639px), (orientation: landscape) and (max-height: 500px) {
+  .pwa .app-layout { flex-direction: column; }
+  .pwa .app-layout > main {
+    min-height: 0;
+    padding-inline: env(safe-area-inset-left) env(safe-area-inset-right);
+  }
+  .pwa .pwa-sidebar { display: none; }
+  .pwa .pwa-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: .75rem;
+    flex: none;
+    padding: calc(6px + env(safe-area-inset-top)) max(8px, env(safe-area-inset-right))
+      2px max(20px, env(safe-area-inset-left));
+    background: var(--page);
+  }
+  .pwa .pwa-tabs {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    align-items: start;
+    flex: none;
+    padding: 6px max(8px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .pwa-tabs a, .pwa-tabs button {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    min-height: 48px;
+    border: 0;
+    background: transparent;
+    color: var(--ink-2);
+    font-size: 0.75rem;
+    line-height: 1rem;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .pwa-tabs a[aria-current="page"] { color: var(--ink); font-weight: 600; }
+  .pwa-tabs .pwa-tab-new span {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 52px;
+    height: 52px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--accent-ink);
+  }
+  .pwa-tab-badge {
+    position: absolute;
+    top: -6px;
+    left: 14px;
+    min-width: 18px;
+    height: 18px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--accent-ink);
+    padding: 0 4px;
+    font-size: 0.75rem;
+    line-height: 18px;
+    font-weight: 600;
+    text-align: center;
+  }
+}
+
+/* ---------- Desktop window frame ---------- */
+
 /* The title bar continues the surfaces below it, with no horizontal seam. */
 .window-frame {
   --sidebar-width: 64px;
@@ -225,9 +310,6 @@ a:focus-visible,
   height: 100%;
   overflow: hidden;
 }
-
-/* Dialogs open below the title bar so the window controls stay reachable. */
-body:has(.window-titlebar) .modal-root { top: 36px; }
 
 .window-titlebar {
   position: relative;
@@ -268,7 +350,8 @@ body:has(.window-titlebar) .modal-root { top: 36px; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
+  font-size: 0.75rem;
+  line-height: 1rem;
   pointer-events: none;
 }
 
@@ -284,29 +367,38 @@ body:has(.window-titlebar) .modal-root { top: 36px; }
   color: var(--ink);
 }
 .window-control:hover { background: var(--surface-2); }
-.window-control:focus-visible { outline: 2px solid var(--rose); outline-offset: -3px; }
+.window-control:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
 .window-close:hover { background: #c42b1c; color: white; }
 .window-content { flex: 1; min-height: 0; overflow: hidden; }
 
 /* macOS keeps its native traffic lights over the same themed surface. */
 .window-frame[data-platform="mac"] .window-drag-region { padding-left: 88px; }
 @media (min-width: 640px) {
-  .window-frame { --sidebar-width: 240px; }
+  .window-frame { --sidebar-width: 232px; }
 }
 
-.tabular {
-  font-variant-numeric: tabular-nums;
+/* Toasts speak in the app's voice: same type, same surfaces, a coloured edge for good and bad news. */
+/* The library injects its own sheet at run time, so these need the extra weight of `html` to win. */
+html [data-sonner-toaster][data-sonner-theme] {
+  font-family: var(--font-sans);
+  --border-radius: 0.75rem;
+  --normal-bg: var(--surface);
+  --normal-border: var(--border);
+  --normal-text: var(--ink);
+  --success-bg: var(--surface);
+  --success-border: var(--good);
+  --success-text: var(--ink);
+  --info-bg: var(--surface);
+  --info-border: var(--border-strong);
+  --info-text: var(--ink);
+  --error-bg: var(--surface);
+  --error-border: var(--bad);
+  --error-text: var(--bad);
 }
+html [data-sonner-toast] { font-size: 0.875rem; line-height: 1.25rem; }
+html [data-sonner-toast] [data-button] { height: 2rem; padding-inline: 0.75rem; border-radius: 0.5rem; background: var(--accent); color: var(--accent-ink); font-size: 0.875rem; font-weight: 500; }
 
-/* Spaced capitals, like "SPRAY TAN • GLOW • BELONG" */
-.eyebrow {
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-}
-
-/* Recharts focus outline off â€” hover tooltips carry interaction */
+/* Recharts focus outline off — hover tooltips carry interaction */
 .recharts-wrapper:focus-visible {
   outline: 2px solid var(--accent);
 }

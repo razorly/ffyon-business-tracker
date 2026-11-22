@@ -41,12 +41,14 @@ async function workflows(browser, width, output) {
   const fixture = await installDesktopFixture(page, records);
   try {
     await page.goto(url, { waitUntil: "networkidle" });
-    await page.getByRole("heading", { name: /^Today ·/ }).waitFor();
-    await page.getByRole("button", { name: /UI Workflow Customer/ }).first().waitFor();
+    await page.getByRole("heading", { level: 1, name: /^Good (morning|afternoon|evening)$/ }).waitFor();
+    // Today replaced the dashboard: the confirmed bookings of the day sit in their own region.
+    const todayList = page.getByRole("region", { name: /^Today ·/ });
+    await todayList.getByRole("button", { name: /UI Workflow Customer/ }).waitFor();
     assert.ok((await page.getByText(records.clients[0].name, { exact: true }).first().boundingBox()).width >= 90, "Today's client name must remain readable at narrow widths");
     await capture(page, output, `dashboard-${width}.png`);
-    await page.locator('nav a[title="Schedule"]').click();
-    await page.getByRole("heading", { name: "Schedule", exact: true }).waitFor();
+    await page.locator('nav a[title="Diary"]').click();
+    await page.getByRole("heading", { name: "Diary", exact: true }).waitFor();
     if (width < 640) assert.equal(await page.getByRole("button", { name: "Day", exact: true }).getAttribute("aria-pressed"), "true");
     await page.getByRole("button", { name: "Month", exact: true }).click();
     await page.getByLabel("Go to date", { exact: true }).fill("2027-02-15");
@@ -67,12 +69,35 @@ async function workflows(browser, width, output) {
     await until(page, async () => !await editor.getByRole("button", { name: "Book appointment", exact: true }).isDisabled());
     await page.evaluate(() => { window.__delayClients = false; });
     assert.equal(await editor.getByLabel("Date", { exact: true }).inputValue(), "2027-02-15", "Book uses the selected date, never a preceding month's spillover day");
-    await editor.getByRole("combobox").first().fill(records.clients[0].name);
+    // A date beyond the coming week is an "Other date": the day tiles only cover the next seven days.
+    assert.equal(await editor.getByRole("group", { name: "Day", exact: true }).getByRole("button", { name: "Other date", exact: true }).getAttribute("aria-pressed"), "true");
+    await editor.getByRole("combobox", { name: "Client", exact: true }).fill(records.clients[0].name);
     await page.keyboard.press("Escape"); // dismiss client options before exercising the dialog
-    for (let index = 0; index < 24; index++) {
+    assert.equal(await editor.isVisible(), true, "Escape closes the client options, not the booking form");
+    // The form is now tiles and chips: Tab past every one of them, so focus has to wrap inside the dialog.
+    const stops = await editor.locator("button, input, select, textarea, a[href]").count();
+    let wrapped = false;
+    for (let index = 0; index < Math.max(24, stops + 12); index++) {
       await page.keyboard.press("Tab");
       assert.equal(await editor.evaluate(element => element.contains(document.activeElement)), true, "Keyboard focus must remain in the active editor");
+      wrapped ||= await editor.getByRole("button", { name: "Close", exact: true }).evaluate(element => element === document.activeElement);
     }
+    assert.equal(wrapped, true, "Tabbing past the last control must wrap to the first control of the editor");
+    // Rarely needed fields are tucked behind "More options" and come back when asked for.
+    const more = editor.getByRole("button", { name: "More options", exact: true });
+    assert.equal(await more.getAttribute("aria-expanded"), "false");
+    assert.equal(await editor.getByLabel("Private staff note", { exact: true }).count(), 0);
+    await more.click();
+    assert.equal(await more.getAttribute("aria-expanded"), "true");
+    assert.equal(await editor.getByLabel(/^Length/).inputValue(), "30");
+    await editor.getByLabel("Private staff note", { exact: true }).waitFor();
+    await capture(page, output, `booking-form-${width}.png`);
+    await more.click();
+    assert.equal(await editor.getByLabel("Private staff note", { exact: true }).count(), 0);
+    const time = editor.getByRole("group", { name: "Time", exact: true });
+    assert.equal(await time.getByRole("button", { name: "9am", exact: true }).getAttribute("aria-pressed"), "true", "A free placeholder time stays chosen");
+    assert.equal(await editor.getByLabel("Start", { exact: true }).count(), 0, "The time box stays tucked away while a free time is chosen");
+    await time.getByRole("button", { name: "Other time", exact: true }).click();
     await editor.getByLabel("Start", { exact: true }).fill("23:45");
     await editor.getByRole("button", { name: "Book appointment", exact: true }).click();
     await editor.getByRole("alert").filter({ hasText: "midnight" }).waitFor();
@@ -81,6 +106,7 @@ async function workflows(browser, width, output) {
     await editor.getByRole("button", { name: "Book appointment", exact: true }).click();
     await editor.waitFor({ state: "hidden" });
     assert.equal(records.appointments.at(-1).date, "2027-02-15");
+    assert.equal(records.appointments.at(-1).start_time, "09:00");
     assert.equal(await page.evaluate(() => document.activeElement?.textContent?.trim()), "Book", "Closing restores focus to the booking action");
     await page.getByRole("button", { name: "Show Monday 15 February 2027", exact: true }).click();
     assert.equal(await page.getByRole("button", { name: "Day", exact: true }).getAttribute("aria-pressed"), "true");
@@ -89,6 +115,10 @@ async function workflows(browser, width, output) {
     await page.getByLabel("Go to date", { exact: true }).fill(records.appointments[0].date);
     await page.getByRole("button", { name: /UI Workflow Customer/ }).first().click();
     const appointment = page.getByRole("dialog", { name: "Appointment", exact: true });
+    // The summary offers the agreed price in one tap; a different amount is behind "Other amount".
+    await appointment.getByRole("button", { name: "Mark paid £25.00", exact: true }).waitFor();
+    assert.equal(await appointment.getByLabel("Amount received", { exact: true }).count(), 0);
+    await appointment.getByRole("button", { name: "Other amount", exact: true }).click();
     await appointment.getByLabel("Amount received", { exact: true }).fill("18.75");
     await appointment.getByRole("button", { name: "Mark paid", exact: true }).click();
     await appointment.waitFor({ state: "hidden" });
@@ -96,7 +126,7 @@ async function workflows(browser, width, output) {
     const receipt = fixture.select("SELECT transaction_id FROM appointments WHERE id=?", [localId])[0].transaction_id;
     assert.equal(fixture.select("SELECT amount_pence FROM transactions WHERE id=?", [receipt])[0].amount_pence, 1875);
     await page.getByRole("button", { name: /UI Workflow Customer/ }).first().click();
-    await appointment.getByRole("button", { name: "Mark cancelled", exact: true }).click();
+    await appointment.getByRole("button", { name: "Cancel booking", exact: true }).click();
     await appointment.waitFor({ state: "hidden" });
     assert.equal(records.appointments[0].status, "cancelled");
     assert.equal(fixture.select("SELECT transaction_id FROM appointments WHERE id=?", [localId])[0].transaction_id, receipt);
@@ -107,18 +137,28 @@ async function workflows(browser, width, output) {
     assert.equal(fixture.select("SELECT transaction_id FROM appointments WHERE id=?", [localId])[0].transaction_id, receipt);
     assert.equal(fixture.select("SELECT COUNT(*) AS n FROM transactions")[0].n, 1);
     await page.getByRole("button", { name: /UI Workflow Customer/ }).first().click();
+    await appointment.getByRole("button", { name: "Edit details", exact: true }).click();
     await appointment.getByRole("button", { name: "Delete booking", exact: true }).click();
     const nested = page.getByRole("dialog", { name: "Delete appointment?", exact: true });
     await nested.waitFor();
     for (let index = 0; index < 7; index++) { await page.keyboard.press("Tab"); assert.equal(await nested.evaluate(element => element.contains(document.activeElement)), true); }
     await page.keyboard.press("Escape");
     await nested.waitFor({ state: "hidden" });
+    assert.equal(await appointment.isVisible(), true, "Escape closes only the confirmation on top");
+    assert.equal(records.appointments[0].status, "confirmed");
     await appointment.getByRole("button", { name: "Cancel", exact: true }).click();
     await appointment.waitFor({ state: "hidden" });
     await page.locator('nav a[title="Clients"]').click();
     const client = page.getByRole("button", { name: records.clients[0].name, exact: true });
     await client.waitFor(); await client.focus(); await page.keyboard.press("Enter");
-    await page.getByRole("button", { name: "Edit client", exact: true }).waitFor();
+    // The rarer profile actions moved into "More"; editing still opens the "Edit client" dialog.
+    await page.getByRole("heading", { level: 2, name: records.clients[0].name, exact: true }).waitFor();
+    await page.getByRole("button", { name: "More", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Edit details", exact: true }).click();
+    const editClient = page.getByRole("dialog", { name: "Edit client", exact: true });
+    assert.equal(await editClient.getByLabel("Name", { exact: true }).inputValue(), records.clients[0].name);
+    await page.keyboard.press("Escape");
+    await editClient.waitFor({ state: "hidden" });
     assert.deepEqual(errors, []);
     return { width, deviceTimezone: "America/Los_Angeles", dashboardDiary: true, selectedMonthBooking: true, asyncFormGuard: true, keyboardDateNavigation: true, modalAndNestedFocusTrap: true, focusRestoration: true, crossMidnightBlocked: true, actualPaymentAndPaidCancellationRestorePreserveReceipt: true, keyboardClientSelection: true };
   } catch (error) { await page.screenshot({ path: resolve(output, `failure-${width}.png`), fullPage: true }); throw error; }
@@ -138,12 +178,16 @@ async function failureState(browser, output) {
   });
   try {
     await page.goto(url, { waitUntil: "networkidle" });
-    await page.getByRole("alert").filter({ hasText: "Fixture finance read failed" }).waitFor();
-    assert.ok(await page.getByText("Unavailable", { exact: true }).count() >= 3, "A read failure must not look like zero income, expense or profit");
+    // The alert says it plainly; the technical reason is kept in the same alert under "Show details".
+    const failed = page.getByRole("alert").filter({ hasText: "Could not load the latest information." }).filter({ has: page.locator("details", { hasText: "Fixture finance read failed" }) });
+    await failed.waitFor();
+    const month = page.getByRole("region", { name: /so far$/ });
+    assert.ok(await month.getByText("Unavailable", { exact: true }).count() >= 3, "A read failure must not look like zero income, expense or profit");
+    assert.equal(await month.getByText("£0.00", { exact: true }).count(), 0, "No figure may read as zero while the month could not be loaded");
     await capture(page, output, "dashboard-read-failure.png");
     await page.evaluate(() => { window.__failFinance = false; });
-    await page.getByRole("button", { name: "Retry", exact: true }).click();
-    await page.getByRole("alert").filter({ hasText: "Fixture finance read failed" }).waitFor({ state: "hidden" });
+    await failed.getByRole("button", { name: "Retry", exact: true }).click();
+    await failed.waitFor({ state: "hidden" });
     assert.equal(await page.getByText("Unavailable", { exact: true }).count(), 0);
     return { visibleReadFailureDistinctFromZero: true, retryRecovers: true };
   } finally { await page.close(); fixture.close(); }

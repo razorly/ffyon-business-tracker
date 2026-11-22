@@ -1,10 +1,14 @@
-import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Download, LoaderCircle, Mail, Plus, RefreshCw, RotateCcw, Send, Trash2 } from "lucide-react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { ArrowLeft, CalendarPlus, Download, LoaderCircle, Mail, Plus, RefreshCw, RotateCcw, Send, Trash2, UserRound } from "lucide-react";
 import { toast } from "sonner";
 import { useAccess } from "@/components/AccessGate";
 import { PageHeader } from "@/components/Layout";
-import { Button, Card, ConfirmModal, EmptyState, Field, Input, Modal, Segmented, Textarea } from "@/components/ui";
+import { Actions, Avatar, Button, Card, ConfirmModal, EmptyState, Field, Input, Loading, Modal, Notice, Segmented, Textarea } from "@/components/ui";
+import { useData, useLoad } from "@/lib/data";
+import { useBusinessNow } from "@/lib/dates";
+import { listClients, type ClientWithStats } from "@/lib/db";
+import { isoDate } from "@/lib/format";
 import { useInbox } from "@/lib/inbox";
 import { downloadMailAttachment, getMail, getMailStatus, listMail, mailIsThisYear, mailShortTime, mailTime, markMailRead, reconcileMail, restoreMail, sendMail, trashMail,
   MAIL_ATTACHMENT_LIMIT, safeAttachmentName, type MailAttachment, type MailConversation, type MailDetail, type MailFilter, type MailList, type MailMessage, type MailSend, type MailSendResult, type MailStatus } from "@/lib/mail";
@@ -12,15 +16,21 @@ import { cn } from "@/lib/utils";
 
 const EMPTY_LIST: MailList = { conversations: [], next_cursor: null };
 const errorText = (error: unknown) => error instanceof Error ? error.message : "Please try again.";
+/** Clients by email address, so Mail can show who is writing. Only the name and address are ever used here. */
+type ClientsByEmail = Map<string, ClientWithStats>;
 
 export function MailPage() {
   const access = useAccess();
   const online = access.state === "online";
   const { conversationId } = useParams<{ conversationId: string }>();
   const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
+  const { openNewAppointment } = useData();
+  const today = isoDate(useBusinessNow());
   const { mailRevision, refreshMail } = useInbox();
   const [filter, setFilter] = useState<MailFilter>("all");
   const [composeOpen, setComposeOpen] = useState(false);
+  const [composeTo, setComposeTo] = useState<{ address: string; id: number } | null>(null);
   const [status, setStatus] = useState<MailStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [statusRevision, setStatusRevision] = useState(0);
@@ -53,6 +63,27 @@ export function MailPage() {
   const history = useRef<HTMLDivElement>(null);
   const historyConversation = useRef<string | null>(null);
   const showEarlier = useRef(false);
+
+  // Mail still works without the client list; it just shows addresses instead of names.
+  const [clients] = useLoad(listClients, [], []);
+  const clientsByEmail = useMemo(() => {
+    const map: ClientsByEmail = new Map();
+    for (const client of clients) {
+      const address = client.email?.trim().toLowerCase();
+      if (address && !map.has(address)) map.set(address, client);
+    }
+    return map;
+  }, [clients]);
+  const clientFor = (address: string | undefined) => address ? clientsByEmail.get(address.trim().toLowerCase()) ?? null : null;
+
+  // /mail?to=someone@example.com starts a new email to that address. The query is cleared so a refresh does not reopen it.
+  useEffect(() => {
+    const to = params.get("to");
+    if (to == null) return;
+    setParams({}, { replace: true });
+    if (to.trim()) setComposeTo({ address: to.trim().slice(0, 254), id: Date.now() });
+    setComposeOpen(true);
+  }, [params, setParams]);
 
   useEffect(() => {
     let active = true;
@@ -218,10 +249,14 @@ export function MailPage() {
 
   const receiving = status?.receiving_addresses.join(", ") || "";
   const trashed = !!visibleDetail?.conversation.trashed_at;
+  const conversation = visibleDetail?.conversation;
+  const writer = clientFor(conversation?.participant_email);
   return <>
     <PageHeader title="Mail" subtitle={status?.sender_address || "Business email"}>
-      <Button size="icon" className="h-9 w-9" aria-label="Check for mail" title="Check for mail" disabled={!online || checking} onClick={() => void checkMail()}><RefreshCw size={15} className={cn(checking && "animate-spin")} /></Button>
-      <Button variant="primary" disabled={!sendEnabled} onClick={() => setComposeOpen(true)}><Plus size={14} /> New email</Button>
+      <Button className="px-0 max-sm:w-11 sm:px-4" aria-label="Check for mail" title="Check for mail" disabled={!online || checking} onClick={() => void checkMail()}>
+        <RefreshCw size={16} className={cn(checking && "animate-spin")} aria-hidden /><span className="max-sm:hidden">Check for mail</span>
+      </Button>
+      <Button variant="primary" disabled={!sendEnabled} onClick={() => setComposeOpen(true)}><Plus size={16} aria-hidden /> New email</Button>
     </PageHeader>
     {!online && <Notice>You're offline. Reconnect to load and send email.</Notice>}
     {statusError && <MailError title="Couldn't load mail settings" error={statusError} onRetry={() => setStatusRevision(value => value + 1)} disabled={!online} />}
@@ -229,85 +264,103 @@ export function MailPage() {
     {status?.receiving_configured === false && <Notice>Incoming email isn't fully set up yet.</Notice>}
     {checkError && <MailError title="Couldn't check for mail" error={checkError} onRetry={() => void checkMail()} disabled={!online || checking} />}
     {!!moreMailAvailable && <Notice>Older email is still importing. Mail checks again automatically.</Notice>}
-    <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(240px,0.85fr)_minmax(0,1.6fr)] lg:items-start">
+    <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(280px,0.85fr)_minmax(0,1.6fr)] lg:items-start">
       <section aria-label="Email conversations" className={cn("min-w-0", conversationId && "hidden lg:block")}>
-        <Segmented<MailFilter> className="mb-3 max-w-full [&>button]:px-2 sm:[&>button]:px-3" value={filter} options={[{ value: "all", label: "All" }, { value: "unread", label: "Unread" }, { value: "sent", label: "Sent" }, { value: "trash", label: "Trash" }]} onChange={setFilter} />
+        <Segmented<MailFilter> label="Show" className="mb-4 flex w-full [&>button]:px-2" value={filter} options={[{ value: "all", label: "All" }, { value: "unread", label: "Unread" }, { value: "sent", label: "Sent" }, { value: "trash", label: "Trash" }]} onChange={setFilter} />
         {listError && <MailError title="Couldn't load conversations" error={listError} onRetry={refreshMail} disabled={!online || listLoading} />}
         <Card className="overflow-hidden">
-          {listLoading && !visibleList.conversations.length ? <Loading label="Loading conversations" /> : !visibleList.conversations.length ? <EmptyState icon={<Mail size={20} />} title={!online ? "Connect to view mail" : listError ? "Mail unavailable" : filter === "unread" ? "No unread email" : filter === "sent" ? "No sent email yet" : filter === "trash" ? "Trash is empty" : "No email yet"}>{filter === "all" && online && !listError && receiving && <p className="px-4 [overflow-wrap:anywhere]">Customers can email {receiving}</p>}</EmptyState> : <ul className="divide-y divide-line">
-            {visibleList.conversations.map(conversation => <ConversationRow key={conversation.id} conversation={conversation} selected={conversationId === conversation.id} />)}
+          {listLoading && !visibleList.conversations.length ? <Loading label="Loading conversations" /> : !visibleList.conversations.length ? <EmptyState icon={<Mail size={20} aria-hidden />} title={!online ? "Connect to view mail" : listError ? "Mail unavailable" : filter === "unread" ? "No unread email" : filter === "sent" ? "No sent email yet" : filter === "trash" ? "Trash is empty" : "No email yet"}>{filter === "all" && online && !listError && receiving && <p className="[overflow-wrap:anywhere]">Customers can email {receiving}</p>}</EmptyState> : <ul className="divide-y divide-line">
+            {visibleList.conversations.map(item => <ConversationRow key={item.id} conversation={item} client={clientFor(item.participant_email)} selected={conversationId === item.id} />)}
           </ul>}
-          {visibleList.next_cursor && <div className="border-t border-line p-2 text-center"><Button size="sm" variant="ghost" disabled={!online || listLoading || moreLoading} onClick={() => void loadMore()}>{moreLoading && <LoaderCircle size={14} className="animate-spin" />} Load more</Button></div>}
+          {visibleList.next_cursor && <div className="border-t border-line p-2 text-center"><Button size="sm" variant="ghost" disabled={!online || listLoading || moreLoading} onClick={() => void loadMore()}>{moreLoading && <LoaderCircle size={14} className="animate-spin" aria-hidden />} Load more</Button></div>}
         </Card>
-        <p className="mt-3 text-center text-xs text-muted">Emails are deleted after 90 days.</p>
+        <p className="mt-3 text-center text-small text-ink-2">Emails are deleted after 90 days.</p>
       </section>
       <section aria-label="Conversation" className={cn("min-w-0", !conversationId && "hidden lg:block")}>
-        {conversationId && <Button size="sm" variant="ghost" className="-ml-2 mb-2 lg:hidden" onClick={() => navigate("/mail")}><ArrowLeft size={14} /> All conversations</Button>}
+        {conversationId && <Button size="sm" variant="ghost" className="-ml-2 mb-2 lg:hidden" onClick={() => navigate("/mail")}><ArrowLeft size={16} aria-hidden /> All conversations</Button>}
         {detailError && <MailError title="Couldn't load this conversation" error={detailError} onRetry={refreshMail} disabled={!online || detailLoading} />}
         {readError && <MailError title="Couldn't mark as read" error={readError} onRetry={() => void readDisplayed()} disabled={!online} />}
         {actionError && actionError.id === conversationId && <MailError title={actionError.restore ? "Couldn't restore" : "Couldn't move to Trash"} error={actionError.message} onRetry={() => void changeTrash(actionError.id, actionError.restore)} disabled={!online || actionBusy} />}
-        {!conversationId ? <Card><EmptyState icon={<Mail size={20} />} title="Select a conversation" /></Card> : !visibleDetail ? <Card>{detailLoading ? <Loading label="Loading conversation" /> : <EmptyState icon={<Mail size={20} />} title={online ? "Conversation unavailable" : "Connect to view this conversation"} />}</Card> : <Card className="overflow-hidden">
-          <div className="flex items-start gap-3 border-b border-line px-5 py-4">
-            <div className="min-w-0 flex-1">
-              <h2 ref={heading} tabIndex={-1} className="font-display text-[23px] leading-tight outline-none [overflow-wrap:anywhere]">{visibleDetail.conversation.subject || "(No subject)"}</h2>
-              <p className="mt-1 flex flex-wrap gap-x-2 text-sm text-ink-2">{visibleDetail.conversation.participant_name && <span className="min-w-0 font-medium text-ink [overflow-wrap:anywhere]">{visibleDetail.conversation.participant_name}</span>}<span className="min-w-0 [overflow-wrap:anywhere]">{visibleDetail.conversation.participant_email}</span></p>
+        {!conversationId ? <Card><EmptyState icon={<Mail size={20} aria-hidden />} title="Select a conversation" /></Card> : !visibleDetail || !conversation ? <Card>{detailLoading ? <Loading label="Loading conversation" /> : <EmptyState icon={<Mail size={20} aria-hidden />} title={online ? "Conversation unavailable" : "Connect to view this conversation"} />}</Card> : <Card className="overflow-hidden">
+          <div className="border-b border-line px-5 pb-4 pt-3">
+            <div className="flex items-start gap-2">
+              <h2 ref={heading} tabIndex={-1} className="min-w-0 flex-1 pt-2 text-heading font-semibold outline-none [overflow-wrap:anywhere]">{conversation.subject || "(No subject)"}</h2>
+              {!trashed && <Button variant="ghost" size="icon" className="-mr-3" aria-label="Move to Trash" title="Move to Trash" disabled={!online || actionBusy} onClick={() => void changeTrash(conversation.id, false)}>{actionBusy ? <LoaderCircle size={18} className="animate-spin" aria-hidden /> : <Trash2 size={18} aria-hidden />}</Button>}
             </div>
-            {!trashed && <Button variant="ghost" size="icon" className="-mr-2 shrink-0" aria-label="Move to Trash" title="Move to Trash" disabled={!online || actionBusy} onClick={() => void changeTrash(visibleDetail.conversation.id, false)}>{actionBusy ? <LoaderCircle size={15} className="animate-spin" /> : <Trash2 size={15} />}</Button>}
+            <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-3">
+              <div className="flex min-w-0 flex-[1_1_14rem] items-center gap-3">
+                <Avatar name={writer?.name || conversation.participant_name || conversation.participant_email} />
+                <p className="min-w-0">
+                  {(writer || conversation.participant_name) && <span className="block font-medium text-ink [overflow-wrap:anywhere]">{writer?.name || conversation.participant_name}</span>}
+                  <span className="block text-small text-ink-2 [overflow-wrap:anywhere]">{conversation.participant_email}</span>
+                </p>
+              </div>
+              {writer ? <div className="flex flex-wrap gap-2">
+                <Button disabled={!online || !!writer.disabled} onClick={() => openNewAppointment({ date: today, start_time: "09:00", clientId: writer.id })}><CalendarPlus size={16} aria-hidden /> Book</Button>
+                <Button onClick={() => navigate(`/clients?client=${writer.id}`)}><UserRound size={16} aria-hidden /> View client</Button>
+              </div> : <Button variant="ghost" disabled={!online} onClick={() => openNewAppointment({ date: today, start_time: "09:00", ...(conversation.participant_name ? { clientName: conversation.participant_name } : {}) })}><CalendarPlus size={16} aria-hidden /> Book</Button>}
+            </div>
           </div>
-          <div ref={history} tabIndex={0} aria-label="Message history" className="max-h-[55vh] min-w-0 overflow-y-auto focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent">
-            {visibleDetail.next_cursor && <div className="border-b border-line p-2 text-center"><Button size="sm" variant="ghost" disabled={!online || detailLoading || earlierLoading} onClick={() => void loadEarlier()}>{earlierLoading && <LoaderCircle size={14} className="animate-spin" />} Load earlier messages</Button></div>}
-            {visibleDetail.messages.length ? <div className="divide-y divide-line">{visibleDetail.messages.map(message => <Message key={message.id} message={message} conversation={visibleDetail.conversation} business={status?.sender_address || ""} online={online} />)}</div> : <p className="px-5 py-6 text-sm text-muted">No messages yet.</p>}
+          <div ref={history} tabIndex={0} aria-label="Message history" className="max-h-[55vh] min-w-0 overflow-y-auto focus-visible:outline-2 focus-visible:outline-offset-[-2px]! focus-visible:outline-accent">
+            {visibleDetail.next_cursor && <div className="border-b border-line p-2 text-center"><Button size="sm" variant="ghost" disabled={!online || detailLoading || earlierLoading} onClick={() => void loadEarlier()}>{earlierLoading && <LoaderCircle size={14} className="animate-spin" aria-hidden />} Load earlier messages</Button></div>}
+            {visibleDetail.messages.length ? <div className="divide-y divide-line">{visibleDetail.messages.map(message => <Message key={message.id} message={message} conversation={conversation} client={writer} business={status?.sender_address || ""} online={online} />)}</div> : <p className="px-5 py-6 text-ink-2">No messages yet.</p>}
           </div>
           {trashed ? <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-5 py-4">
-            <p className="text-sm text-ink-2">This conversation is in Trash.</p>
-            <Button size="sm" aria-label="Restore conversation" disabled={!online || actionBusy} onClick={() => void changeTrash(visibleDetail.conversation.id, true)}>{actionBusy ? <LoaderCircle size={14} className="animate-spin" /> : <RotateCcw size={14} />} Restore</Button>
-          </div> : <MailEditor key={visibleDetail.conversation.id} detail={visibleDetail} sender={status?.sender_address || ""} enabled={sendEnabled} onSent={sent} />}
+            <p className="text-ink-2">This conversation is in Trash.</p>
+            <Button aria-label="Restore conversation" disabled={!online || actionBusy} onClick={() => void changeTrash(conversation.id, true)}>{actionBusy ? <LoaderCircle size={16} className="animate-spin" aria-hidden /> : <RotateCcw size={16} aria-hidden />} Restore</Button>
+          </div> : <MailEditor key={conversation.id} detail={visibleDetail} replyName={writer?.name || conversation.participant_name || undefined} sender={status?.sender_address || ""} enabled={sendEnabled} onSent={sent} />}
         </Card>}
       </section>
     </div>
-    <MailEditor modal open={composeOpen} onClose={() => setComposeOpen(false)} sender={status?.sender_address || ""} enabled={sendEnabled} onSent={sent} />
+    <MailEditor modal open={composeOpen} onClose={() => setComposeOpen(false)} sender={status?.sender_address || ""} enabled={sendEnabled} onSent={sent} clients={clients} prefill={composeTo} />
   </>;
 }
 
-function Notice({ children }: { children: React.ReactNode }) {
-  return <p role="status" className="mb-3 rounded-xl border border-line bg-surface px-4 py-2.5 text-sm text-ink-2">{children}</p>;
-}
-function Loading({ label }: { label: string }) {
-  return <div role="status" className="flex items-center gap-2 px-5 py-10 text-sm text-muted"><LoaderCircle size={16} className="animate-spin" /> {label}</div>;
-}
+/** Something went wrong: plain words first, the technical reason behind "Show details", and a way to retry. */
 function MailError({ title, error, onRetry, disabled }: { title: string; error: string; onRetry: () => void; disabled?: boolean }) {
-  return <div role="alert" className="mb-3 flex min-w-0 flex-wrap items-center gap-2 rounded-xl border border-bad/30 bg-surface px-4 py-2.5 text-sm text-bad"><span className="min-w-0 flex-1 break-words">{title}: {error}</span><Button size="sm" disabled={disabled} onClick={onRetry}>Retry</Button></div>;
+  return <Notice tone="bad" action={<Button size="sm" disabled={disabled} onClick={onRetry}>Retry</Button>}>
+    {title}.
+    <Details>{error}</Details>
+  </Notice>;
+}
+function Details({ children }: { children: React.ReactNode }) {
+  return <details className="mt-1 text-ink-2"><summary className="cursor-pointer">Show details</summary><span className="break-words">{children}</span></details>;
 }
 
-function ConversationRow({ conversation, selected }: { conversation: MailConversation; selected: boolean }) {
+function ConversationRow({ conversation, client, selected }: { conversation: MailConversation; client: ClientWithStats | null; selected: boolean }) {
   const unread = conversation.unread_count > 0;
-  return <li><Link to={`/mail/${encodeURIComponent(conversation.id)}`} aria-current={selected ? "page" : undefined} className={cn("relative block min-w-0 px-4 py-3 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent", selected ? "bg-accent-soft" : "hover:bg-surface-2")}>
-    {unread && <span aria-hidden className="absolute left-[6px] top-[19px] h-1.5 w-1.5 rounded-full bg-accent" />}
-    <div className="flex min-w-0 items-baseline gap-1.5">
-      <span className={cn("min-w-0 truncate text-sm", unread ? "font-semibold" : "font-medium")}>{conversation.participant_name || conversation.participant_email}</span>
-      {conversation.message_count > 1 && <span className="shrink-0 text-xs text-muted">{conversation.message_count}<span className="sr-only"> messages</span></span>}
-      <time dateTime={conversation.last_message_at} title={mailTime(conversation.last_message_at, true)} className={cn("ml-auto shrink-0 pl-2 text-xs", unread ? "font-semibold text-ink" : "text-muted")}>{mailShortTime(conversation.last_message_at)}</time>
+  const who = client?.name || conversation.participant_name || conversation.participant_email;
+  return <li><Link to={`/mail/${encodeURIComponent(conversation.id)}`} aria-current={selected ? "page" : undefined} className={cn("flex min-w-0 items-start gap-3 px-5 py-3 focus-visible:outline-2 focus-visible:outline-offset-[-2px]! focus-visible:outline-accent", selected ? "bg-surface-2" : "hover:bg-surface-2/60")}>
+    <Avatar name={who} />
+    <div className="min-w-0 flex-1">
+      <div className="flex min-w-0 items-baseline gap-2">
+        {unread && <span aria-hidden className="h-2 w-2 shrink-0 self-center rounded-full bg-accent" />}
+        <span className={cn("min-w-0 truncate", unread ? "font-semibold" : "font-medium")}>{who}</span>
+        {conversation.message_count > 1 && <span className="tabular shrink-0 text-label text-ink-2">{conversation.message_count}<span className="sr-only"> messages</span></span>}
+        <time dateTime={conversation.last_message_at} title={mailTime(conversation.last_message_at, true)} className={cn("tabular ml-auto shrink-0 pl-1 text-label", unread ? "font-semibold text-ink" : "text-ink-2")}>{mailShortTime(conversation.last_message_at)}</time>
+      </div>
+      <p className={cn("truncate text-small", unread ? "font-medium text-ink" : "text-ink-2")}>{conversation.subject || "(No subject)"}</p>
+      <p className="truncate text-small text-ink-2">{conversation.direction === "outbound" && "You: "}{conversation.preview}</p>
+      {unread && <span className="sr-only">{conversation.unread_count} unread</span>}
     </div>
-    <p className={cn("mt-0.5 truncate text-sm", unread ? "font-medium text-ink" : "text-ink-2")}>{conversation.subject || "(No subject)"}</p>
-    <p className="mt-0.5 truncate text-xs text-muted">{conversation.direction === "outbound" && "You: "}{conversation.preview}</p>
-    {unread && <span className="sr-only">{conversation.unread_count} unread</span>}
   </Link></li>;
 }
 
-function Message({ message, conversation, business, online }: { message: MailMessage; conversation: MailConversation; business: string; online: boolean }) {
+function Message({ message, conversation, client, business, online }: { message: MailMessage; conversation: MailConversation; client: ClientWithStats | null; business: string; online: boolean }) {
   const outbound = message.direction === "outbound";
-  const from = outbound ? "You" : conversation.participant_name && message.from_address.toLowerCase() === conversation.participant_email.toLowerCase() ? conversation.participant_name : message.from_address;
+  const fromParticipant = message.from_address.toLowerCase() === conversation.participant_email.toLowerCase();
+  const from = outbound ? "You" : fromParticipant && (client?.name || conversation.participant_name) || message.from_address;
   // Received mail addressed only to the main business address needs no "to" line.
   const to = !outbound && message.to_addresses.length === 1 && message.to_addresses[0].toLowerCase() === business.toLowerCase() ? "" : message.to_addresses.join(", ");
   return <article aria-label={`${outbound ? "Outgoing" : "Received"} message`} className={cn("min-w-0 px-5 py-4", outbound && "bg-surface-2/60")}>
     <div className="flex items-baseline justify-between gap-3">
-      <span className="min-w-0 truncate text-sm font-medium" title={message.from_address}>{from}</span>
-      <time dateTime={message.created_at} title={mailTime(message.created_at, true)} className="shrink-0 text-xs text-muted">{mailTime(message.created_at, !mailIsThisYear(message.created_at))}</time>
+      <span className="min-w-0 truncate text-small font-semibold" title={message.from_address}>{from}</span>
+      <time dateTime={message.created_at} title={mailTime(message.created_at, true)} className="tabular shrink-0 text-label text-ink-2">{mailTime(message.created_at, !mailIsThisYear(message.created_at))}</time>
     </div>
-    {(to || message.cc_addresses.length > 0) && <p className="mt-0.5 text-xs text-muted [overflow-wrap:anywhere]">{to && `to ${to}`}{to && message.cc_addresses.length > 0 && " · "}{message.cc_addresses.length > 0 && `cc ${message.cc_addresses.join(", ")}`}</p>}
-    {message.status === "pending" && <p role="status" className="mt-1 text-xs font-medium text-ink-2">Sending not confirmed</p>}
-    {message.status === "failed" && <p role="status" className="mt-1 text-xs font-medium text-bad">Not sent</p>}
-    <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-relaxed [overflow-wrap:anywhere]">{message.text_body || "(No message text)"}</p>
+    {(to || message.cc_addresses.length > 0) && <p className="text-label text-ink-2 [overflow-wrap:anywhere]">{to && `to ${to}`}{to && message.cc_addresses.length > 0 && " · "}{message.cc_addresses.length > 0 && `cc ${message.cc_addresses.join(", ")}`}</p>}
+    {message.status === "pending" && <p role="status" className="mt-1 text-small font-medium text-ink-2">Sending not confirmed</p>}
+    {message.status === "failed" && <p role="status" className="mt-1 text-small font-medium text-bad">Not sent</p>}
+    <p className="mt-2 whitespace-pre-wrap break-words select-text [overflow-wrap:anywhere]">{message.text_body || "(No message text)"}</p>
     {message.attachments.length > 0 && <div className="mt-3 flex flex-wrap gap-2" aria-label="Attachments">{message.attachments.map(attachment => <Attachment key={attachment.id} messageId={message.id} attachment={attachment} online={online} />)}</div>}
   </article>;
 }
@@ -326,15 +379,59 @@ function Attachment({ messageId, attachment, online }: { messageId: string; atta
     finally { busyRef.current = false; setBusy(false); }
   };
   return <div className="min-w-0 max-w-full">
-    <Button className="h-auto max-w-full py-1.5 text-left" size="sm" title={tooLarge ? "Too large to download" : "Save attachment"} disabled={!online || busy || tooLarge} onClick={() => void download()}>{busy ? <LoaderCircle size={14} className="shrink-0 animate-spin" /> : <Download size={14} className="shrink-0" />}<span className="min-w-0 break-all">{safeAttachmentName(attachment.filename)}</span><span className="shrink-0 text-xs text-muted">{size}</span></Button>
-    {saved && <p role="status" className="mt-1 text-xs text-good">Saved</p>}
-    {tooLarge && <p className="mt-1 text-xs text-muted">Over the 15 MB limit</p>}
-    {error && <p role="alert" className="mt-1 break-words text-xs text-bad">Couldn't save: {error}</p>}
+    <Button className="h-auto min-h-11 max-w-full py-2 text-left text-small" title={tooLarge ? "Too large to download" : "Save attachment"} disabled={!online || busy || tooLarge} onClick={() => void download()}>{busy ? <LoaderCircle size={16} className="shrink-0 animate-spin" aria-hidden /> : <Download size={16} className="shrink-0" aria-hidden />}<span className="min-w-0 break-all">{safeAttachmentName(attachment.filename)}</span><span className="tabular shrink-0 text-label text-ink-2">{size}</span></Button>
+    {saved && <p role="status" className="mt-1 text-small text-good">Saved</p>}
+    {tooLarge && <p className="mt-1 text-small text-ink-2">Over the 15 MB limit</p>}
+    {error && <div role="alert" className="mt-1 text-small text-bad">Couldn't save this attachment.<Details>{error}</Details></div>}
   </div>;
 }
 
-function MailEditor({ detail, modal = false, open = false, onClose, sender, enabled, onSent }: {
+/** The "To" box: any address can be typed, and her clients are suggested by name or address as she types. */
+function RecipientField({ value, onChange, clients, readOnly, disabled }: { value: string; onChange: (value: string) => void; clients: ClientWithStats[]; readOnly: boolean; disabled: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(0);
+  const listId = useId();
+  const query = value.trim().toLowerCase();
+  const matches = useMemo(() => !query ? [] : clients.filter(client => client.email?.trim() && client.email.trim().toLowerCase() !== query
+    && (client.name.toLowerCase().includes(query) || client.email.toLowerCase().includes(query))).slice(0, 6), [clients, query]);
+  const showing = open && !readOnly && !disabled && matches.length > 0;
+  const current = Math.min(active, matches.length - 1);
+  const choose = (client: ClientWithStats | undefined) => {
+    if (!client) return;
+    onChange(client.email.trim());
+    setOpen(false);
+  };
+  return <div className="relative min-w-0">
+    <Field label="To">
+      <Input type="email" required autoFocus maxLength={254} autoComplete="off" value={value} readOnly={readOnly} disabled={disabled} placeholder="Name or email address"
+        role="combobox" aria-autocomplete="list" aria-expanded={showing} aria-controls={listId} aria-activedescendant={showing ? `${listId}-${current}` : undefined}
+        onChange={event => { onChange(event.target.value); setActive(0); setOpen(true); }}
+        onBlur={() => setTimeout(() => setOpen(false), 120)}
+        onKeyDown={event => {
+          if (!showing) return;
+          if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setOpen(false); }
+          else if (event.key === "ArrowDown") { event.preventDefault(); setActive(Math.min(current + 1, matches.length - 1)); }
+          else if (event.key === "ArrowUp") { event.preventDefault(); setActive(Math.max(current - 1, 0)); }
+          else if (event.key === "Enter") { event.preventDefault(); choose(matches[current]); }
+        }} />
+    </Field>
+    <ul id={listId} role="listbox" aria-label="Matching clients" hidden={!showing} className="absolute inset-x-0 top-full z-10 mt-1 max-h-64 overflow-auto rounded-xl border border-line bg-surface p-1 shadow-lg">
+      {showing && matches.map((client, index) => <li key={client.id} role="none">
+        <button type="button" role="option" id={`${listId}-${index}`} aria-selected={index === current} tabIndex={-1}
+          onMouseDown={event => event.preventDefault()} onClick={() => choose(client)} onMouseEnter={() => setActive(index)}
+          className={cn("flex min-h-11 w-full min-w-0 cursor-pointer flex-col justify-center rounded-lg px-3 py-1.5 text-left", index === current && "bg-surface-2")}>
+          <span className="block truncate font-medium text-ink">{client.name}</span>
+          <span className="block truncate text-small text-ink-2">{client.email}</span>
+        </button>
+      </li>)}
+    </ul>
+  </div>;
+}
+
+function MailEditor({ detail, replyName, modal = false, open = false, onClose, sender, enabled, onSent, clients = [], prefill }: {
   detail?: MailDetail; modal?: boolean; open?: boolean; onClose?: () => void; sender: string; enabled: boolean; onSent: (result: MailSendResult) => void;
+  /** Who a reply goes to, by name, for the placeholder. The email is always sent to `recipient`. */
+  replyName?: string; clients?: ClientWithStats[]; prefill?: { address: string; id: number } | null;
 }) {
   const [to, setTo] = useState("");
   const [subject, setSubject] = useState("");
@@ -343,8 +440,12 @@ function MailEditor({ detail, modal = false, open = false, onClose, sender, enab
   const busyRef = useRef(false);
   const attempt = useRef<MailSend | null>(null);
   const [locked, setLocked] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ message: string; detail?: string } | null>(null);
   const [discardOpen, setDiscardOpen] = useState(false);
+  // A link such as "Email" on a client fills in who it is to. An email still waiting to be confirmed is left exactly as it was.
+  useEffect(() => {
+    if (prefill && !attempt.current && !busyRef.current) { setTo(prefill.address); setError(null); }
+  }, [prefill]);
   const incoming = detail?.messages.filter(message => message.direction === "inbound" && message.message_id) || [];
   const latestIncoming = incoming[incoming.length - 1];
   const confirmedOutgoing = detail?.messages.filter(message => message.direction === "outbound" && message.status === "sent" && message.message_id) || [];
@@ -360,17 +461,17 @@ function MailEditor({ detail, modal = false, open = false, onClose, sender, enab
       idempotency_key: crypto.randomUUID(), to: recipient, subject: replySubject, text: text.trim(),
       ...(detail ? { conversation_id: detail.conversation.id, ...(replyTarget ? { reply_to_message_id: replyTarget.id } : {}) } : {}),
     };
-    if (new TextEncoder().encode(JSON.stringify(payload)).length > 65_536) { setError("This message is too large to send. Please shorten it."); return; }
+    if (new TextEncoder().encode(JSON.stringify(payload)).length > 65_536) { setError({ message: "This message is too large to send. Please shorten it." }); return; }
     busyRef.current = true; setBusy(true); setError(null);
     attempt.current = payload;
     setLocked(true);
     try {
       const result = await sendMail(attempt.current);
-      if (result.status === "pending") { setError("This email is still being sent. Retry to check on it."); return; }
-      if (!result.conversation_id || !result.message_id) throw new Error("Sending wasn't confirmed. Retry to check it.");
+      if (result.status === "pending") { setError({ message: "This email is still being sent. Retry to check on it." }); return; }
+      if (!result.conversation_id || !result.message_id) { setError({ message: "Sending wasn't confirmed. Retry to check it." }); return; }
       attempt.current = null; setLocked(false); setTo(""); setSubject(""); setText("");
       onSent(result);
-    } catch (cause) { setError(errorText(cause)); }
+    } catch (cause) { setError({ message: "Couldn't confirm this email was sent.", detail: errorText(cause) }); }
     finally { busyRef.current = false; setBusy(false); }
   };
   const onSubmit = (event: React.FormEvent) => { event.preventDefault(); void submit(); };
@@ -378,19 +479,19 @@ function MailEditor({ detail, modal = false, open = false, onClose, sender, enab
     if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); }
   };
   const notes = <>
-    {error && <p role="alert" className="break-words text-sm text-bad">{error}</p>}
-    {locked && !busy && <p className="text-xs leading-relaxed text-ink-2">Not confirmed yet. Retry sends the same email, so it won't arrive twice.</p>}
-    {modal && !enabled && <p className="text-xs text-ink-2">Sending is unavailable right now.</p>}
-    {enabled && detail && !replyTarget && <p className="text-xs text-ink-2">Replies aren't available for this conversation yet.</p>}
+    {error && <div role="alert" className="break-words text-small text-bad">{error.message}{error.detail && <Details>{error.detail}</Details>}</div>}
+    {locked && !busy && <p className="text-small text-ink-2">Not confirmed yet. Retry sends the same email, so it won't arrive twice.</p>}
+    {modal && !enabled && <p className="text-small text-ink-2">Sending is unavailable right now.</p>}
+    {enabled && detail && !replyTarget && <p className="text-small text-ink-2">Replies aren't available for this conversation yet.</p>}
   </>;
-  const actions = <div className="flex flex-wrap items-center justify-end gap-2">
+  const actions = <Actions>
     {(text || to || subject || locked) && <Button variant="ghost" disabled={busy} onClick={() => { if (locked) setDiscardOpen(true); else clear(); }}>Discard</Button>}
-    <Button type="submit" variant="primary" title="Send (Ctrl+Enter)" disabled={!canSend || busy || (!locked && !valid)}>{busy ? <LoaderCircle size={14} className="animate-spin" /> : <Send size={14} />}{busy ? "Sending…" : locked ? "Retry send" : detail ? "Send reply" : "Send email"}</Button>
-  </div>;
+    <Button type="submit" variant="primary" title="Send (Ctrl+Enter)" disabled={!canSend || busy || (!locked && !valid)}>{busy ? <LoaderCircle size={16} className="animate-spin" aria-hidden /> : <Send size={16} aria-hidden />}{busy ? "Sending…" : locked ? "Retry send" : detail ? "Send reply" : "Send email"}</Button>
+  </Actions>;
   const discard = <ConfirmModal open={discardOpen} title="Discard this draft?" confirmLabel="Discard" message="This email may already have been sent. Discarding won't recall it." onClose={() => setDiscardOpen(false)} onConfirm={clear} />;
   if (!modal) return <>
     <form onSubmit={onSubmit} className="min-w-0 space-y-3 border-t border-line px-5 py-4">
-      <Textarea aria-label="Reply message" required maxLength={50_000} rows={3} value={text} readOnly={locked} disabled={busy} onChange={event => { setText(event.target.value); setError(null); }} onKeyDown={sendShortcut} placeholder={`Reply to ${recipient}…`} />
+      <Textarea aria-label="Reply message" required maxLength={50_000} rows={3} value={text} readOnly={locked} disabled={busy} onChange={event => { setText(event.target.value); setError(null); }} onKeyDown={sendShortcut} placeholder={`Reply to ${replyName && detail && recipient.toLowerCase() === detail.conversation.participant_email.toLowerCase() ? replyName : recipient}…`} />
       {notes}
       {actions}
     </form>
@@ -400,8 +501,8 @@ function MailEditor({ detail, modal = false, open = false, onClose, sender, enab
   return <>
     <Modal open={open} onClose={() => { if (!busyRef.current) onClose?.(); }} title="New email" width="max-w-lg">
       <form onSubmit={onSubmit} className="min-w-0 space-y-4">
-        {sender && <p className="break-all text-xs text-muted">From {sender}</p>}
-        <Field label="To"><Input type="email" required autoFocus maxLength={254} autoComplete="off" value={to} readOnly={locked} disabled={busy} onChange={event => { setTo(event.target.value); setError(null); }} placeholder="customer@example.com" /></Field>
+        {sender && <p className="break-all text-small text-ink-2">From {sender}</p>}
+        <RecipientField value={to} onChange={value => { setTo(value); setError(null); }} clients={clients} readOnly={locked} disabled={busy} />
         <Field label="Subject"><Input required maxLength={200} value={subject} readOnly={locked} disabled={busy} onChange={event => { setSubject(event.target.value); setError(null); }} /></Field>
         <Field label="Message"><Textarea aria-label="Message" required maxLength={50_000} rows={8} value={text} readOnly={locked} disabled={busy} onChange={event => { setText(event.target.value); setError(null); }} onKeyDown={sendShortcut} placeholder="Write your message…" /></Field>
         {notes}

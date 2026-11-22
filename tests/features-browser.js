@@ -227,18 +227,25 @@ async function desktopFeatures(browser, url, output, evidence) {
     const fixture = await installDesktopFixture(page, records);
     try {
       await page.goto(url, { waitUntil: "networkidle" });
-      await page.locator('nav a[title="To do"]').click();
-      await page.getByRole("button", { name: clients[0].name, exact: true }).waitFor();
-      await page.getByRole("button", { name: "Accept date", exact: true }).waitFor();
+      // Requests live in the "Needs you" region on Today; the postcode map is in the request's own dialog.
+      await page.locator('nav a[title="Today"]').click();
+      const needsYou = page.getByRole("region", { name: /^Needs you/ });
+      await needsYou.getByRole("button", { name: clients[0].name, exact: true }).waitFor();
+      await needsYou.getByRole("button", { name: "Accept date", exact: true }).waitFor();
       assert.equal(fixture.commands.filter(item => item.command === "lookup_postcode").length, 0, "Opening requests must not disclose a postcode to a map provider");
       await capture(page, output, `admin-remote-request-${viewport.width}.png`);
-      await page.getByRole("button", { name: "Show map", exact: true }).click();
+      await needsYou.getByRole("button", { name: clients[0].name, exact: true }).click();
+      const request = page.getByRole("dialog", { name: "Appointment", exact: true });
+      await request.getByRole("button", { name: "Accept date", exact: true }).waitFor();
+      await request.getByRole("button", { name: "Show map", exact: true }).waitFor();
+      assert.equal(fixture.commands.filter(item => item.command === "lookup_postcode").length, 0, "Opening a request must not disclose a postcode to a map provider");
+      await request.getByRole("button", { name: "Show map", exact: true }).click();
       const map = page.locator('iframe[title="Postcode area map for SW1A 1AA"]');
       await map.waitFor();
       assert.equal(await map.getAttribute("sandbox"), "allow-scripts allow-same-origin");
       assert.equal(await map.getAttribute("referrerpolicy"), "strict-origin-when-cross-origin");
-      const mapBounds = await map.boundingBox(), requestBounds = await map.locator('xpath=ancestor::li').boundingBox();
-      assert.ok(mapBounds.width >= requestBounds.width - 44, "Request actions must not squeeze the map column");
+      const mapBounds = await map.boundingBox(), requestBounds = await map.locator('xpath=ancestor::form').boundingBox();
+      assert.ok(mapBounds.width >= requestBounds.width - 2, "Request actions must not squeeze the map column");
       assert.equal(fixture.commands.filter(item => item.command === "lookup_postcode").length, 1);
       assert.deepEqual(fixture.commands.find(item => item.command === "lookup_postcode").args, { postcode: "SW1A 1AA" }, "Postcode lookup must not send a full visit address");
       let mapRendered = false;
@@ -263,18 +270,22 @@ async function desktopFeatures(browser, url, output, evidence) {
         assert.ok(mapRendered && !mapProviderIssue, `Live map must render successfully: ${mapProviderIssue}`);
       }
       await capture(page, output, `admin-postcode-map-${viewport.width}.png`);
-      await page.getByRole("button", { name: "Directions", exact: true }).click();
+      await request.getByRole("button", { name: "Directions", exact: true }).click();
       assert.equal(fixture.commands.filter(item => item.command === "open_appointment_directions").length, 1);
-      await page.getByRole("button", { name: "Hide map", exact: true }).click();
+      await request.getByRole("button", { name: "Hide map", exact: true }).click();
       assert.equal(await page.locator("iframe").count(), 0);
+      await request.getByRole("button", { name: "Close", exact: true }).click();
+      await request.waitFor({ state: "hidden" });
 
-      await page.locator('nav a[title="Schedule"]').click();
-      await page.getByRole("button", { name: "New entry", exact: true }).click();
-      const newEntry = page.getByRole("dialog", { name: "New entry", exact: true });
+      await page.locator('nav a[title="Diary"]').click();
+      await page.getByRole("heading", { name: "Diary", exact: true }).waitFor();
+      await page.getByRole("button", { name: "New", exact: true }).click();
+      const newEntry = page.getByRole("dialog", { name: "New", exact: true });
       await newEntry.getByText(/^For tips, product sales and other income\./).waitFor();
       assert.equal(await newEntry.getByLabel(/^Payment for/).count(), 0);
       assert.equal(await newEntry.getByLabel(/^Income type/).count(), 0, "A one-option income type list is replaced by guidance");
       assert.equal(await newEntry.getByLabel(/^Service/).count(), 0);
+      assert.equal(await newEntry.getByRole("group", { name: "Service", exact: true }).count(), 0);
       const carriedDate = new Date(`${date}T12:00:00Z`);
       carriedDate.setUTCDate(carriedDate.getUTCDate() + 2);
       const appointmentDate = carriedDate.toISOString().slice(0, 10);
@@ -283,32 +294,53 @@ async function desktopFeatures(browser, url, output, evidence) {
       await newEntry.getByPlaceholder("Search or add a client (optional)").fill(clients[1].name);
       await newEntry.getByRole("option", { name: clients[1].name, exact: true }).click();
       await capture(page, output, `admin-new-entry-appointment-choice-${viewport.width}.png`);
-      await newEntry.getByRole("button", { name: "Appointment", exact: true }).click();
+      await newEntry.getByRole("button", { name: "Booking", exact: true }).click();
       await newEntry.waitFor({ state: "hidden" });
       await page.getByRole("heading", { name: "New appointment", exact: true }).waitFor();
+      const booking = page.getByRole("dialog", { name: "New appointment", exact: true });
       await page.waitForFunction(name => document.querySelector('input[role="combobox"]')?.value === name, clients[1].name);
       assert.equal(await page.getByRole("dialog").count(), 1, "New entry must hand off to the existing booking form without stacked dialogs");
-      assert.equal(await page.getByLabel(/^Date/).inputValue(), appointmentDate);
-      assert.equal(await page.getByLabel(/^Service/).inputValue(), services[0].id);
-      assert.equal(await page.getByLabel(/^Price/).inputValue(), "22.00", "Creating a booking must use the agreed service quote, not a payment amount");
-      await page.getByLabel(/^Date/).fill(date);
-      await page.getByLabel("Time to confirm", { exact: true }).check();
-      await page.getByLabel("Home visit", { exact: true }).check();
-      await page.getByRole("button", { name: "Use saved address", exact: true }).click();
-      assert.equal(await page.getByLabel(/^Address/).inputValue(), clients[1].saved_address);
-      await page.getByLabel(/^Address/).fill("3 Manual Browser Fixture Road\nA very long building name with a stairwell, floor and apartment number\nLondon");
-      await page.getByLabel("Postcode", { exact: true }).fill("sw1a 1aa");
-      await page.getByLabel("Save this address for future appointments", { exact: true }).check();
-      assert.equal(await page.getByLabel("Start", { exact: true }).isDisabled(), true);
-      assert.equal(await page.getByLabel(/^Price/).inputValue(), "22.00");
-      await page.getByRole("dialog", { name: "New appointment", exact: true }).evaluate(element => { element.lastElementChild.scrollTop = 0; });
+      // The carried date is two days out, so it arrives as a pressed day button; "Other date" shows the same date as a field.
+      const dayGroup = booking.getByRole("group", { name: "Day", exact: true });
+      const carriedLabel = new Intl.DateTimeFormat("en-US", { timeZone: "UTC", weekday: "short" }).format(carriedDate) + " " + carriedDate.getUTCDate() + " " + new Intl.DateTimeFormat("en-US", { timeZone: "UTC", month: "short" }).format(carriedDate);
+      assert.deepEqual((await dayGroup.getByRole("button", { pressed: true }).allInnerTexts()).map(text => text.replace(/\s+/g, " ").trim()), [carriedLabel], "The date typed into New must be the chosen day of the booking");
+      assert.equal(await booking.getByLabel(/^Date/).count(), 0, "A day in the coming week is picked from buttons, not typed");
+      await dayGroup.getByRole("button", { name: "Other date", exact: true }).click();
+      assert.equal(await booking.getByLabel(/^Date/).inputValue(), appointmentDate);
+      const serviceGroup = booking.getByRole("group", { name: "Service", exact: true });
+      assert.equal(await serviceGroup.getByRole("button", { pressed: true }).count(), 1);
+      assert.ok((await serviceGroup.getByRole("button", { pressed: true }).innerText()).includes(services[0].name), "The only active service must be chosen for a new booking");
+      assert.equal(await booking.getByLabel(/^Price/).inputValue(), "22.00", "Creating a booking must use the agreed service quote, not a payment amount");
+      await dayGroup.getByRole("button", { name: /^Today/ }).click();
+      assert.equal(await dayGroup.getByRole("button", { name: /^Today/ }).getAttribute("aria-pressed"), "true");
+      assert.equal(await booking.getByLabel(/^Date/).count(), 0);
+      // Secondary fields are tucked behind "More options" on a new booking.
+      const moreOptions = booking.getByRole("button", { name: "More options", exact: true });
+      assert.equal(await moreOptions.getAttribute("aria-expanded"), "false");
+      assert.equal(await booking.getByLabel("Home visit", { exact: true }).count(), 0);
+      await moreOptions.click();
+      await booking.getByLabel("Time to confirm", { exact: true }).check();
+      await booking.getByLabel("Home visit", { exact: true }).check();
+      await booking.getByRole("button", { name: "Use saved address", exact: true }).click();
+      assert.equal(await booking.getByLabel(/^Address/).inputValue(), clients[1].saved_address);
+      await booking.getByLabel(/^Address/).fill("3 Manual Browser Fixture Road\nA very long building name with a stairwell, floor and apartment number\nLondon");
+      await booking.getByLabel("Postcode", { exact: true }).fill("sw1a 1aa");
+      await booking.getByLabel("Save this address for future appointments", { exact: true }).check();
+      // A booking still waiting for its time offers no start time at all: no free-time buttons and no Start field.
+      const timeGroup = booking.getByRole("group", { name: "Time", exact: true });
+      await timeGroup.getByText(/^To be confirmed\./).waitFor();
+      assert.equal(await timeGroup.getByRole("button").count(), 0, "An untimed booking must not offer start times");
+      assert.equal(await booking.getByLabel("Start", { exact: true }).count(), 0, "An untimed booking must not take a start time");
+      assert.equal(await booking.getByLabel(/^Price/).inputValue(), "22.00");
+      await booking.evaluate(element => { element.lastElementChild.scrollTop = 0; });
       await capture(page, output, `admin-manual-remote-untimed-form-${viewport.width}.png`);
-      await page.getByRole("dialog", { name: "New appointment", exact: true }).evaluate(element => { element.lastElementChild.scrollTop = element.lastElementChild.scrollHeight; });
+      await booking.evaluate(element => { element.lastElementChild.scrollTop = element.lastElementChild.scrollHeight; });
       await capture(page, output, `admin-manual-remote-untimed-form-bottom-${viewport.width}.png`);
-      await page.getByRole("button", { name: "Book appointment", exact: true }).click();
+      await booking.getByRole("button", { name: "Book appointment", exact: true }).click();
       await page.getByRole("heading", { name: "New appointment", exact: true }).waitFor({ state: "hidden" });
       const manual = records.appointments.find(item => item.client_id === clients[1].id);
       assert.ok(manual);
+      assert.equal(manual.date, date);
       assert.equal(manual.status, "confirmed");
       assert.equal(manual.time_confirmed, false);
       assert.equal(manual.start_time, "00:00");
@@ -317,31 +349,58 @@ async function desktopFeatures(browser, url, output, evidence) {
       assert.equal(manual.price_pence, 2200);
       assert.equal(fixture.select("SELECT COUNT(*) AS n FROM transactions")[0].n, 0, "Creating an appointment through New entry must not record income");
       assert.ok(records.clients[1].saved_address.includes("Manual Browser Fixture"));
-      const allDay = page.locator('[aria-label="All-day appointments awaiting a time"]');
-      await allDay.waitFor();
-      assert.ok((await allDay.innerText()).includes(clients[1].name));
-      await page.locator('section[aria-label="Appointments needing a confirmed time"]').waitFor();
+      // With room for the hour grid, untimed bookings sit in its "All day" row. A narrower diary is a list,
+      // where the same booking reads "To agree" and "Time to confirm".
+      const compactDiary = await page.locator("main > div").evaluate(element => {
+        const style = getComputedStyle(element);
+        return element.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) < 600;
+      });
+      if (compactDiary) {
+        const untimed = page.getByRole("button", { name: new RegExp(clients[1].name) }).filter({ hasText: "To agree" });
+        await untimed.waitFor();
+        assert.ok((await untimed.innerText()).includes("Time to confirm"));
+        assert.equal(await page.locator('[aria-label="All-day appointments awaiting a time"]').count(), 0);
+      } else {
+        const allDay = page.locator('[aria-label="All-day appointments awaiting a time"]');
+        await allDay.waitFor();
+        assert.ok((await allDay.innerText()).includes(clients[1].name));
+      }
+      const needsTime = page.locator('section[aria-label="Appointments needing a confirmed time"]');
+      await needsTime.waitFor();
+      assert.ok((await needsTime.innerText()).includes(clients[1].name));
       await capture(page, output, `admin-all-day-calendar-${viewport.width}.png`);
 
-      await page.locator('nav a[title="To do"]').click();
-      await page.getByRole("button", { name: clients[0].name, exact: true }).waitFor();
-      assert.equal(await page.getByRole("button", { name: clients[1].name, exact: true }).count(), 0, "Admin-created entries must stay out of Requests");
-      await page.locator('nav a[title="Schedule"]').click();
+      await page.locator('nav a[title="Today"]').click();
+      await needsYou.getByRole("button", { name: clients[0].name, exact: true }).waitFor();
+      assert.equal(await needsYou.getByRole("button", { name: clients[1].name, exact: true }).count(), 0, "Admin-created entries must stay out of Requests");
+      assert.equal(await needsYou.getByText(clients[1].name).count(), 0, "Admin-created entries must stay out of Requests");
+      await page.locator('nav a[title="Diary"]').click();
       await page.getByRole("button", { name: "Day", exact: true }).click();
       await page.getByRole("button", { name: new RegExp(clients[2].name) }).first().click();
       await page.getByRole("heading", { name: "Appointment", exact: true }).waitFor();
-      // The heading renders before the asynchronous form reset finishes.
+      // An existing appointment opens on its summary; "Edit details" reveals the form.
+      const salon = page.getByRole("dialog", { name: "Appointment", exact: true });
+      await salon.getByRole("region", { name: "Booking status", exact: true }).waitFor();
+      await salon.getByText(clients[2].name, { exact: true }).waitFor();
+      assert.equal(await page.getByRole("button", { name: "Show map", exact: true }).count(), 0, "Salon bookings must not render map controls");
+      assert.equal(await salon.getByText("Home visit", { exact: true }).count(), 0, "Salon bookings must not read as home visits");
+      await capture(page, output, `admin-salon-booking-${viewport.width}.png`);
+      await salon.getByRole("button", { name: "Edit details", exact: true }).click();
+      // The form fields fill in once the asynchronous form reset finishes.
       await page.waitForFunction(name => document.querySelector('input[role="combobox"]')?.value === name, clients[2].name);
       assert.equal(await page.getByRole("button", { name: "Show map", exact: true }).count(), 0, "Salon bookings must not render map controls");
-      assert.equal(await page.getByLabel("Home visit", { exact: true }).isChecked(), false);
-      await capture(page, output, `admin-salon-booking-${viewport.width}.png`);
+      assert.equal(await salon.getByLabel("Home visit", { exact: true }).isChecked(), false);
+      await capture(page, output, `admin-salon-booking-edit-${viewport.width}.png`);
       await page.getByRole("button", { name: "Cancel", exact: true }).last().click();
+      await salon.waitFor({ state: "hidden" });
 
       await page.locator('nav a[title="Settings"]').click();
+      // A phone-width Settings opens on its list of sections; wider, the list sits beside the chosen section.
+      await page.getByRole("navigation", { name: "Settings sections", exact: true }).getByRole("link", { name: /^Services and prices/ }).click();
       await page.getByRole("button", { name: `Edit ${services[0].name}`, exact: true }).click();
       await page.getByRole("heading", { name: "Edit service", exact: true }).waitFor();
-      const discountEnabled = page.getByLabel("Discount enabled", { exact: true });
-      if (await discountEnabled.count()) await discountEnabled.check();
+      const discountEnabled = page.getByLabel("Offer a discount", { exact: true });
+      assert.equal(await discountEnabled.isChecked(), true, "A discounted service must open with its discount on");
       await page.getByLabel("Discount (%)", { exact: true }).fill("30");
       await capture(page, output, `admin-discount-editor-${viewport.width}.png`);
       await page.getByRole("button", { name: "Save", exact: true }).last().click();
@@ -350,15 +409,21 @@ async function desktopFeatures(browser, url, output, evidence) {
       assert.equal(manual.price_pence, 2200, "Editing a discount must not change an existing booking quote");
       assert.equal(manual.discount_percent, 20);
 
-      await page.locator('nav a[title="Schedule"]').click();
+      await page.locator('nav a[title="Diary"]').click();
       await page.getByRole("button", { name: "Book", exact: true }).click();
       await page.getByRole("heading", { name: "New appointment", exact: true }).waitFor();
       await page.getByRole("combobox").first().fill("Retry New Guest");
       await page.getByRole("option", { name: /Retry New Guest.*as a new client/ }).click();
+      // Day and time are picked from buttons. Tomorrow is open all day, so its free times do not depend on the clock.
+      const retry = page.getByRole("dialog", { name: "New appointment", exact: true });
+      await retry.getByRole("group", { name: "Day", exact: true }).getByRole("button", { name: /^Tomorrow/ }).click();
+      const freeTimes = retry.getByRole("group", { name: "Time", exact: true });
+      await freeTimes.getByRole("button", { name: "9am", exact: true }).click();
+      assert.equal(await freeTimes.getByRole("button", { name: "9am", exact: true }).getAttribute("aria-pressed"), "true");
       fixture.failNextAppointment();
       await page.getByRole("button", { name: "Book appointment", exact: true }).click();
       await page.getByText("409: Fixture slot no longer available", { exact: true }).waitFor();
-      await page.getByLabel("Start", { exact: true }).fill("11:00");
+      await freeTimes.getByRole("button", { name: "11am", exact: true }).click();
       await page.getByRole("button", { name: "Book appointment", exact: true }).click();
       await page.getByRole("heading", { name: "New appointment", exact: true }).waitFor({ state: "hidden" });
       const guestCreates = fixture.mutations.filter(item => item.operation === "clients" && item.method === "POST");
@@ -366,15 +431,20 @@ async function desktopFeatures(browser, url, output, evidence) {
       const guestAttempts = fixture.mutations.filter(item => item.operation === "appointments" && item.method === "POST" && item.body.client_id === guestCreates[0].body.id);
       assert.equal(guestAttempts.length, 2);
       assert.equal(guestAttempts[0].body.client_id, guestAttempts[1].body.client_id);
+      assert.deepEqual(guestAttempts.map(item => item.body.start_time), ["09:00", "11:00"], "Each attempt must send the time picked from the free-time buttons");
       assert.equal(records.clients.filter(item => item.name === "Retry New Guest").length, 1);
 
-      await page.locator('nav a[title="Schedule"]').click();
+      await page.locator('nav a[title="Diary"]').click();
       await page.getByRole("button", { name: new RegExp(clients[1].name) }).first().click();
       await page.getByRole("heading", { name: "Appointment", exact: true }).waitFor();
-      await page.waitForFunction(name => document.querySelector('input[role="combobox"]')?.value === name, clients[1].name);
-      await page.getByRole("button", { name: "Mark paid", exact: true }).click();
+      const paying = page.getByRole("dialog", { name: "Appointment", exact: true });
+      await paying.getByText(clients[1].name, { exact: true }).waitFor();
+      // One tap records the agreed price.
+      await paying.getByRole("button", { name: "Mark paid £22.00", exact: true }).click();
       await page.getByRole("heading", { name: "Appointment", exact: true }).waitFor({ state: "hidden" });
       await page.getByRole("button", { name: new RegExp(clients[1].name) }).first().click();
+      await paying.getByRole("region", { name: "Booking status", exact: true }).getByText("Paid £22.00", { exact: true }).waitFor();
+      await paying.getByRole("button", { name: "Edit details", exact: true }).click();
       await page.getByRole("button", { name: "Delete booking", exact: true }).click();
       const deleteBooking = page.getByRole("dialog", { name: "Delete appointment?", exact: true });
       await deleteBooking.waitFor();
@@ -386,8 +456,10 @@ async function desktopFeatures(browser, url, output, evidence) {
       assert.deepEqual(fixture.select("SELECT amount_pence,client_id,description FROM transactions")[0], { amount_pence: 2200, client_id: null, description: null }, "Permanent booking deletion must retain anonymized money");
 
       await page.locator('nav a[title="Clients"]').click();
-      await page.getByText(clients[1].name, { exact: true }).first().click();
-      await page.getByRole("button", { name: "Delete client", exact: true }).click();
+      await page.getByRole("region", { name: "Client list", exact: true }).getByRole("button", { name: clients[1].name, exact: true }).click();
+      // Rare and risky client actions sit under "More".
+      await page.getByRole("button", { name: "More", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Delete client", exact: true }).click();
       const deleteClient = page.getByRole("dialog", { name: "Delete client?", exact: true });
       await deleteClient.waitFor();
       await capture(page, output, `admin-delete-client-${viewport.width}.png`);

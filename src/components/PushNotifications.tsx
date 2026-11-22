@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { Bell } from "lucide-react";
 import { disablePwaPush, enablePwaPush, getPwaPush } from "@/lib/pwa-access";
-import { Button, Card, CardHeader } from "./ui";
+import { Button, Card, CardHeader, ErrorText } from "./ui";
+import { Help } from "./settings/parts";
 
 function installed() {
   return Boolean((navigator as Navigator & { standalone?: boolean }).standalone) || matchMedia("(display-mode: standalone)").matches;
@@ -50,7 +50,7 @@ export function PushNotifications() {
       const key = decodeKey(status.public_key);
       if (alive) setState({ manager, key, subscription, enabled: status.enabled });
     }).catch(cause => {
-      if (alive) setError(cause instanceof Error ? cause.message : "Could not load notification settings.");
+      if (alive) setError(cause instanceof Error ? cause.message : "Couldn't load notification settings.");
     });
     return () => { alive = false; };
   }, [standalone, available, reload]);
@@ -70,7 +70,7 @@ export function PushNotifications() {
     } catch (cause) {
       setError(Notification.permission === "denied"
         ? "Allow notifications for Tanned by Ffy in your iPhone notification settings."
-        : cause instanceof Error ? cause.message : "Could not enable notifications.");
+        : cause instanceof Error ? cause.message : "Couldn't turn on notifications. Try again.");
     } finally { setBusy(false); }
   };
 
@@ -83,23 +83,23 @@ export function PushNotifications() {
       await state.subscription?.unsubscribe().catch(() => {});
       setState({ ...state, enabled: false, subscription: await state.manager.getSubscription() });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not disable notifications.");
+      setError(cause instanceof Error ? cause.message : "Couldn't turn off notifications. Try again.");
     } finally { setBusy(false); }
   };
 
+  const on = Boolean(state?.enabled && state.subscription && Notification.permission === "granted");
   return <Card>
-    <CardHeader title="Push notifications" subtitle="Booking requests, payments to confirm and new Mail" action={<Bell size={18} className="text-rose" />} />
-    <div className="space-y-3 px-5 pb-5 text-sm">
-      {!standalone ? <p className="text-muted">Add the tracker to your Home Screen in Safari and open it from the icon to enable alerts.</p> :
-        !available ? <p className="text-muted">Push notifications require iOS 16.4 or later and a trusted HTTPS connection.</p> :
+    <CardHeader title="Notifications" subtitle="Booking requests, payments to confirm and new mail" />
+    <div className="space-y-3 px-5 pb-5">
+      {!standalone ? <Help>Add the tracker to your Home Screen in Safari and open it from the icon to get notifications.</Help> :
+        !available ? <Help>Notifications need iOS 16.4 or later and a secure connection.</Help> :
         state ? <>
-          <p className="text-ink-2">{state.enabled && state.subscription && Notification.permission === "granted"
-            ? "Alerts are enabled on this iPhone." : "Enable alerts to receive updates while the app is closed."}</p>
-          {state.enabled ? <Button disabled={busy} onClick={() => void disable()}>Disable push notifications</Button> :
-            <Button variant="primary" disabled={busy} onClick={() => void enable()}>Enable push notifications</Button>}
-        </> : error ? <Button size="sm" onClick={() => { setError(""); setReload(value => value + 1); }}>Retry</Button> :
-          <p role="status" className="text-muted">Checking notification settings…</p>}
-      {error && <p role="alert" className="break-words text-bad">{error}</p>}
+          <p className="text-ink-2">{on ? "Notifications are on for this iPhone." : "Turn on notifications to hear about things while the app is closed."}</p>
+          {state.enabled ? <Button disabled={busy} onClick={() => void disable()}>Turn off notifications</Button> :
+            <Button variant="primary" disabled={busy} onClick={() => void enable()}>Turn on notifications</Button>}
+        </> : error ? <Button onClick={() => { setError(""); setReload(value => value + 1); }}>Retry</Button> :
+          <p role="status" className="text-small text-ink-2">Checking notification settings…</p>}
+      {error && <ErrorText>{error}</ErrorText>}
     </div>
   </Card>;
 }

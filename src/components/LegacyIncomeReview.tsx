@@ -1,11 +1,10 @@
 import { useEffect, useState } from "react";
-import { Check } from "lucide-react";
 import { toast } from "sonner";
 import { listLegacyIncomeCategories, resolveLegacyIncomeCategory } from "@/lib/db";
 import { useData } from "@/lib/data";
 import { money } from "@/lib/format";
 import { listServices } from "@/lib/sync";
-import { Button, Card, CardHeader, Select } from "@/components/ui";
+import { Button, Card, CardHeader, ErrorText, Select } from "@/components/ui";
 
 type LegacyCategory = Awaited<ReturnType<typeof listLegacyIncomeCategories>>[number];
 type Service = Awaited<ReturnType<typeof listServices>>[number];
@@ -30,7 +29,7 @@ export function LegacyIncomeReview() {
         setServices(nextServices);
         setError("");
       })
-      .catch((cause) => { if (alive) setError(cause instanceof Error ? cause.message : "The legacy income review could not be loaded."); })
+      .catch((cause) => { if (alive) setError(cause instanceof Error ? cause.message : "Couldn't load your older income."); })
       .finally(() => { if (alive) setLoaded(true); });
     return () => { alive = false; };
   }, [version]);
@@ -51,7 +50,7 @@ export function LegacyIncomeReview() {
       toast.success(choice === OTHER_INCOME ? "Kept as other income" : "Linked to service");
       refresh();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The classification could not be saved.");
+      setError(cause instanceof Error ? cause.message : "Couldn't save. Try again.");
       refresh();
     } finally { setBusyId(null); }
   };
@@ -61,51 +60,45 @@ export function LegacyIncomeReview() {
   const archivedServices = services.filter((service) => !service.active);
 
   return (
-    <Card className="self-start">
-      <CardHeader title="Review older income" />
-      <div className="px-5 pb-5">
-        <p className="mb-3 text-xs text-muted">Older records use these labels. Choose whether each one was a service or other income. Amounts and saved labels don't change.</p>
-        {error && <p className="mb-3 text-sm text-bad" role="alert">{error}</p>}
-        <ul className="divide-y divide-line">
-          {categories.map((category) => (
-            <li key={category.id} className="space-y-2 py-3">
-              <div className="min-w-0">
-                <p className="break-words text-sm font-medium">{category.name}</p>
-                <p className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-xs text-muted">
-                  <span>{category.transaction_count} {category.transaction_count === 1 ? "payment" : "payments"}</span>
-                  <span>{money(category.total_pence)}</span>
-                  <span>{category.appointment_count} {category.appointment_count === 1 ? "appointment" : "appointments"}</span>
-                </p>
-              </div>
-              <div className="flex min-w-0 items-center gap-2">
-                <Select
-                  aria-label={`Classification for ${category.name}`}
-                  disabled={busyId !== null}
-                  value={choices[category.id] ?? ""}
-                  onChange={(event) => {
-                    setChoices((current) => ({ ...current, [category.id]: event.target.value }));
-                    setError("");
-                  }}
-                >
-                  <option value="">Choose classification</option>
-                  <option value={OTHER_INCOME}>Keep as other income</option>
-                  {activeServices.length > 0 && <optgroup label="Services">{activeServices.map((service) => <option key={service.id} value={service.id}>{service.name}</option>)}</optgroup>}
-                  {archivedServices.length > 0 && <optgroup label="Archived services">{archivedServices.map((service) => <option key={service.id} value={service.id}>{service.name} (archived)</option>)}</optgroup>}
-                </Select>
-                <Button
-                  size="icon"
-                  variant="primary"
-                  className="shrink-0"
-                  title={`Apply review for ${category.name}`}
-                  aria-label={`Apply review for ${category.name}`}
-                  disabled={busyId !== null || !choices[category.id] || (choices[category.id] !== OTHER_INCOME && !services.some((service) => service.id === choices[category.id]))}
-                  onClick={() => void apply(category)}
-                ><Check size={15} /></Button>
-              </div>
-            </li>
-          ))}
-        </ul>
-      </div>
+    <Card>
+      <CardHeader title="Older income to sort" subtitle="These labels are from before you had services. Say what each one was. Amounts don't change." />
+      {error && <ErrorText className="px-5 pb-3">{error}</ErrorText>}
+      <ul className="divide-y divide-line border-t border-line">
+        {categories.map((category) => (
+          <li key={category.id} className="space-y-2 px-5 py-3">
+            <div className="min-w-0">
+              <p className="break-words font-medium">{category.name}</p>
+              <p className="tabular flex flex-wrap gap-x-2 text-small text-ink-2">
+                <span>{category.transaction_count} {category.transaction_count === 1 ? "payment" : "payments"}</span>
+                <span>· {money(category.total_pence)}</span>
+                <span>· {category.appointment_count} {category.appointment_count === 1 ? "appointment" : "appointments"}</span>
+              </p>
+            </div>
+            <div className="flex min-w-0 items-center gap-2">
+              <Select
+                aria-label={`Classification for ${category.name}`}
+                disabled={busyId !== null}
+                value={choices[category.id] ?? ""}
+                onChange={(event) => {
+                  setChoices((current) => ({ ...current, [category.id]: event.target.value }));
+                  setError("");
+                }}
+              >
+                <option value="">Choose what this was</option>
+                <option value={OTHER_INCOME}>Other income (not a service)</option>
+                {activeServices.length > 0 && <optgroup label="Services">{activeServices.map((service) => <option key={service.id} value={service.id}>{service.name}</option>)}</optgroup>}
+                {archivedServices.length > 0 && <optgroup label="Archived services">{archivedServices.map((service) => <option key={service.id} value={service.id}>{service.name} (archived)</option>)}</optgroup>}
+              </Select>
+              <Button
+                variant="primary"
+                aria-label={`Apply review for ${category.name}`}
+                disabled={busyId !== null || !choices[category.id] || (choices[category.id] !== OTHER_INCOME && !services.some((service) => service.id === choices[category.id]))}
+                onClick={() => void apply(category)}
+              >Apply</Button>
+            </div>
+          </li>
+        ))}
+      </ul>
     </Card>
   );
 }

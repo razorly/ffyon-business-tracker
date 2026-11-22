@@ -13,19 +13,18 @@ import { AppointmentDialog } from "@/components/AppointmentDialog";
 import { TrayBridge } from "@/components/TrayBridge";
 import { AccessGate } from "@/components/AccessGate";
 import { SyncBridge } from "@/components/SyncBridge";
-import { isDesktop } from "@/lib/access";
+import { isDesktop, isPwa } from "@/lib/access";
 import { LedgerGate } from "@/components/LedgerGate";
 import { useData } from "@/lib/data";
-const TodoPage = lazy(() => import("@/pages/Todo").then(module => ({ default: module.TodoPage })));
 const MailPage = lazy(() => import("@/pages/Mail").then(module => ({ default: module.MailPage })));
-const Dashboard = lazy(() => import("@/pages/Dashboard").then(module => ({ default: module.Dashboard })));
+const Today = lazy(() => import("@/pages/Today").then(module => ({ default: module.Today })));
 const Schedule = lazy(() => import("@/pages/Schedule").then(module => ({ default: module.Schedule })));
 const Finances = lazy(() => import("@/pages/Finances").then(module => ({ default: module.Finances })));
 const Clients = lazy(() => import("@/pages/Clients").then(module => ({ default: module.Clients })));
 const Settings = lazy(() => import("@/pages/Settings").then(module => ({ default: module.Settings })));
 
 function Page({ children }: { children: ReactNode }) {
-  return <Suspense fallback={<p className="p-6 text-muted" role="status">Loading…</p>}>{children}</Suspense>;
+  return <Suspense fallback={<p className="py-6 text-small text-ink-2" role="status">Loading…</p>}>{children}</Suspense>;
 }
 
 function Shell() {
@@ -47,14 +46,15 @@ function Shell() {
           <SyncBridge />
           <Routes>
             <Route element={<Layout />}>
-              <Route index element={<Page><Dashboard /></Page>} />
+              <Route index element={<Page><Today /></Page>} />
               <Route path="schedule" element={<Page><Schedule /></Page>} />
-              <Route path="todo" element={<Page><TodoPage /></Page>} />
+              {/* To do now lives on Today. Push alerts and older bookmarks still link here. */}
+              <Route path="todo" element={<Navigate to="/" replace />} />
               <Route path="mail/:conversationId?" element={<Page><MailPage /></Page>} />
               <Route path="finances" element={<Page><Finances /></Page>} />
               {/* Older names and bookmarks */}
-              <Route path="inbox" element={<Navigate to="/todo" replace />} />
-              <Route path="requests" element={<Navigate to="/todo" replace />} />
+              <Route path="inbox" element={<Navigate to="/" replace />} />
+              <Route path="requests" element={<Navigate to="/" replace />} />
               <Route path="monthly" element={<Navigate to="/finances" replace />} />
               <Route path="clients" element={<Page><Clients /></Page>} />
               <Route path="settings" element={<Page><Settings /></Page>} />
@@ -90,6 +90,8 @@ function AppContent() {
   const { dark } = useTheme();
   return <>
     <WindowFrame><AccessGate><LedgerGate><Shell /></LedgerGate></AccessGate></WindowFrame>
-    <Toaster position="bottom-right" theme={dark ? "dark" : "light"} style={{ zIndex: 40 }} richColors closeButton />
+    {/* On the phone, toasts sit above the tab bar so they never cover a tab. */}
+    <Toaster position="bottom-right" theme={dark ? "dark" : "light"} style={{ zIndex: 40 }} richColors closeButton
+      mobileOffset={isPwa() ? { bottom: "calc(80px + env(safe-area-inset-bottom))" } : undefined} />
   </>;
 }

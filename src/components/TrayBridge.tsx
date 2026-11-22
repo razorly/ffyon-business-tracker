@@ -192,12 +192,12 @@ export function TrayBridge() {
   const where = trayName();
   return (
     <Modal open={asking} onClose={() => setAsking(false)} title="Keep Tanned by Ffy running?" width="max-w-sm">
-      <p className="text-sm text-ink-2">
+      <p className="text-body text-ink-2">
         Tanned by Ffy can stay in the {where}, where a tan can be booked in with one click and {QUICK_KEYS_LABEL} opens a new
         entry from anywhere. Or it can close properly each time.
       </p>
-      <p className="mt-2 text-xs text-muted">You can change this later in Settings.</p>
-      <div className="mt-5 flex justify-end gap-2">
+      <p className="mt-2 text-small text-ink-2">You can change this later in Settings.</p>
+      <div className="mt-5 flex flex-wrap justify-end gap-2">
         <Button
           onClick={async () => {
             setAsking(false);

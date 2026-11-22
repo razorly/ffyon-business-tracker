@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { checkAccess, connectOwner, getAccessStatus, isPwa, onAccessChanged, pairDevice, prepareOwnerConnection, type AccessStatus } from "@/lib/access";
 import { checkForUpdate } from "@/lib/update";
 import { quitApp } from "@/lib/tray";
-import { Button, Field, Input, Segmented } from "./ui";
+import { Button, Card, ErrorText, Field, Input, Loading, Segmented } from "./ui";
 import { BrandLogo } from "./BrandLogo";
 
 const locked: AccessStatus = { state: "checking", device_id: null, device_name: null, expires_at: null, error: null };
@@ -71,40 +71,39 @@ function LockedScreen({ status, onStatus }: { status: AccessStatus; onStatus: (v
     void run(async () => onStatus(await pairDevice(code.replace(/[\s-]/g, "").toUpperCase(), name.trim())));
   };
   return <main className={webApp ? "pwa-locked h-full overflow-y-auto bg-page" : "flex h-full min-h-[600px] items-center justify-center overflow-y-auto bg-page px-6 py-10"}>
-    <div className="mx-auto w-full max-w-lg">
-      <div className="mb-8 text-center">
-        <BrandLogo />
-        <div className="eyebrow mt-3 text-muted">Business Tracker</div>
-      </div>
-      <div className="flex items-center gap-3 border-b border-line pb-4">
-        <ShieldCheck size={24} className="shrink-0 text-rose" />
-        <div><h1 className="font-display text-[25px]">Admin access required</h1><p className="mt-1 text-sm text-ink-2">This {webApp ? "device" : "computer"} needs approval before opening your business records.</p></div>
-      </div>
-      {status.state === "checking" ? <div role="status" className="flex items-center gap-3 py-8 text-sm text-muted"><LoaderCircle size={18} className="animate-spin" /> Checking authorization</div> : <>
-        {(error ?? status.error) && <p role="alert" className="mt-4 break-words text-sm text-bad">{error ?? status.error}</p>}
-        {status.device_id && <Button className="mt-4" disabled={busy} onClick={retry}><RefreshCw size={15} /> Verify Connection</Button>}
-        {!webApp && <div className="mt-6"><Segmented value={mode} onChange={setMode} options={[{ value: "pair", label: "Pair Device" }, { value: "owner", label: "Set Up First Admin" }]} /></div>}
-        <form onSubmit={pairing} className="mt-5 space-y-4">
-          <Field label={webApp ? "Device name" : "Computer name"}><Input autoComplete="off" maxLength={80} value={name} onChange={(e) => setName(e.target.value)} placeholder={webApp ? "e.g. Salon iPhone" : "e.g. Salon Mac"} disabled={busy || !!setup} /></Field>
-          {mode === "pair" ? <>
-            <Field label="Pairing code" hint="Get a ten-minute code from Settings > Site Connection on an approved computer."><Input autoComplete="off" autoCapitalize="characters" spellCheck={false} maxLength={18} value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder="XXXX-XXXX-XXXX" disabled={busy} className="font-mono" /></Field>
-            <Button type="submit" variant="primary" disabled={busy || !name.trim() || code.replace(/[\s-]/g, "").length !== 12}>{busy ? <LoaderCircle size={15} className="animate-spin" /> : <KeyRound size={15} />} Pair Device</Button>
-          </> : <>
-            {!setup ? <Button type="button" variant="primary" disabled={busy || !name.trim()} onClick={() => run(async () => setSetup(await prepareOwnerConnection(name.trim())))}><KeyRound size={15} /> Generate setup values</Button> : <>
-              <p className="text-sm text-ink-2">In the trusted Sites project configuration, set these runtime secrets, then verify this connection.</p>
-              <SetupValue label="FFYON_BOOTSTRAP_DEVICE_ID" value={setup.device_id} />
-              <SetupValue label="FFYON_BOOTSTRAP_TOKEN_HASH" value={setup.token_hash} />
-              <Button type="button" variant="primary" disabled={busy} onClick={() => run(async () => onStatus(await connectOwner()))}>{busy ? <LoaderCircle size={15} className="animate-spin" /> : <Check size={15} />} Verify Connection</Button>
+    <div className="mx-auto w-full max-w-md">
+      <div className="mb-8"><BrandLogo /></div>
+      <Card className="p-5 sm:p-6">
+        <div className="flex items-start gap-3">
+          <ShieldCheck size={22} className="mt-1.5 shrink-0 text-rose-ink" aria-hidden />
+          <div className="min-w-0"><h1 className="font-display text-title">Admin access required</h1><p className="mt-1 text-small text-ink-2">This {webApp ? "device" : "computer"} needs approval before opening your business records.</p></div>
+        </div>
+        {status.state === "checking" ? <Loading label="Checking this device" className="px-0" /> : <>
+          {(error ?? status.error) && <ErrorText className="mt-4">{error ?? status.error}</ErrorText>}
+          {status.device_id && <Button className="mt-4" disabled={busy} onClick={retry}><RefreshCw size={16} aria-hidden /> Verify connection</Button>}
+          {!webApp && <div className="mt-5"><Segmented label="How to connect" className="w-full" value={mode} onChange={setMode} options={[{ value: "pair", label: "Pair device" }, { value: "owner", label: "Set up first admin" }]} /></div>}
+          <form onSubmit={pairing} className="mt-5 space-y-4">
+            <Field label={webApp ? "Device name" : "Computer name"}><Input autoComplete="off" maxLength={80} value={name} onChange={(e) => setName(e.target.value)} placeholder={webApp ? "e.g. Salon iPhone" : "e.g. Salon Mac"} disabled={busy || !!setup} /></Field>
+            {mode === "pair" ? <>
+              <Field label="Pairing code" hint="Get a ten-minute code from Settings, This device, on a computer that is already approved."><Input autoComplete="off" autoCapitalize="characters" spellCheck={false} maxLength={18} value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder="XXXX-XXXX-XXXX" disabled={busy} className="tabular font-mono" /></Field>
+              <Button type="submit" variant="primary" className="w-full" disabled={busy || !name.trim() || code.replace(/[\s-]/g, "").length !== 12}>{busy ? <LoaderCircle size={16} className="animate-spin" aria-hidden /> : <KeyRound size={16} aria-hidden />} Pair device</Button>
+            </> : <>
+              {!setup ? <Button type="button" variant="primary" className="w-full" disabled={busy || !name.trim()} onClick={() => run(async () => setSetup(await prepareOwnerConnection(name.trim())))}><KeyRound size={16} aria-hidden /> Generate setup values</Button> : <>
+                <p className="text-small text-ink-2">In the trusted Sites project configuration, set these runtime secrets, then verify this connection.</p>
+                <SetupValue label="FFYON_BOOTSTRAP_DEVICE_ID" value={setup.device_id} />
+                <SetupValue label="FFYON_BOOTSTRAP_TOKEN_HASH" value={setup.token_hash} />
+                <Button type="button" variant="primary" className="w-full" disabled={busy} onClick={() => run(async () => onStatus(await connectOwner()))}>{busy ? <LoaderCircle size={16} className="animate-spin" aria-hidden /> : <Check size={16} aria-hidden />} Verify connection</Button>
+              </>}
+              <p className="text-small text-ink-2">Only the site owner can set up the first admin, or recover access when every approved device is lost.</p>
             </>}
-            <p className="text-xs text-muted">Only the site owner can configure first-admin access or recover access when all approved devices are lost.</p>
-          </>}
-        </form>
-        <p className="mt-6 border-t border-line pt-4 text-xs text-muted">{webApp
-          ? "On iPhone, add this page to your Home Screen in Safari, then open it from the new icon before pairing."
-          : "Windows stores the credential in Credential Manager. macOS uses Keychain and may ask you to allow access. This computer stays locked if secure storage is unavailable."}</p>
-      </>}
-      {!webApp && <div className="mt-6 flex items-center justify-between gap-3">
-        <Button variant="ghost" disabled={busy} onClick={() => run(async () => { await checkForUpdate(false); })}><Download size={14} /> Check for updates</Button>
+          </form>
+          <p className="mt-5 border-t border-line pt-4 text-small text-ink-2">{webApp
+            ? "On iPhone, add this page to your Home Screen in Safari, then open it from the new icon before pairing."
+            : "Windows stores the credential in Credential Manager. macOS uses Keychain and may ask you to allow access. This computer stays locked if secure storage is unavailable."}</p>
+        </>}
+      </Card>
+      {!webApp && <div className="mt-4 flex items-center justify-between gap-3">
+        <Button variant="ghost" disabled={busy} onClick={() => run(async () => { await checkForUpdate(false); })}><Download size={16} aria-hidden /> Check for updates</Button>
         <Button variant="ghost" onClick={() => void quitApp()}>Quit</Button>
       </div>}
     </div>
@@ -112,8 +111,8 @@ function LockedScreen({ status, onStatus }: { status: AccessStatus; onStatus: (v
 }
 
 function SetupValue({ label, value }: { label: string; value: string }) {
-  return <div className="rounded-lg border border-line bg-surface p-3">
-    <div className="flex items-center justify-between gap-2"><span className="min-w-0 break-all font-mono text-xs text-muted">{label}</span><Button type="button" variant="ghost" size="icon" aria-label={`Copy ${label}`} title={`Copy ${label}`} onClick={async () => { try { await navigator.clipboard.writeText(value); toast.success("Setup value copied"); } catch { toast.error("Select the setup value to copy it"); } }}><Copy size={14} /></Button></div>
-    <code className="mt-1 block break-all text-sm select-text">{value}</code>
+  return <div className="rounded-xl border border-line bg-surface-2/50 p-3">
+    <div className="flex items-center justify-between gap-2"><span className="min-w-0 break-all font-mono text-label text-ink-2">{label}</span><Button type="button" variant="ghost" size="sm" aria-label={`Copy ${label}`} title={`Copy ${label}`} onClick={async () => { try { await navigator.clipboard.writeText(value); toast.success("Setup value copied"); } catch { toast.error("Select the setup value to copy it"); } }}><Copy size={14} aria-hidden /> Copy</Button></div>
+    <code className="mt-1 block select-text break-all text-small">{value}</code>
   </div>;
 }

@@ -121,18 +121,31 @@ try {
   page.on("pageerror", error => errors.push(error.message));
   await page.goto(origin);
   await page.getByRole("heading", { name: "Admin access required" }).waitFor();
-  await page.getByRole("status", { name: "" }).filter({ hasText: "Checking authorization" }).waitFor({ state: "hidden" });
-  assert.equal(await page.getByRole("button", { name: "Set Up First Admin" }).count(), 0);
+  await page.getByRole("status", { name: "" }).filter({ hasText: "Checking this device" }).waitFor({ state: "hidden" });
+  assert.equal(await page.getByRole("button", { name: "Set up first admin" }).count(), 0);
   await page.getByPlaceholder("e.g. Salon iPhone").fill("Test iPhone");
   await page.getByPlaceholder("XXXX-XXXX-XXXX").fill("ABCD-2345-EFGH");
   const [paired] = await Promise.all([
     page.waitForResponse(response => response.url().endsWith("/api/pwa/pair")),
-    page.getByRole("button", { name: "Pair Device" }).click(),
+    page.getByRole("button", { name: "Pair device" }).click(),
   ]);
-  const nav = page.getByRole("navigation", { name: "Business tracker" });
+  // The phone shell: four tabs and New along the bottom, Mail and Settings in the header beside her logo.
+  const nav = page.getByRole("navigation", { name: "Main" });
+  const header = page.getByRole("banner");
+  await header.getByRole("img", { name: "Tanned by Ffy" }).waitFor();
+  assert.deepEqual(await nav.getByRole("link").allTextContents(), ["Today", "Diary", "Money", "Clients"]);
+  await page.getByRole("heading", { name: "Needs you" }).waitFor();
+  const fits = async name => {
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, `${name} must not scroll sideways`);
+    await page.screenshot({ path: resolve(output, `${name}-iphone.png`) });
+  };
+  await fits("today");
+  await nav.getByRole("link", { name: "Diary" }).click();
+  await page.getByRole("heading", { name: "Diary", exact: true }).waitFor();
+  await fits("diary");
   await nav.getByRole("link", { name: "Clients" }).click();
   await page.getByText(customer.name, { exact: true }).waitFor();
-  await page.screenshot({ path: resolve(output, "clients-iphone.png") });
+  await fits("clients");
   const cookies = await context.cookies();
   assert.equal(cookies.length, 2);
   assert.ok(cookies.every(cookie => cookie.name.startsWith("__Host-") && cookie.httpOnly && cookie.secure));
@@ -150,38 +163,45 @@ try {
   assert.equal(bootstrap.status(), 404);
   await Promise.all([
     page.waitForResponse(response => response.url().includes("/api/pwa/admin/mail/conversations")),
-    nav.getByRole("link", { name: "Mail" }).click(),
+    header.getByRole("link", { name: /^Mail/ }).click(),
   ]);
-  await page.getByRole("button", { name: "New entry" }).click();
-  const entry = page.getByRole("dialog");
-  await entry.getByRole("button", { name: "Income", exact: true }).click();
-  await entry.getByLabel("Amount").fill("23.50");
+  await page.getByRole("heading", { name: "Mail", exact: true }).waitFor();
+  await fits("mail");
+  await nav.getByRole("button", { name: "New", exact: true }).click();
+  const entry = page.getByRole("dialog", { name: "New", exact: true });
+  await entry.getByRole("button", { name: "Money in", exact: true }).click();
+  await page.screenshot({ path: resolve(output, "new-iphone.png") });
+  await entry.getByLabel(/^Amount/).fill("23.50");
   await entry.getByRole("button", { name: "Record income" }).click();
   await entry.waitFor({ state: "hidden" });
-  await nav.getByRole("link", { name: "Finances" }).click();
+  await nav.getByRole("link", { name: "Money" }).click();
   await page.getByText("£23.50", { exact: true }).first().waitFor();
   await page.reload();
   await page.getByText("£23.50", { exact: true }).first().waitFor();
-  await page.screenshot({ path: resolve(output, "finances-iphone.png") });
-  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
-  await nav.getByRole("link", { name: "Settings" }).click();
-  await page.getByRole("button", { name: "This device" }).click();
+  await fits("money");
+  await header.getByRole("link", { name: "Settings" }).click();
+  const sections = page.getByRole("navigation", { name: "Settings sections" });
+  await sections.getByRole("link", { name: /This device/ }).waitFor();
+  assert.equal(await sections.getByRole("link").count(), 5);
+  await fits("settings");
+  await sections.getByRole("link", { name: /This device/ }).click();
   const pushUrl = `${origin}/api/pwa/push`;
   const [enrollment] = await Promise.all([
     page.waitForResponse(response => response.url() === pushUrl && response.request().method() === "PUT"),
-    page.getByRole("button", { name: "Enable push notifications" }).click(),
+    page.getByRole("button", { name: "Turn on notifications" }).click(),
   ]);
   assert.equal(enrollment.status(), 200);
   const pushStatus = await enrollment.json();
   assert.deepEqual(Object.keys(pushStatus).sort(), ["enabled", "public_key"]);
   assert.equal(pushStatus.enabled, true);
-  await page.getByText("Alerts are enabled on this iPhone.", { exact: true }).waitFor();
+  await page.getByText("Notifications are on for this iPhone.", { exact: true }).waitFor();
+  await fits("settings-device");
   const [removal] = await Promise.all([
     page.waitForResponse(response => response.url() === pushUrl && response.request().method() === "DELETE"),
-    page.getByRole("button", { name: "Disable push notifications" }).click(),
+    page.getByRole("button", { name: "Turn off notifications" }).click(),
   ]);
   assert.equal((await removal.json()).enabled, false);
-  await page.getByRole("button", { name: "Enable push notifications" }).waitFor();
+  await page.getByRole("button", { name: "Turn on notifications" }).waitFor();
   const [download] = await Promise.all([
     page.waitForEvent("download"), page.getByRole("button", { name: "Save backup" }).click(),
   ]);
@@ -206,7 +226,7 @@ try {
   ]);
   await picker.setFiles({ name: "backup.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(backup)) });
   await page.getByText("Restored 1 entries", { exact: true }).waitFor();
-  await nav.getByRole("link", { name: "Finances" }).click();
+  await nav.getByRole("link", { name: "Money" }).click();
   await page.getByText("£41.00", { exact: true }).first().waitFor();
   const desktop = ledgerFixture();
   const seed = ledgerFixture();
@@ -230,12 +250,13 @@ try {
   siteAppointments.push(missingBooking);
   ledgerAvailable = true;
 
-  const desktopExpense = page.getByRole("row").filter({ hasText: "Desktop-only expense" });
+  // Entries are a list now: tapping one opens it, and Delete lives in that dialog.
+  const desktopExpense = page.getByRole("button").filter({ hasText: "Desktop-only expense" });
   await desktopExpense.waitFor({ timeout: 15000 });
   await page.getByText("£41.00", { exact: true }).first().waitFor();
-  await desktopExpense.getByRole("button", { name: "Delete" }).click();
-  const deleting = page.getByRole("dialog", { name: "Delete entry?" });
-  await deleting.getByRole("button", { name: "Delete" }).click();
+  await desktopExpense.click();
+  const deleting = page.getByRole("dialog", { name: "Edit entry" });
+  await deleting.getByRole("button", { name: "Delete", exact: true }).click();
   try { await deleting.waitFor({ state: "hidden", timeout: 5000 }); }
   catch (error) { throw new Error(await deleting.getByRole("alert").textContent({ timeout: 2000 }), { cause: error }); }
   await desktopExpense.waitFor({ state: "hidden" });
@@ -243,14 +264,17 @@ try {
   await page.getByRole("button", { name: customer.name, exact: true }).click();
   await page.getByRole("heading", { name: "Client notes" }).waitFor();
   await page.getByText("Desktop private note", { exact: true }).waitFor();
-  const editor = page.getByRole("dialog", { name: "Client notes" });
-  const notes = editor.getByLabel("Private client notes");
-  const save = editor.getByRole("button", { name: "Save notes" });
+  // Notes are edited in place on the profile, not in a separate dialog.
+  const editor = page.getByRole("region", { name: "Client notes" });
+  const notes = page.getByLabel("Private client notes");
+  const save = page.getByRole("button", { name: "Save notes" });
   await page.getByRole("button", { name: "Edit notes" }).click();
+  assert.equal(await page.getByRole("dialog").count(), 0);
   assert.equal(await notes.inputValue(), "Desktop private note");
+  await fits("client-notes");
   await notes.fill("Edited from phone\nSecond line");
   await save.click();
-  await editor.waitFor({ state: "hidden" });
+  await notes.waitFor({ state: "hidden" });
   const snapshot = await (await context.request.get(ledgerUrl, { headers: desktopHeaders })).json();
   const shared = ledgerFixture(Buffer.from(snapshot.content, "base64"));
   assert.deepEqual(shared.select("SELECT amount_pence FROM transactions"), [{ amount_pence: 4100 }]);
@@ -285,7 +309,7 @@ try {
   await save.click();
   await page.getByText("Notes for the second client", { exact: true }).waitFor();
 
-  // Reviews work even for bookings absent from Schedule.
+  // Reviews work even for bookings absent from the Diary.
   const reviewButton = page.getByRole("button", { name: "Review records" });
   const reviewDialog = page.getByRole("dialog", { name: "Earlier records to review" });
   await reviewButton.click();
@@ -308,19 +332,19 @@ try {
   assert.equal(concurrentSave.status(), 200);
   await addToClient.click();
   await reviewDialog.getByRole("alert").filter({ hasText: /changed/ }).waitFor();
-  await reviewDialog.getByRole("button", { name: "Refresh review" }).click();
+  await reviewDialog.getByRole("button", { name: "Refresh", exact: true }).click();
   await missing.getByText("Newer note from desktop", { exact: true }).waitFor();
   await addToClient.click();
   await missing.waitFor({ state: "hidden" });
   await matched.getByRole("button", { name: "Add to appointment note" }).click();
   await matched.waitFor({ state: "hidden" });
-  await unlinked.getByRole("button", { name: "Dismiss review" }).click();
+  await unlinked.getByRole("button", { name: "Dismiss", exact: true }).click();
   await reviewDialog.waitFor({ state: "hidden" });
   await reviewButton.waitFor({ state: "hidden" });
   const reopened = await context.newPage();
   reopened.on("pageerror", error => errors.push(error.message));
   await reopened.goto(origin);
-  await reopened.getByRole("navigation", { name: "Business tracker" }).getByRole("link", { name: "Clients" }).waitFor();
+  await reopened.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Clients" }).waitFor();
   assert.equal(await reopened.getByRole("button", { name: "Review records" }).count(), 0);
   const reviewedSnapshot = await (await context.request.get(ledgerUrl, { headers: desktopHeaders })).json();
   const reviewed = ledgerFixture(Buffer.from(reviewedSnapshot.content, "base64"));

@@ -12,7 +12,7 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "@fontsource-variable/jost": "^5.3.0",
+    "@fontsource-variable/dm-sans": "^5.3.0",
     "@fontsource/dm-serif-display": "^5.3.0",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.7.3",

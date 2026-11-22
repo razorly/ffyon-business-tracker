@@ -17,16 +17,20 @@ import {
   type TxType,
 } from "@/lib/db";
 import { useData } from "@/lib/data";
-import { isoDate, money, parseAmount, penceToInput } from "@/lib/format";
+import { subDays } from "date-fns";
+import { isoDate, money, moneyNeat, parseAmount, penceToInput } from "@/lib/format";
 import { businessNow } from "@/lib/dates";
 import { listServices, type CloudService } from "@/lib/sync";
 import { toastDeleted } from "@/lib/undo";
-import { Button, Field, Input, Modal, Select, Textarea } from "./ui";
+import { Actions, Button, Chip, ErrorText, Field, Input, Loading, Modal, MoneyInput, Select, Textarea } from "./ui";
+import { ChoiceGroup } from "./BookingPickers";
 import { EntryModeSwitch, type EntryMode } from "./EntryModeSwitch";
 import { ClientCombobox, type ClientChoice } from "./ClientCombobox";
 
 type IncomeSource = "service" | "other" | "legacy";
 const HISTORICAL_SERVICE = "__historical_service__";
+/** Past this many categories, chips would fill the screen: a drop-down takes over. */
+const MAX_CHIPS = 8;
 
 export function EntryDialog() {
   const { entry, closeEntry, switchEntryToAppointment, refresh } = useData();
@@ -223,14 +227,22 @@ export function EntryDialog() {
     }
   };
 
+  const todayIso = isoDate(businessNow());
+  const yesterdayIso = isoDate(subDays(businessNow(), 1));
+  const categoryName = (category: Category) => editing?.type === type && editing.category_id === category.id ? editing.category_name_snapshot || category.name : category.name;
+  // An edited expense may sit in a category that has since been removed; it stays choosable.
+  const historicalExpense = editing?.type === "expense" && editing.category_id != null && !typeCategories.some((category) => category.id === editing.category_id)
+    ? { id: String(editing.category_id), name: editing.category_name_snapshot || editing.category_name || "Historical category" } : null;
+  const appointmentHint = "Paid for an appointment? Mark it paid from the appointment or Today instead.";
+
   return (
-    <Modal open={entry.open} onClose={() => { if (!saving) closeEntry(); }} title={editing ? "Edit entry" : "New entry"}>
-      {loading && <p role="status" className="mb-3 text-sm text-muted">Loading entry details…</p>}
-      <form onSubmit={submit}><fieldset disabled={loading || saving || !ready} className="space-y-4">
+    <Modal open={entry.open} onClose={() => { if (!saving) closeEntry(); }} title={editing ? "Edit entry" : "New"}>
+      {loading && <Loading label="Loading entry details" className="px-0 pb-3 pt-0" />}
+      <form onSubmit={submit}><fieldset disabled={loading || saving || !ready} className="flex min-w-0 flex-col gap-4">
         {linkedAppointment ? (
-          <p className="inline-flex items-center gap-1.5 text-sm text-ink-2">
-            {type === "income" ? <ArrowDownLeft size={14} /> : <ArrowUpRight size={14} />}
-            {type === "income" ? "Income" : "Expense"}
+          <p className="flex items-center gap-2 text-small text-ink-2">
+            {type === "income" ? <ArrowDownLeft size={16} aria-hidden /> : <ArrowUpRight size={16} aria-hidden />}
+            {type === "income" ? "Money in" : "Money out"}
           </p>
         ) : (
           <EntryModeSwitch value={type} onChange={switchEntryMode} modes={editing ? ["income", "expense"] : undefined} />
@@ -241,7 +253,7 @@ export function EntryDialog() {
             <Input readOnly value={editing.service_name || editing.category_name_snapshot || editing.category_name || "Other income"} />
           </Field>
         ) : type === "income" && (editing || otherCategories.length > 0) ? (
-          <Field label="Income type" hint={editing ? undefined : "Paid for an appointment? Mark it paid from the appointment or To do instead."}>
+          <Field label="Income type" hint={editing ? undefined : appointmentHint}>
             <Select value={incomeSource === "service" ? `service:${serviceId}` : incomeSource === "legacy" ? "legacy:" : `other:${categoryId}`} onChange={event => pickIncomeType(event.target.value)} disabled={loading}>
               {editing ? (["other", "service", "legacy"] as const).map(source => {
                 const choices = incomeChoices.filter(choice => choice.source === source);
@@ -252,37 +264,48 @@ export function EntryDialog() {
             </Select>
           </Field>
         ) : type === "income" ? (
-          <p className="text-xs text-muted">For tips, product sales and other income. Paid for an appointment? Mark it paid from the appointment or To do instead.</p>
-        ) : (
+          <p className="text-small text-ink-2">For tips, product sales and other income. {appointmentHint}</p>
+        ) : typeCategories.length + (historicalExpense ? 1 : 0) > MAX_CHIPS ? (
           <Field label="Expense category">
             <Select value={categoryId} onChange={(event) => pickCategory(event.target.value)} disabled={loading}>
               <option value="">Uncategorised</option>
-              {typeCategories.map((category) => <option key={category.id} value={category.id}>
-                {editing?.type === type && editing.category_id === category.id ? editing.category_name_snapshot || category.name : category.name}
-              </option>)}
-              {editing?.type === "expense" && editing.category_id != null
-                && !typeCategories.some((category) => category.id === editing.category_id)
-                && <option value={editing.category_id}>{editing.category_name_snapshot || editing.category_name || "Historical category"}</option>}
+              {typeCategories.map((category) => <option key={category.id} value={category.id}>{categoryName(category)}</option>)}
+              {historicalExpense && <option value={historicalExpense.id}>{historicalExpense.name}</option>}
             </Select>
           </Field>
+        ) : (
+          <ChoiceGroup label="Expense category">
+            <div className="flex min-w-0 flex-wrap gap-2">
+              {typeCategories.map((category) => (
+                <Chip key={category.id} selected={categoryId === String(category.id)} onClick={() => pickCategory(String(category.id))} className="min-w-0 max-w-full shrink">
+                  <span className="truncate">{categoryName(category)}</span>
+                  {category.default_pence != null && <span className="tabular font-normal opacity-85">{moneyNeat(category.default_pence)}</span>}
+                </Chip>
+              ))}
+              {historicalExpense && <Chip selected={categoryId === historicalExpense.id} onClick={() => pickCategory(historicalExpense.id)} className="min-w-0 max-w-full shrink"><span className="truncate">{historicalExpense.name}</span></Chip>}
+              <Chip selected={categoryId === ""} onClick={() => pickCategory("")}>Uncategorised</Chip>
+            </div>
+          </ChoiceGroup>
         )}
 
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Amount">
-            <div className="relative">
-              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted">£</span>
-              <Input ref={amountRef} inputMode="decimal" placeholder="0.00" className="pl-7 tabular" value={amount}
-                onChange={(event) => { setAmount(event.target.value); setAmountIsDefault(false); }} disabled={loading} />
-            </div>
-          </Field>
-          <Field label="Date">
-            <Input type="date" value={date} readOnly={!!linkedAppointment}
-              onChange={(event) => setDate(event.target.value)} disabled={loading} />
-          </Field>
+        <Field label="Amount">
+          <MoneyInput ref={amountRef} value={amount} onChange={(event) => { setAmount(event.target.value); setAmountIsDefault(false); }} disabled={loading} />
+        </Field>
+
+        <div className="min-w-0">
+          <div className="flex min-w-0 flex-wrap items-end gap-2">
+            <Field label="Date" className="min-w-40 flex-1">
+              <Input type="date" value={date} readOnly={!!linkedAppointment} onChange={(event) => setDate(event.target.value)} disabled={loading} />
+            </Field>
+            {!linkedAppointment && <>
+              <Chip selected={date === todayIso} onClick={() => setDate(todayIso)}>Today</Chip>
+              <Chip selected={date === yesterdayIso} onClick={() => setDate(yesterdayIso)}>Yesterday</Chip>
+            </>}
+          </div>
+          {linkedAppointment && <p className="mt-1.5 text-small text-ink-2">
+            {linkedAppointment.client_name ?? "Appointment"}{linkedAppointment.price_pence != null ? <> · Agreed price <span className="tabular">{money(linkedAppointment.price_pence)}</span></> : ""}
+          </p>}
         </div>
-        {linkedAppointment && <p className="-mt-2 text-xs text-muted">
-          {linkedAppointment.client_name ?? "Appointment"}{linkedAppointment.price_pence != null ? ` · Agreed price ${money(linkedAppointment.price_pence)}` : ""}
-        </p>}
 
         {type === "income" && (
           <Field label="Client (optional)">
@@ -295,18 +318,18 @@ export function EntryDialog() {
             value={description} onChange={(event) => setDescription(event.target.value)} />
         </Field>
 
-        {error && <p role="alert" className="text-[13px] text-bad">{error}</p>}
+        {error && <ErrorText>{error}</ErrorText>}
 
         <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-          {editing ? <Button type="button" variant="ghost" className="text-bad" onClick={remove} disabled={saving || loading || !loaded}>
-            <Trash2 size={15} /> Delete
-          </Button> : <span />}
-          <div className="flex gap-2">
+          {editing && <Button type="button" variant="ghost" className="text-bad hover:text-bad" onClick={remove} disabled={saving || loading || !loaded}>
+            <Trash2 size={16} aria-hidden /> Delete
+          </Button>}
+          <Actions className="ml-auto pt-0">
             <Button type="button" disabled={saving} onClick={closeEntry}>Cancel</Button>
             <Button type="submit" variant="primary" disabled={saving || loading || !loaded}>
               {editing ? "Save changes" : type === "income" ? "Record income" : "Record expense"}
             </Button>
-          </div>
+          </Actions>
         </div>
       </fieldset></form>
     </Modal>

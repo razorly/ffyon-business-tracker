@@ -164,13 +164,18 @@ async function flow(browser, width, output) {
   page.on("request", request => { if (!request.url().startsWith(url) && !request.url().startsWith("data:")) remote.push(request.url()); });
   const mail = await fixtureFor(page);
   try {
-    await page.goto(`${url}#/todo`, { waitUntil: "networkidle" });
-    await page.getByRole("heading", { name: "To do", exact: true }).waitFor();
-    await until(page, async () => await page.getByTestId("todo-badge").textContent() === "1");
+    await page.goto(`${url}#/`, { waitUntil: "networkidle" });
+    const needsYou = page.getByRole("region", { name: /^Needs you/ });
+    // The heading carries its count ("Needs you 1"), which is also the region's name.
+    await needsYou.getByRole("heading", { name: /^Needs you/ }).waitFor();
+    await until(page, async () => await page.getByTestId("todo-badge").count() === 1 && await page.getByTestId("todo-badge").textContent() === "1");
+    assert.equal(await page.locator('nav a[title="Today"]').getByTestId("todo-badge").count(), 1, "The to-do count sits on Today, which replaced the To do page");
     await until(page, async () => await page.getByTestId("mail-badge").count() === 1);
     assert.equal(await page.getByTestId("mail-badge").textContent(), "2", "Mail counts unread conversations, not seventy messages");
-    await page.getByRole("button", { name: "Booking still available", exact: true }).waitFor();
-    assert.equal(await page.getByText("Tan question").count(), 0, "To do lists appointments only; email stays in Mail");
+    await needsYou.getByRole("button", { name: "Booking still available", exact: true }).waitFor();
+    assert.equal(await needsYou.getByRole("heading", { name: /^Needs you/ }).textContent(), "Needs you1", "Needs you counts appointments only, never unread email");
+    assert.equal(await page.getByText("Tan question").count(), 0, "Needs you lists appointments only; email content stays in Mail");
+    assert.equal(await needsYou.getByRole("link", { name: "2 unread emails", exact: true }).getAttribute("href"), "#/mail", "Unread email is only a count that links to Mail");
     await capture(page, output, `todo-with-unread-mail-${width}.png`);
     await page.locator('nav a[title="Mail"]').click();
     await page.getByRole("button", { name: "Unread", exact: true }).click();
@@ -192,7 +197,7 @@ async function flow(browser, width, output) {
     await capture(page, output, `conversation-${width}.png`);
     mail.pruneBefore(mail.threads[0].messages[20].created_at);
     await page.getByRole("button", { name: "Check for mail", exact: true }).click();
-    await page.getByRole("alert").filter({ hasText: "Mock mail service busy" }).getByRole("button", { name: "Retry", exact: true }).click();
+    await mailAlert(page, "Couldn't check for mail.", "Mock mail service busy").getByRole("button", { name: "Retry", exact: true }).click();
     await until(page, async () => await page.getByText("Earlier customer message 0", { exact: true }).count() === 0);
     await page.getByLabel("Message history", { exact: true }).getByText("Earlier customer message 20", { exact: true }).waitFor();
     await page.getByRole("button", { name: /invoice.pdf/ }).click();
@@ -201,13 +206,13 @@ async function flow(browser, width, output) {
     assert.deepEqual(mail.saved[1].write.data, [97, 98, 99]);
     assert.equal(await page.getByRole("button", { name: /oversized.zip/ }).isDisabled(), true);
     await page.getByRole("button", { name: /invalid.pdf/ }).click();
-    await page.getByRole("alert").filter({ hasText: "attachment download is invalid" }).waitFor();
+    await mailAlert(page, "Couldn't save this attachment.", "attachment download is invalid").waitFor();
     assert.equal(mail.saved.length, 2, "Invalid base64 must be rejected before the save dialog");
 
     const reply = page.getByLabel("Reply message", { exact: true });
     await reply.fill("Thanks — here is a safe threaded reply.");
     await page.getByRole("button", { name: "Send reply", exact: true }).click();
-    await page.getByRole("alert").filter({ hasText: "Connection lost" }).waitFor();
+    await mailAlert(page, "Couldn't confirm this email was sent.", "Connection lost after the server accepted the email").waitFor();
     assert.equal(await reply.getAttribute("readonly"), "");
     await page.getByRole("button", { name: "Retry send", exact: true }).click();
     await until(page, () => mail.sends.length === 2);
@@ -283,7 +288,7 @@ async function flow(browser, width, output) {
     assert.equal(mail.fixture.records.appointments[0].status, "pending");
     mail.threads.splice(mail.threads.findIndex(thread => thread.id === uuid(9001)), 1);
     await page.getByRole("button", { name: "Check for mail", exact: true }).click();
-    await page.getByRole("alert").filter({ hasText: "404" }).waitFor();
+    await mailAlert(page, "Couldn't load this conversation.", "404: This conversation could not be found.").waitFor();
     assert.equal(await page.getByLabel("Message history", { exact: true }).count(), 0, "A purged/removed conversation must not leave cached private content visible");
     assert.equal(await page.getByRole("link").filter({ hasText: "Tan question" }).count(), 0, "A primary detail 404 must remove the missing conversation's cached list row");
     assert.deepEqual(remote, [], "Email must not fetch arbitrary message/attachment/remote HTML URLs");
@@ -297,8 +302,8 @@ async function unavailable(browser, output) {
   const page = await browser.newPage({ viewport: { width: 375, height: 900 } });
   const mail = await fixtureFor(page, { unavailable: true });
   try {
-    await page.goto(`${url}#/todo`, { waitUntil: "networkidle" });
-    await page.getByRole("button", { name: "Booking still available", exact: true }).waitFor();
+    await page.goto(`${url}#/`, { waitUntil: "networkidle" });
+    await page.getByRole("region", { name: /^Needs you/ }).getByRole("button", { name: "Booking still available", exact: true }).waitFor();
     assert.equal(await page.getByTestId("todo-badge").textContent(), "1");
     assert.equal(await page.getByTestId("mail-badge").count(), 0);
     await page.getByRole("button", { name: "Accept", exact: true }).click();
@@ -324,7 +329,7 @@ async function earlierPageRemoved(browser, output) {
     const before = mail.requests.length;
     mail.threads.splice(mail.threads.findIndex(thread => thread.id === uuid(9001)), 1);
     await loadEarlier.click();
-    await page.getByRole("alert").filter({ hasText: "404: This conversation could not be found." }).waitFor();
+    await mailAlert(page, "Couldn't load this conversation.", "404: This conversation could not be found.").waitFor();
     const detailRequests = mail.requests.slice(before).filter(request => request.operation === operation);
     assert.equal(detailRequests.length, 1, "The cache must clear on the older-page response without waiting for a primary refresh");
     assert.ok(detailRequests[0].query.cursor, "This regression must exercise the older-history cursor request");
@@ -338,6 +343,10 @@ async function earlierPageRemoved(browser, output) {
     return { olderPage404ClearsCachedConversation: true, cursorRequestOnly: true, privateHistoryAndReplyEditorRemoved: true, cachedConversationRowAndPreviewRemoved: true };
   } catch (error) { await page.screenshot({ path: resolve(output, "failure-earlier-404.png"), fullPage: true }); throw error; }
   finally { await page.close(); mail.fixture.close(); }
+}
+// Mail errors say what failed in plain words; the technical reason stays in the same alert under "Show details".
+function mailAlert(page, title, reason) {
+  return page.getByRole("alert").filter({ hasText: title }).filter({ has: page.locator("details", { hasText: reason }) });
 }
 async function until(page, predicate) {
   const deadline = Date.now() + 15000;

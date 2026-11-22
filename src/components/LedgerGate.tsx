@@ -1,5 +1,4 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { AlertCircle, LoaderCircle } from "lucide-react";
 import { toast } from "sonner";
 import { isDesktop, isPwa } from "@/lib/access";
 import { exportAll, getDeviceDb, setSharedDatabase, type Backup } from "@/lib/db";
@@ -7,7 +6,7 @@ import { money, ukDate } from "@/lib/format";
 import { reviewCount, type LedgerReview } from "@/lib/ledger-merge";
 import type { loadLedgerReview, resolveLedgerReview, SharedLedger } from "@/lib/shared-ledger";
 import { syncNow } from "@/lib/sync";
-import { Button, Modal } from "./ui";
+import { Button, Card, ErrorText, Loading, Modal, Notice } from "./ui";
 import { useAccess } from "./AccessGate";
 
 const LedgerContext = createContext<{ ledger: SharedLedger | null; error: string; retry: () => void }>({
@@ -88,13 +87,14 @@ function ApprovedLedger({ children, deviceId, online }: { children: ReactNode; d
     void import("@/lib/shared-ledger").then(service => service.resetSharedLedger());
   }, []);
 
-  if (!ready || blocked) return <main className="pwa-locked flex h-full items-center justify-center p-6">
-    <div className="max-w-lg">
-      {blocked ? <>
-        <h1 className="font-display text-2xl">Shared ledger unavailable</h1>
-        <p role="alert" className="my-3 text-sm text-ink-2">{error}</p>
-        <Button onClick={() => verifyNow.current()}>Retry connection</Button>
-      </> : <p role="status" className="flex items-center gap-2 text-muted"><LoaderCircle size={17} className="animate-spin" /> Checking ledger</p>}
+  if (!ready || blocked) return <main className="pwa-locked flex h-full items-center justify-center bg-page p-6">
+    <div className="w-full max-w-md">
+      {blocked ? <Card className="p-5 sm:p-6">
+        <h1 className="font-display text-title">Your records aren't available yet</h1>
+        <p className="mt-2 text-ink-2">Money and private notes are kept on your home network. Connect to it, then try again.</p>
+        <details className="mt-2 text-small text-ink-2"><summary className="cursor-pointer">Show details</summary><span role="alert" className="break-words">{error}</span></details>
+        <Button variant="primary" className="mt-4" onClick={() => verifyNow.current()}>Try again</Button>
+      </Card> : <Loading label="Opening your records" className="justify-center" />}
     </div>
   </main>;
   return <LedgerContext.Provider value={{ ledger, error, retry: () => verifyNow.current() }}>
@@ -146,32 +146,30 @@ export function LedgerStatus() {
   const archiveAppointments = new Map(archive?.appointments?.map(row => [row.id, row]));
   const archiveEntries = new Map(archive?.transactions.map(row => [row.id, row]));
   const canResolve = !busy && state === "online";
-  return <div className="mb-4 rounded-xl border border-line bg-surface p-3 text-sm" role="status">
-    {error && <div className="flex flex-wrap items-center gap-2">
-      <AlertCircle size={16} className="text-bad" /><p>{error}</p>
-      <Button size="sm" onClick={retry}>Retry sync</Button>
-    </div>}
-    {count > 0 && <div className="flex flex-wrap items-center gap-2">
-      <AlertCircle size={16} className="text-ink-2" />
-      <p>{count} earlier {count === 1 ? "record needs" : "records need"} review. The originals are kept on this device.</p>
-      <Button size="sm" onClick={() => { setOpened(true); setArchive(null); void loadReview(); }}>Review records</Button>
-    </div>}
+  return <div>
+    {error && <Notice tone="bad" action={<Button size="sm" onClick={retry}>Try again</Button>}>
+      Couldn't reach your records just now. Money and private notes may be out of date.
+      <details className="mt-1 text-ink-2"><summary className="cursor-pointer">Show details</summary><span className="break-words">{error}</span></details>
+    </Notice>}
+    {count > 0 && <Notice action={<Button size="sm" onClick={() => { setOpened(true); setArchive(null); void loadReview(); }}>Review records</Button>}>
+      {count} earlier {count === 1 ? "record needs" : "records need"} a look. The originals are kept on this device.
+    </Notice>}
     <Modal open={opened} onClose={() => { if (!busy) setOpened(false); }} title="Earlier records to review" width="max-w-lg">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="max-w-xs text-sm text-ink-2">These are copies from before the update. Dismissing a review keeps the original on this device.</p>
-        <Button size="sm" disabled={busy} onClick={() => void loadReview()}>Refresh review</Button>
+        <p className="min-w-0 flex-[1_1_14rem] text-small text-ink-2">These are copies from before the update. Dismissing one keeps the original on this device.</p>
+        <Button size="sm" disabled={busy} onClick={() => void loadReview()}>Refresh</Button>
       </div>
-      {reviewError && <p role="alert" className="mt-3 text-sm text-bad">{reviewError}</p>}
-      {state !== "online" && <p className="mt-3 text-sm">Connect to the home network to save or dismiss a review.</p>}
-      {!archive && busy && <p className="mt-3 text-sm text-muted">Loading records…</p>}
-      {review && !reviewCount(review) && <p className="mt-3 text-sm">All records have been reviewed.</p>}
-      {archive && review && <ul className="mt-3 divide-y divide-line text-sm">
+      {reviewError && <ErrorText className="mt-3">{reviewError}</ErrorText>}
+      {state !== "online" && <p className="mt-3 text-small text-ink-2">Connect to the home network to save or dismiss one.</p>}
+      {!archive && busy && <Loading label="Loading records" className="px-0" />}
+      {review && !reviewCount(review) && <p className="mt-3 text-ink-2">Everything has been reviewed.</p>}
+      {archive && review && <ul className="mt-3 divide-y divide-line">
         {review.entries.map(id => {
           const row = archiveEntries.get(id);
           return <li key={`entry-${id}`} className="space-y-2 py-3">
-            <strong>{row ? `${row.type === "income" ? "Income" : "Expense"} · ${money(row.amount_pence)} · ${ukDate(row.date)}` : "Earlier finance entry"}</strong>
-            <p className="break-words">{row ? row.description || row.service_name || row.category_name_snapshot : "The original entry is unavailable."}</p>
-            <Button size="sm" disabled={!canResolve} onClick={() => void resolve("entries", id)}>Dismiss review</Button>
+            <strong className="block font-semibold">{row ? `${row.type === "income" ? "Income" : "Expense"} · ${money(row.amount_pence)} · ${ukDate(row.date)}` : "Earlier finance entry"}</strong>
+            <p className="break-words text-small text-ink-2">{row ? row.description || row.service_name || row.category_name_snapshot : "The original entry is unavailable."}</p>
+            <Button size="sm" disabled={!canResolve} onClick={() => void resolve("entries", id)}>Dismiss</Button>
           </li>;
         })}
         {(["clients", "appointments"] as const).flatMap(kind => review[kind].map(id => {
@@ -183,10 +181,10 @@ export function LedgerStatus() {
           const target = matchedAppointment ?? matchedClient;
           const title = kind === "clients" ? "Client note" : "Appointment note";
           return <li key={`${kind}-${id}`} className="space-y-2 py-3">
-            <strong>{title}{client && ` · ${client.name}`}{appointment && ` · ${ukDate(appointment.date)}${appointment.time_confirmed ? ` · ${appointment.start_time}` : ""}`}</strong>
-            <p className="whitespace-pre-wrap break-words select-text">{text || "The original note is unavailable."}</p>
-            {details && text && !matchedAppointment && appointment && <p className="text-ink-2">No matching appointment was found in Schedule. {matchedClient ? "You can keep the note on the client’s profile." : "You can copy the note to keep it elsewhere."}</p>}
-            {text && target && <div className="rounded-lg bg-surface-2 p-2 text-ink-2">
+            <strong className="block font-semibold">{title}{client && ` · ${client.name}`}{appointment && ` · ${ukDate(appointment.date)}${appointment.time_confirmed ? ` · ${appointment.start_time}` : ""}`}</strong>
+            <p className="select-text whitespace-pre-wrap break-words text-small">{text || "The original note is unavailable."}</p>
+            {details && text && !matchedAppointment && appointment && <p className="text-small text-ink-2">No matching appointment was found in the Diary. {matchedClient ? "You can keep the note on the client’s profile." : "You can copy the note to keep it elsewhere."}</p>}
+            {text && target && <div className="rounded-lg bg-surface-2 p-3 text-small text-ink-2">
               {matchedAppointment
                 ? <p>Shared appointment · {matchedAppointment.client_name ?? "No client"} · {ukDate(matchedAppointment.date)}{matchedAppointment.time_confirmed ? ` · ${matchedAppointment.start_time}` : ""}</p>
                 : <p>Client notes · {matchedClient?.name}</p>}
@@ -200,7 +198,7 @@ export function LedgerStatus() {
                 try { await navigator.clipboard.writeText(text); toast.success("Private note copied"); }
                 catch { setReviewError("Select the earlier note to copy it."); }
               }}>Copy note</Button>}
-              <Button size="sm" disabled={!canResolve} onClick={() => void resolve(kind, id)}>Dismiss review</Button>
+              <Button size="sm" disabled={!canResolve} onClick={() => void resolve(kind, id)}>Dismiss</Button>
             </div>
           </li>;
         }))}

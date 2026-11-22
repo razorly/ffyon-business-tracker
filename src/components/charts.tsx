@@ -17,7 +17,7 @@ import {
 import { money, moneyCompact } from "@/lib/format";
 import { Swatch } from "./ui";
 
-const axisTick = { fill: "var(--muted)", fontSize: 12 };
+const axisTick = { fill: "var(--ink-2)", fontSize: 12 };
 
 // ---------- Tooltip ----------
 
@@ -29,11 +29,11 @@ interface TipRow {
 
 function TooltipCard({ title, rows, footer }: { title: string; rows: TipRow[]; footer?: ReactNode }) {
   return (
-    <div className="min-w-[170px] rounded-2xl border border-line bg-surface px-3.5 py-3 text-[13px] shadow-lg">
-      <div className="mb-1.5 font-display text-[16px] text-ink">{title}</div>
+    <div className="min-w-44 rounded-xl border border-line bg-surface px-3.5 py-3 text-small shadow-lg">
+      <div className="mb-1 break-words font-semibold text-ink">{title}</div>
       {rows.map((r) => (
         <div key={r.label} className="flex items-center justify-between gap-4 py-0.5">
-          <span className="flex items-center gap-2 text-ink-2">
+          <span className="flex min-w-0 items-center gap-2 text-ink-2">
             <Swatch colour={r.colour} /> {r.label}
           </span>
           <span className="tabular font-medium text-ink">{money(r.value)}</span>
@@ -46,9 +46,9 @@ function TooltipCard({ title, rows, footer }: { title: string; rows: TipRow[]; f
 
 export function Legend({ items }: { items: { label: string; colour: string }[] }) {
   return (
-    <div className="flex flex-wrap items-center gap-4 text-[13px] text-ink-2">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-small text-ink-2">
       {items.map((i) => (
-        <span key={i.label} className="inline-flex items-center gap-1.5">
+        <span key={i.label} className="inline-flex items-center gap-2">
           <Swatch colour={i.colour} /> {i.label}
         </span>
       ))}
@@ -98,7 +98,7 @@ export function IncomeExpenseChart({ data }: { data: MonthPoint[] }) {
           </linearGradient>
         </defs>
         <CartesianGrid vertical={false} stroke="var(--grid)" />
-        <XAxis dataKey="label" tick={axisTick} axisLine={{ stroke: "var(--axis)" }} tickLine={false} dy={6} />
+        <XAxis dataKey="label" tick={axisTick} axisLine={{ stroke: "var(--axis)" }} tickLine={false} minTickGap={12} dy={6} />
         <YAxis tick={axisTick} axisLine={false} tickLine={false} tickFormatter={moneyCompact} width={60} />
         <Tooltip
           cursor={{ stroke: "var(--axis)", strokeWidth: 1 }}
@@ -156,7 +156,7 @@ export function ProfitBars({ data }: { data: MonthPoint[] }) {
     <ResponsiveContainer width="100%" height={250}>
       <BarChart data={rows} margin={{ top: 10, right: 12, left: 0, bottom: 0 }}>
         <CartesianGrid vertical={false} stroke="var(--grid)" />
-        <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} dy={6} />
+        <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} minTickGap={12} dy={6} />
         <YAxis tick={axisTick} axisLine={false} tickLine={false} tickFormatter={moneyCompact} width={60} />
         <ReferenceLine y={0} stroke="var(--axis)" />
         <Tooltip
@@ -202,7 +202,7 @@ export function DailyBars({ data }: { data: DayPoint[] }) {
     <ResponsiveContainer width="100%" height={180}>
       <BarChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barGap={2}>
         <CartesianGrid vertical={false} stroke="var(--grid)" />
-        <XAxis dataKey="day" tick={axisTick} axisLine={{ stroke: "var(--axis)" }} tickLine={false} interval={1} dy={4} />
+        <XAxis dataKey="day" tick={axisTick} axisLine={{ stroke: "var(--axis)" }} tickLine={false} interval="equidistantPreserveStart" minTickGap={10} dy={4} />
         <YAxis tick={axisTick} axisLine={false} tickLine={false} tickFormatter={moneyCompact} width={56} />
         <Tooltip
           cursor={{ fill: "var(--surface-2)", opacity: 0.6 }}
@@ -241,13 +241,13 @@ export function CategoryDonut({ data, centreLabel }: { data: Slice[]; centreLabe
   const [hovering, setHovering] = useState(false);
   return (
     <div className="flex flex-col items-center gap-4">
-      <div className="relative h-[180px] w-[180px] shrink-0">
+      <div className="relative h-44 w-44 shrink-0">
         {/* Centre label sits beneath the chart so the hover tooltip always draws over it */}
         <div
           className={`pointer-events-none absolute inset-0 flex flex-col items-center justify-center transition-opacity ${hovering ? "opacity-0" : ""}`}
         >
-          <span className="eyebrow text-[10px] text-ink-2">{centreLabel}</span>
-          <span className="font-display text-[24px] leading-tight">{moneyCompact(total)}</span>
+          <span className="text-label text-ink-2">{centreLabel}</span>
+          <span className="tabular text-heading font-semibold text-ink">{moneyCompact(total)}</span>
         </div>
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
@@ -256,7 +256,7 @@ export function CategoryDonut({ data, centreLabel }: { data: Slice[]; centreLabe
               dataKey="value"
               nameKey="name"
               innerRadius={58}
-              outerRadius={86}
+              outerRadius={84}
               paddingAngle={0}
               stroke="var(--surface)"
               strokeWidth={data.length > 1 ? 2 : 0}
@@ -280,16 +280,16 @@ export function CategoryDonut({ data, centreLabel }: { data: Slice[]; centreLabe
           </PieChart>
         </ResponsiveContainer>
       </div>
-      <ul className="w-full space-y-2">
+      <ul className="w-full divide-y divide-line">
         {data.map((d, index) => (
-          <li key={d.key ?? `${index}:${d.name}`} className="flex items-center justify-between gap-3 text-[13px]">
-            <span className="flex min-w-0 items-center gap-2 text-ink-2">
+          <li key={d.key ?? `${index}:${d.name}`} className="flex items-center justify-between gap-3 py-2 text-small">
+            <span className="flex min-w-0 items-center gap-2 text-ink">
               <Swatch colour={d.colour} />
-              <span className="truncate">{d.name}</span>
+              <span className="min-w-0 break-words">{d.name}</span>
             </span>
-            <span className="tabular shrink-0 font-medium">
+            <span className="tabular shrink-0 font-medium text-ink">
               {money(d.value)}
-              <span className="ml-1.5 text-muted">{Math.round((d.value / total) * 100)}%</span>
+              <span className="ml-2 font-normal text-ink-2">{Math.round((d.value / total) * 100)}%</span>
             </span>
           </li>
         ))}

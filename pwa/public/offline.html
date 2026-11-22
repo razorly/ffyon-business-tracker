@@ -2,14 +2,20 @@
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#faf7f4">
+<meta name="theme-color" content="#faf7f4" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1c110c" media="(prefers-color-scheme: dark)">
 <title>Tanned by Ffy</title>
 <style>
-  body { background: #faf7f4; color: #352723; font: 1rem system-ui, sans-serif; margin: 0; min-height: 100dvh; display: grid; place-items: center; }
-  main { max-width: 24rem; padding: 1.5rem; }
-  h1 { margin: 0; font: 2rem Georgia, serif; }
-  p { line-height: 1.5; }
-  a { color: #703f43; }
+  /* Shown with no network, so nothing here may load from elsewhere: same colours and sizes as the app, system fonts. */
+  :root { color-scheme: light dark; --page: #faf7f4; --surface: #fff; --ink: #3b251c; --ink-2: #6b574e; --line: #eadfd8; --accent: #42291f; --accent-ink: #fff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --page: #1c110c; --surface: #2a1a14; --ink: #f8e1d8; --ink-2: #d9b8aa; --line: rgba(248, 225, 216, 0.14); --accent: #eea69b; --accent-ink: #2a1a14; }
+  }
+  body { background: var(--page); color: var(--ink); font: 1rem/1.5rem system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; min-height: 100dvh; display: grid; place-items: center; }
+  main { box-sizing: border-box; width: min(24rem, 100% - 2rem); padding: 1.5rem; background: var(--surface); border: 1px solid var(--line); border-radius: 1rem; }
+  h1 { margin: 0; font: 400 1.75rem/2.25rem Georgia, "Times New Roman", serif; }
+  p { margin: 0.5rem 0 1rem; color: var(--ink-2); }
+  a { display: inline-flex; align-items: center; justify-content: center; height: 2.75rem; padding: 0 1rem; border-radius: 0.75rem; background: var(--accent); color: var(--accent-ink); font-weight: 500; text-decoration: none; }
 </style>
 <main>
   <h1>You’re offline</h1>

@@ -1,674 +1,149 @@
-import { useEffect, useState } from "react";
-import { toast } from "sonner";
-import { Check, Download, FileSpreadsheet, FolderCheck, Monitor, Moon, Pencil, Plus, Sun, Trash2, Upload } from "lucide-react";
-import {
-  categoryUsage,
-  createCategory,
-  deleteCategory,
-  listCategories,
-  listOtherIncomeCategories,
-  updateCategory,
-  wipeAll,
-  type Category,
-  type TxType,
-} from "@/lib/db";
-import { useData, useLoad } from "@/lib/data";
-import { useInbox } from "@/lib/inbox";
+import { useEffect, useState, type ReactNode } from "react";
+import { Link, useSearchParams } from "react-router-dom";
+import { ChevronLeft, ChevronRight, Clock, Globe, Monitor, Plus, Smartphone, Sparkles, Wallet } from "lucide-react";
 import { isPwa } from "@/lib/access";
-import { taxYear, useBusinessNow } from "@/lib/dates";
-import { isoDate, money, parseAmount, penceToInput, ukDate } from "@/lib/format";
-import {
-  chooseAutoBackupFolder,
-  exportSpreadsheet,
-  loadBackup,
-  readAutoBackup,
-  runAutoBackup,
-  saveBackup,
-  writeAutoBackup,
-  type AutoBackup,
-} from "@/lib/export";
-import { nextColour, PALETTE, themedColour } from "@/lib/palette";
-import {
-  applyShortcut,
-  QUICK_KEYS_LABEL,
-  readCloseAction,
-  readShortcutEnabled,
-  showWindow,
-  trayName,
-  writeCloseAction,
-  writeShortcutEnabled,
-  type CloseAction,
-} from "@/lib/tray";
-import { useTheme, type ThemePref } from "@/lib/theme";
-import { checkForUpdate } from "@/lib/update";
-import { isTauri } from "@/lib/db";
-import { toastDeleted } from "@/lib/undo";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/Layout";
 import { SiteConnection } from "@/components/SiteConnection";
 import { PushNotifications } from "@/components/PushNotifications";
-import { useSharedLedger } from "@/components/LedgerGate";
-import { SiteBusinessSettings } from "@/components/SiteBusinessSettings";
+import { CustomerBookingsCard, hasOlderRecords, ImportReviewCard, OpeningHoursCard, RequestEmailCard, ServicesCard, useSiteSettings, type SiteSettings } from "@/components/SiteBusinessSettings";
+import { VisitSettingsCard } from "@/components/VisitSettingsCard";
 import { LegacyIncomeReview } from "@/components/LegacyIncomeReview";
-import { Button, Card, CardHeader, ConfirmModal, Field, Input, LoadError, Modal, Segmented, Select, Swatch } from "@/components/ui";
+import { TimeOffDialog, TimeOffList } from "@/components/TimeOff";
+import { CategoriesCard } from "@/components/settings/MoneySettings";
+import { AboutCard, AppearanceCard, BackupCard, TrayCard } from "@/components/settings/DeviceSettings";
+import { Help, OnlineNotice } from "@/components/settings/parts";
+import { useNarrow } from "@/components/useNarrow";
+import { Button, Card, CardHeader, ErrorText } from "@/components/ui";
 
-type Section = "bookings" | "finances" | "computer";
-const SECTIONS: { value: Section; label: string; subtitle: string }[] = [
-  { value: "bookings", label: "Bookings & website", subtitle: "Shared with your website" },
-  { value: "finances", label: "Finances", subtitle: "Income, expenses and exports" },
-  { value: "computer", label: "This computer", subtitle: "Connection, backups and the app" },
+type Section = "services" | "hours" | "website" | "money" | "device";
+const SECTIONS: { value: Section; label: string; about: string; icon: typeof Clock }[] = [
+  { value: "services", label: "Services and prices", about: "What you offer, how long it takes and what it costs", icon: Sparkles },
+  { value: "hours", label: "When I work", about: "Opening hours and time off", icon: Clock },
+  { value: "website", label: "Website and bookings", about: "Online bookings, home visits and contact details", icon: Globe },
+  { value: "money", label: "Money", about: "Other income and expense categories", icon: Wallet },
+  { value: "device", label: "This device", about: "Connection, backups and how the app looks", icon: Smartphone },
 ];
 const SECTION_KEY = "ffyon-settings-section";
+const isSection = (value: string | null): value is Section => SECTIONS.some((item) => item.value === value);
+const remembered = (): Section => {
+  try { const saved = sessionStorage.getItem(SECTION_KEY); return isSection(saved) ? saved : "services"; }
+  catch { return "services"; }
+};
 
+/**
+ * Settings in five plain sections. The section is in the address (`/settings?section=hours`), so other
+ * pages can link straight to one. A phone opens on the list of sections; a wider screen shows the list
+ * beside the chosen section.
+ */
 export function Settings() {
   const webApp = isPwa();
+  const narrow = useNarrow();
+  const [params] = useSearchParams();
+  const asked = params.get("section");
+  const chosen = isSection(asked) ? asked : null;
   // Remembered for the session so returning to Settings lands where you left off.
-  const [section, setSection] = useState<Section>(() => {
-    try { const saved = sessionStorage.getItem(SECTION_KEY); return SECTIONS.some((item) => item.value === saved) ? saved as Section : "bookings"; }
-    catch { return "bookings"; }
-  });
-  const choose = (next: Section) => {
-    setSection(next);
-    try { sessionStorage.setItem(SECTION_KEY, next); } catch { /* Only a convenience. */ }
+  useEffect(() => {
+    if (!chosen) return;
+    try { sessionStorage.setItem(SECTION_KEY, chosen); } catch { /* Only a convenience. */ }
+  }, [chosen]);
+  const section = chosen ?? (narrow ? null : remembered());
+  const site = useSiteSettings();
+  const label = (item: typeof SECTIONS[number]) => item.value === "device" && !webApp ? "This computer" : item.label;
+  const icon = (item: typeof SECTIONS[number]) => {
+    const Glyph = item.value === "device" && !webApp ? Monitor : item.icon;
+    return <Glyph size={20} className="shrink-0" aria-hidden />;
   };
+  const current = SECTIONS.find((item) => item.value === section);
+
+  if (narrow && !current) return (
+    <>
+      <PageHeader title="Settings" />
+      <Card>
+        <nav aria-label="Settings sections">
+          <ul className="divide-y divide-line">
+            {SECTIONS.map((item) => <li key={item.value}>
+              <Link to={`/settings?section=${item.value}`} className="flex min-h-11 items-center gap-3 px-5 py-3 hover:bg-surface-2/60">
+                <span className="text-ink-2">{icon(item)}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block font-medium text-ink">{label(item)}</span>
+                  <span className="block text-small text-ink-2">{item.about}</span>
+                </span>
+                <ChevronRight size={18} className="shrink-0 text-ink-2" aria-hidden />
+              </Link>
+            </li>)}
+          </ul>
+        </nav>
+      </Card>
+    </>
+  );
+
   return (
     <>
-      <PageHeader title="Settings" subtitle={SECTIONS.find((item) => item.value === section)!.subtitle} />
-      <Segmented<Section> className="mb-5 w-full flex-col rounded-xl sm:w-auto sm:flex-row sm:rounded-full" value={section} onChange={choose}
-        options={SECTIONS.map(({ value, label }) => ({ value, label: webApp && value === "computer" ? "This device" : label }))} />
-      <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
-        {section === "bookings" && <SiteBusinessSettings />}
-        {section === "finances" && <>
-          <LegacyIncomeReview />
-          <CategoriesCard type="income" />
-          <CategoriesCard type="expense" />
-          <ExportCard />
-        </>}
-        {section === "computer" && <>
-          <SiteConnection />
-          {webApp && <PushNotifications />}
-          <BackupCard />
-          {!webApp && <TrayCard />}
-          <AppearanceCard />
-          <AboutCard />
-        </>}
+      {narrow && <Link to="/settings" aria-label="Back to Settings" className="-ml-2 mb-1 inline-flex min-h-11 items-center gap-1 rounded-xl px-2 font-medium text-ink-2 hover:text-ink"><ChevronLeft size={18} aria-hidden /> Settings</Link>}
+      <PageHeader title={narrow && current ? label(current) : "Settings"} subtitle={narrow ? current?.about : undefined} />
+      <div className="grid min-w-0 items-start gap-6 sm:grid-cols-[13rem_minmax(0,1fr)] lg:grid-cols-[15rem_minmax(0,1fr)]">
+        {!narrow && <nav aria-label="Settings sections" className="space-y-1">
+          {SECTIONS.map((item) => <Link key={item.value} to={`/settings?section=${item.value}`} replace aria-current={item.value === section ? "page" : undefined}
+            className={cn("flex min-h-11 items-center gap-3 rounded-xl px-3 py-2 transition-colors", item.value === section ? "bg-surface-2 font-semibold text-ink" : "font-medium text-ink-2 hover:bg-surface-2/60 hover:text-ink")}>
+            {icon(item)}{label(item)}
+          </Link>)}
+        </nav>}
+        <div className="flex min-w-0 max-w-3xl flex-col gap-6">
+          {(section === "services" || section === "hours" || section === "website") && site.error && <ErrorText>{site.error}</ErrorText>}
+          {section === "services" && <ServicesCard site={site} />}
+          {section === "hours" && <>
+            <OpeningHoursCard site={site} />
+            <TimeOffCard site={site} />
+          </>}
+          {section === "website" && <>
+            <CustomerBookingsCard site={site} />
+            <VisitSettingsCard settings={site.settings} online={site.online} onSaved={site.refresh} />
+            <RequestEmailCard site={site} />
+            {hasOlderRecords(site) && <ImportReviewCard preview={site.preview} appointments={site.appointments} blocks={site.blocks} online={site.online} loaded={site.loaded} onSaved={site.refresh} />}
+          </>}
+          {section === "money" && <>
+            <LegacyIncomeReview />
+            <CategoriesCard type="income" />
+            <CategoriesCard type="expense" />
+            <Pointer to="/finances?export=1">Need your figures for your accountant or tax return? <span className="font-medium text-ink">Export from the Money page</span></Pointer>
+          </>}
+          {section === "device" && <>
+            <SiteConnection />
+            {webApp && <PushNotifications />}
+            <BackupCard />
+            {!webApp && <TrayCard />}
+            <AppearanceCard />
+            <AboutCard />
+          </>}
+        </div>
       </div>
     </>
   );
 }
 
-// ---------- Categories ----------
-
-function CategoriesCard({ type }: { type: TxType }) {
-  const { refresh } = useData();
-  const { dark } = useTheme();
-  const [cats, , loadError] = useLoad(() => type === "income" ? listOtherIncomeCategories() : listCategories(type), [type], []);
-  const [editing, setEditing] = useState<Partial<Category> | null>(null);
-  const [toDelete, setToDelete] = useState<{ cat: Category; uses: number } | null>(null);
-
+/** Days she is not working. Adding and removing them is shared with the diary. */
+function TimeOffCard({ site }: { site: SiteSettings }) {
+  const [adding, setAdding] = useState(false);
   return (
     <Card>
-      <CardHeader
-        title={type === "income" ? "Other income" : "Expense categories"}
-        subtitle={type === "income" ? "Tips, product sales and other income outside appointments" : "What you spend money on"}
-        action={
-          <Button size="sm" aria-label={type === "income" ? "Add other income" : "Add expense category"} onClick={() =>
-              setEditing({ name: "", type, colour: nextColour(cats.map((c) => c.colour)), default_pence: null, income_kind: type === "income" ? "other" : undefined })
-            }>
-            <Plus size={14} /> Add
-          </Button>
-        }
-      />
-      <div className="px-5"><LoadError error={loadError} onRetry={refresh} /></div>
-      <ul className="divide-y divide-line px-2 pb-2">
-        {cats.map((c) => (
-          <li key={c.id} className="group flex items-center justify-between gap-2 rounded-lg px-3 py-2">
-            <span className="flex min-w-0 flex-wrap items-center gap-2.5 break-words text-sm">
-              <Swatch colour={themedColour(c.colour, dark)} className="h-3 w-3" /> {c.name}
-              {type === "expense" && c.default_pence != null && (
-                <span className="tabular rounded-full bg-surface-2 px-2 py-0.5 text-[12px] text-ink-2">
-                  {money(c.default_pence)}
-                </span>
-              )}
-            </span>
-            <span className="flex shrink-0 gap-0.5">
-              <Button variant="ghost" size="icon" onClick={() => setEditing(c)} title={`Edit ${c.name}`} aria-label={`Edit ${c.name}`}>
-                <Pencil size={14} />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label={`Delete ${c.name}`}
-                title={`Delete ${c.name}`}
-                onClick={async () => { try { setToDelete({ cat: c, uses: await categoryUsage(c.id) }); } catch (cause) { toast.error(cause instanceof Error ? cause.message : "Could not check this category's entries"); } }}
-              >
-                <Trash2 size={14} />
-              </Button>
-            </span>
-          </li>
-        ))}
-      </ul>
-
-      <CategoryForm
-        category={editing}
-        onClose={() => setEditing(null)}
-        onSaved={() => {
-          refresh();
-          setEditing(null);
-        }}
-      />
-      <ConfirmModal
-        open={!!toDelete}
-        onClose={() => setToDelete(null)}
-        title={type === "income" ? "Delete other income item?" : "Delete category?"}
-        message={
-          <>
-            <b>{toDelete?.cat.name}</b> will be removed.
-            {toDelete?.uses ? ` ${toDelete.uses} recorded entries keep their amounts and saved labels.` : " It isn't used by any entries."}
-          </>
-        }
-        onConfirm={async () => {
-          if (!toDelete) return;
-          toastDeleted(await deleteCategory(toDelete.cat.id), refresh);
-          refresh();
-        }}
-      />
-    </Card>
-  );
-}
-
-function CategoryForm({
-  category,
-  onClose,
-  onSaved,
-}: {
-  category: Partial<Category> | null;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const { dark } = useTheme();
-  const [name, setName] = useState("");
-  const [colour, setColour] = useState(PALETTE[0].light);
-  const [usual, setUsual] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [last, setLast] = useState<typeof category>(null);
-  if (category !== last) {
-    setLast(category);
-    setName(category?.name ?? "");
-    setColour(category?.colour ?? PALETTE[0].light);
-    setUsual(category?.default_pence != null ? penceToInput(category.default_pence) : "");
-    setError("");
-  }
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!category || !name.trim() || busy) return;
-    const defaultPence = category.type === "expense" && usual.trim() ? parseAmount(usual) : null;
-    if (category.type === "expense" && usual.trim() && defaultPence == null) { setError("Enter a valid amount, such as 12.50, or leave it blank."); return; }
-    setBusy(true);
-    setError("");
-    try {
-      if (category.id) {
-        await updateCategory({ ...(category as Category), name: name.trim(), colour, default_pence: defaultPence });
-      } else {
-        await createCategory({ name: name.trim(), type: category.type!, colour, default_pence: defaultPence, ...(category.type === "income" ? { income_kind: "other" as const } : {}) });
-      }
-      toast.success(category.type === "income" ? category.id ? "Other income updated" : "Other income added" : category.id ? "Category updated" : "Category added");
-      onSaved();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The item could not be saved.");
-    } finally { setBusy(false); }
-  };
-
-  return (
-    <Modal open={!!category} onClose={() => { if (!busy) onClose(); }} title={category?.type === "income" ? category?.id ? "Edit other income" : "Add other income" : category?.id ? "Edit expense category" : "Add expense category"} width="max-w-sm">
-      <form onSubmit={submit} className="space-y-4">
-        <Field label="Name">
-          <Input autoFocus required maxLength={100} disabled={busy} value={name} onChange={(e) => setName(e.target.value)} placeholder={category?.type === "income" ? "e.g. Tips" : "e.g. Supplies"} />
-        </Field>
-        {category?.type === "expense" && <Field label="Usual amount (optional)">
-          <div className="relative">
-            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted">£</span>
-            <Input
-              inputMode="decimal"
-              disabled={busy}
-              placeholder="Leave blank for none"
-              className="pl-7 tabular"
-              value={usual}
-              onChange={(e) => setUsual(e.target.value)}
-            />
-          </div>
-        </Field>}
-        <Field label="Colour">
-          <div className="flex flex-wrap gap-2">
-            {PALETTE.map((p) => (
-              <button
-                key={p.light}
-                type="button"
-                disabled={busy}
-                title={p.name}
-                aria-label={p.name}
-                aria-pressed={colour === p.light}
-                onClick={() => setColour(p.light)}
-                className={cn(
-                  "flex h-8 w-8 items-center justify-center rounded-full ring-offset-2 ring-offset-surface cursor-pointer",
-                  colour === p.light && "ring-2 ring-ink",
-                )}
-                style={{ background: dark ? p.dark : p.light }}
-              >
-                {colour === p.light && <Check size={14} className="text-white" />}
-              </button>
-            ))}
-          </div>
-        </Field>
-        {error && <p className="text-sm text-bad" role="alert">{error}</p>}
-        <div className="flex justify-end gap-2">
-          <Button type="button" disabled={busy} onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" disabled={!name.trim() || busy}>
-            {busy ? "Saving..." : "Save"}
-          </Button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
-// ---------- Export ----------
-
-type Preset = "thisTax" | "lastTax" | "thisYear" | "all" | "custom";
-
-function ExportCard() {
-  const now = useBusinessNow();
-  const [preset, setPreset] = useState<Preset>("thisTax");
-  const [custom, setCustom] = useState({ from: isoDate(new Date(now.getFullYear(), 0, 1)), to: isoDate(now) });
-  const [busy, setBusy] = useState(false);
-
-  const ranges: Record<Exclude<Preset, "custom">, { from: string; to: string; label: string }> = {
-    thisTax: { ...taxYear(now), label: `This tax year (${taxYear(now).label})` },
-    lastTax: { ...taxYear(now, -1), label: `Last tax year (${taxYear(now, -1).label})` },
-    thisYear: { from: `${now.getFullYear()}-01-01`, to: `${now.getFullYear()}-12-31`, label: `Calendar year ${now.getFullYear()}` },
-    all: { from: "1900-01-01", to: "2999-12-31", label: "Everything" },
-  };
-  const range = preset === "custom" ? custom : ranges[preset];
-  const validRange = /^\d{4}-\d{2}-\d{2}$/.test(range.from) && /^\d{4}-\d{2}-\d{2}$/.test(range.to) && range.from <= range.to;
-
-  const run = async (kind: "xlsx" | "csv") => {
-    if (busy || !validRange) return;
-    setBusy(true);
-    try {
-      const saved = await exportSpreadsheet(range.from, range.to, kind);
-      if (saved) toast.success(`Exported ${kind === "xlsx" ? "Excel file" : "CSV"}`);
-    } catch (e) {
-      console.error(e);
-      toast.error("Export failed");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Card>
-      <CardHeader title="Export" subtitle="For your accountant or Self Assessment tax return" />
-      <div className="space-y-4 px-5 pb-5">
-        <Field label="Period">
-          <Select disabled={busy} value={preset} onChange={(e) => setPreset(e.target.value as Preset)}>
-            {Object.entries(ranges).map(([k, r]) => (
-              <option key={k} value={k}>
-                {r.label}
-              </option>
-            ))}
-            <option value="custom">Custom dates…</option>
-          </Select>
-        </Field>
-        {preset === "custom" && (
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="From">
-              <Input type="date" disabled={busy} value={custom.from} onChange={(e) => setCustom((c) => ({ ...c, from: e.target.value }))} />
-            </Field>
-            <Field label="To">
-              <Input type="date" disabled={busy} value={custom.to} onChange={(e) => setCustom((c) => ({ ...c, to: e.target.value }))} />
-            </Field>
-          </div>
-        )}
-        <div className="flex gap-2">
-          <Button variant="primary" disabled={busy || !validRange} onClick={() => run("xlsx")}>
-            <FileSpreadsheet size={15} /> Excel (.xlsx)
-          </Button>
-          <Button disabled={busy || !validRange} onClick={() => run("csv")}>
-            <Download size={15} /> CSV
-          </Button>
-        </div>
-        {!validRange && <p role="alert" className="text-xs text-bad">Choose both dates, with the end on or after the start.</p>}
-        <p className="text-xs text-muted">
-          The Excel file includes every transaction, a monthly summary with totals, and your client list.
-        </p>
+      <CardHeader title="Time off" subtitle="Holidays and days you can't be booked"
+        action={<Button disabled={!site.online} onClick={() => setAdding(true)}><Plus size={18} aria-hidden /> Add time off</Button>} />
+      <div className="px-5 pb-3">
+        {site.loaded ? <TimeOffList blocks={site.blocks} online={site.online} onChanged={site.refresh} /> : <Help className="py-3">Loading…</Help>}
+        {!site.online && !site.blocks.length && <OnlineNotice online={site.online} />}
       </div>
+      {adding && <TimeOffDialog online={site.online} onClose={() => setAdding(false)} onSaved={() => { setAdding(false); site.refresh(); }} />}
     </Card>
   );
 }
 
-// ---------- Backup ----------
-
-function BackupCard() {
-  const webApp = isPwa();
-  const sharing = useSharedLedger().ledger !== null;
-  const { refresh } = useData();
-  const [confirmRestore, setConfirmRestore] = useState(false);
-  const [confirmWipe, setConfirmWipe] = useState(false);
-  const [wipeText, setWipeText] = useState("");
-  const [auto, setAuto] = useState<AutoBackup | null>(() => readAutoBackup());
-  const [backingUp, setBackingUp] = useState(false);
-  const [wiping, setWiping] = useState(false);
-  const [wipeError, setWipeError] = useState("");
-
-  const backUpNow = async () => {
-    setBackingUp(true);
-    try {
-      await runAutoBackup(true);
-      setAuto(readAutoBackup());
-      toast.success("Backup saved to your folder");
-    } catch (e) {
-      console.error(e);
-      toast.error("Couldn't write to that folder — try choosing it again");
-    } finally {
-      setBackingUp(false);
-    }
-  };
-
+/** A quiet line that sends her somewhere else for a related job. */
+function Pointer({ to, children }: { to: string; children: ReactNode }) {
   return (
-    <Card>
-      <CardHeader title={sharing ? "Shared ledger backup" : "Backup & restore"} subtitle={sharing ? "Finances and private notes sync across approved devices" : webApp ? "Financial records and private notes are stored on this device" : "Financial records and private notes are stored on this computer"} />
-      <div className="space-y-4 px-5 pb-5">
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant="primary"
-            onClick={async () => {
-              try {
-                if (await saveBackup()) toast.success("Backup saved");
-              } catch (e) {
-                console.error(e);
-                toast.error("Backup failed");
-              }
-            }}
-          >
-            <Download size={15} /> Save backup
-          </Button>
-          {!sharing && <Button onClick={() => setConfirmRestore(true)}>
-            <Upload size={15} /> Restore from backup
-          </Button>}
-        </div>
-        <p className="text-xs text-muted">
-          {sharing ? "Save a copy of the shared records to keep a separate backup." : webApp
-            ? "Save a backup to Files or iCloud Drive before removing the app or clearing its website data. You can also restore a backup from the desktop app."
-            : "Tip: save backups to iCloud Drive, OneDrive or a USB stick. A backup can also be used to move the data to another approved computer. Restoring does not grant access or change website bookings."}
-        </p>
-        {!webApp && <div className="border-t border-line pt-4">
-          <div className="text-[13px] font-medium">Automatic backups</div>
-          {auto ? (
-            <>
-              <p className="mt-1 break-all text-xs text-ink-2">{auto.dir}</p>
-              <p className="mt-1 text-xs text-muted">
-                {auto.lastRun ? `Last copy saved ${ukDate(auto.lastRun)}` : "No copy saved yet"} · a copy each day you
-                open the app, keeping the last 10
-              </p>
-              <div className="mt-2 flex gap-2">
-                <Button size="sm" disabled={backingUp} onClick={backUpNow}>
-                  <Download size={14} /> Back up now
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => {
-                    writeAutoBackup(null);
-                    setAuto(null);
-                    toast.success("Automatic backups turned off");
-                  }}
-                >
-                  Turn off
-                </Button>
-              </div>
-            </>
-          ) : (
-            <>
-              <p className="mt-0.5 text-xs text-muted">
-                Save a copy on its own every day. Pick a folder that syncs — OneDrive or iCloud Drive — and the data is
-                safe even if this computer isn't.
-              </p>
-              <Button
-                size="sm"
-                className="mt-2"
-                onClick={async () => {
-                  try {
-                    const chosen = await chooseAutoBackupFolder();
-                    if (!chosen) return;
-                    setAuto(chosen);
-                    await backUpNow();
-                  } catch (e) {
-                    toast.error(e instanceof Error ? e.message : "Couldn't set that up");
-                  }
-                }}
-              >
-                <FolderCheck size={14} /> Choose a folder…
-              </Button>
-            </>
-          )}
-        </div>}
-
-        {!sharing && <div className="border-t border-line pt-4">
-          <div className="text-[13px] font-medium">Start fresh</div>
-          <p className="mt-0.5 text-xs text-muted">Delete all entries, appointments and clients. Services, other income and expense categories are kept.</p>
-          <Button variant="ghost" className="mt-2 -ml-2 text-bad" onClick={() => { setWipeText(""); setWipeError(""); setConfirmWipe(true); }}>
-            <Trash2 size={15} /> Delete all data…
-          </Button>
-        </div>}
-      </div>
-
-      <ConfirmModal
-        open={confirmRestore}
-        onClose={() => setConfirmRestore(false)}
-        title="Restore from backup?"
-        confirmLabel="Choose file"
-        message="Everything currently in the app will be replaced with the contents of the backup file."
-        onConfirm={async () => {
-          try {
-            const n = await loadBackup();
-            if (n != null) {
-              toast.success(`Restored ${n} entries`);
-              refresh();
-            }
-          } catch (e) {
-            toast.error(e instanceof Error ? e.message : "Restore failed");
-          }
-        }}
-      />
-
-      <Modal open={confirmWipe} onClose={() => { if (!wiping) setConfirmWipe(false); }} title="Delete all data?" width="max-w-sm">
-        <p className="text-sm text-ink-2">
-          This permanently deletes every entry, appointment and client. Save a backup first if you might need it. Type <b>DELETE</b> to
-          confirm.
-        </p>
-        <Input aria-label="Type DELETE to confirm" disabled={wiping} className="mt-3" value={wipeText} onChange={(e) => setWipeText(e.target.value)} placeholder="DELETE" />
-        {wipeError && <p role="alert" className="mt-3 text-sm text-bad">{wipeError}</p>}
-        <div className="mt-4 flex justify-end gap-2">
-          <Button disabled={wiping} onClick={() => setConfirmWipe(false)}>Cancel</Button>
-          <Button
-            variant="danger"
-            disabled={wiping || wipeText !== "DELETE"}
-            onClick={async () => {
-              if (wiping || wipeText !== "DELETE") return;
-              setWiping(true); setWipeError("");
-              try {
-                await wipeAll();
-                toast.success("All data deleted");
-                setWipeText("");
-                setConfirmWipe(false);
-                refresh();
-              } catch (cause) { setWipeError(cause instanceof Error ? cause.message : "Could not delete the local data. Please retry."); }
-              finally { setWiping(false); }
-            }}
-          >
-            Delete everything
-          </Button>
-        </div>
-      </Modal>
-    </Card>
-  );
-}
-
-// ---------- Tray ----------
-
-function TrayCard() {
-  const { openNewEntry } = useData();
-  const { remindersEnabled, setRemindersEnabled, reminderResult } = useInbox();
-  const [closeAction, setCloseAction] = useState<CloseAction>(() => readCloseAction());
-  const [shortcut, setShortcut] = useState(() => readShortcutEnabled());
-  const where = trayName();
-
-  const chooseClose = async (action: CloseAction) => {
-    setCloseAction(action);
-    await writeCloseAction(action);
-  };
-
-  const toggleShortcut = async (on: boolean) => {
-    setShortcut(on);
-    writeShortcutEnabled(on);
-    const ok = await applyShortcut(on, () => {
-      void showWindow();
-      openNewEntry();
-    });
-    if (ok) return;
-    // Another app owns those keys — nothing was registered, so don't pretend it was.
-    setShortcut(false);
-    writeShortcutEnabled(false);
-    toast.error(`Something else on this computer uses ${QUICK_KEYS_LABEL}`);
-  };
-
-  return (
-    <Card className="self-start">
-      <CardHeader title="Tray & shortcuts" subtitle={`Tanned by Ffy sits in the ${where} while it's running`} />
-      <div className="space-y-5 px-5 pb-5">
-        <div>
-          <div className="text-[13px] font-medium">Closing the window</div>
-          <p className="mt-0.5 mb-2 text-xs text-muted">
-            Left in the {where}, it's one click to record a service payment, and the daily backup still runs.
-          </p>
-          <Segmented<CloseAction>
-            className="w-full flex-col rounded-xl sm:flex-row sm:rounded-full"
-            value={closeAction}
-            onChange={chooseClose}
-            options={[
-              { value: "tray", label: "Keep running" },
-              { value: "quit", label: "Close the app" },
-              { value: "ask", label: "Ask me" },
-            ]}
-          />
-        </div>
-
-        <div>
-          <div className="text-[13px] font-medium">New entry shortcut</div>
-          <p className="mt-0.5 mb-2 text-xs text-muted">
-            {QUICK_KEYS_LABEL} opens New entry from any app on this computer.
-          </p>
-          <Segmented
-            className="w-full"
-            value={shortcut ? "on" : "off"}
-            onChange={(v) => toggleShortcut(v === "on")}
-            options={[
-              { value: "on", label: "On" },
-              { value: "off", label: "Off" },
-            ]}
-          />
-        </div>
-
-        <div>
-          <label className="flex cursor-pointer items-start gap-3 text-[13px] font-medium">
-            <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0 accent-accent" checked={remindersEnabled} onChange={event => setRemindersEnabled(event.target.checked)} />
-            Desktop payment reminders
-          </label>
-          <p className="mt-0.5 pl-7 text-xs text-muted">A notification when a finished appointment needs its payment confirmed.</p>
-          {remindersEnabled && reminderResult === "blocked" && <p role="status" className="mt-2 text-xs text-muted">Notifications are blocked. Allow Tanned by Ffy notifications in Windows or macOS notification settings.</p>}
-          {remindersEnabled && reminderResult === "error" && <p role="status" className="mt-2 text-xs text-bad">Could not send the desktop reminder. Payments to confirm are still listed in To do.</p>}
-        </div>
-
-        <p className="text-xs text-muted">
-          The {where} menu shows today's takings, one-click payments for active services, and appointments waiting for payment.
-          {!isTauri() && " (Only in the desktop app.)"}
-        </p>
-      </div>
-    </Card>
-  );
-}
-
-// ---------- Appearance ----------
-
-function AppearanceCard() {
-  const { pref, setPref } = useTheme();
-  return (
-    <Card className="self-start">
-      <CardHeader title="Appearance" />
-      <div className="px-5 pb-5">
-        <Segmented<ThemePref>
-          value={pref}
-          onChange={setPref}
-          options={[
-            { value: "light", label: <span className="inline-flex items-center gap-1.5"><Sun size={14} /> Light</span> },
-            { value: "dark", label: <span className="inline-flex items-center gap-1.5"><Moon size={14} /> Dark</span> },
-            { value: "system", label: <span className="inline-flex items-center gap-1.5"><Monitor size={14} /> System</span> },
-          ]}
-        />
-      </div>
-    </Card>
-  );
-}
-
-// ---------- About ----------
-
-function AboutCard() {
-  const webApp = isPwa();
-  // The bundled version is right for the browser preview; the installed app
-  // knows better, so it overrides it once it answers.
-  const [version, setVersion] = useState(__APP_VERSION__);
-  const [checking, setChecking] = useState(false);
-
-  useEffect(() => {
-    if (!isTauri()) return;
-    import("@tauri-apps/api/app")
-      .then((m) => m.getVersion())
-      .then(setVersion)
-      .catch(() => {});
-  }, []);
-
-  return (
-    <Card>
-      <CardHeader title="About" subtitle="Tanned by Ffy" />
-      <div className="space-y-4 px-5 pb-5">
-        <div className="rounded-2xl bg-surface-2 p-3.5">
-          <div className="eyebrow text-[10px] text-ink-2">{webApp ? "Web app version" : "Installed version"}</div>
-          <div className="tabular mt-1.5 font-display text-[22px] leading-none">{version}</div>
-        </div>
-        {!webApp && <><Button
-          disabled={checking}
-          onClick={async () => {
-            setChecking(true);
-            try {
-              await checkForUpdate(false);
-            } catch (e) {
-              console.error(e);
-              toast.error("Couldn't reach GitHub — check the internet connection");
-            } finally {
-              setChecking(false);
-            }
-          }}
-        >
-          <Download size={15} /> Check for updates
-        </Button>
-        <p className="text-xs text-muted">
-          New versions install themselves when you say so, and the app restarts. Your data isn't touched.
-        </p></>}
-      </div>
-    </Card>
+    <Link to={to} className="flex min-h-11 items-center gap-3 rounded-2xl border border-line px-5 py-3 text-small text-ink-2 hover:bg-surface-2/60">
+      <span className="min-w-0 flex-1">{children}</span>
+      <ChevronRight size={18} className="shrink-0" aria-hidden />
+    </Link>
   );
 }

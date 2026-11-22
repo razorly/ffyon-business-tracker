@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { LoaderCircle, MapPin, Navigation, X } from "lucide-react";
-import { Button } from "./ui";
+import { Button, ErrorText } from "./ui";
 import { isPwa } from "@/lib/access";
 
 type PostcodeLocation = { postcode: string; latitude: number; longitude: number };
@@ -56,25 +56,25 @@ export function RemoteAppointmentMap({ address, postcode }: { address: string; p
     marker: `${location.latitude},${location.longitude}`,
   })}` : "";
 
-  return <div className="w-full min-w-0 space-y-2 border-t border-line pt-3">
-    <p className="whitespace-pre-line break-words text-[13px] text-ink-2">{address}<span className="mt-1 block font-medium">{postcode}</span></p>
+  return <div className="flex w-full min-w-0 flex-col gap-2">
+    <p className="whitespace-pre-line break-words text-body text-ink">{address}<span className="block font-medium">{postcode}</span></p>
     <div className="flex flex-wrap gap-2">
-      <Button type="button" size="sm" disabled={busy || !postcode.trim()} onClick={location ? () => setLocation(null) : () => void show()}>
-        {busy ? <LoaderCircle size={14} className="animate-spin" /> : location ? <X size={14} /> : <MapPin size={14} />}
+      <Button type="button" disabled={busy || !postcode.trim()} onClick={location ? () => setLocation(null) : () => void show()}>
+        {busy ? <LoaderCircle size={16} className="animate-spin" aria-hidden /> : location ? <X size={16} aria-hidden /> : <MapPin size={16} aria-hidden />}
         {busy ? "Finding postcode..." : location ? "Hide map" : "Show map"}
       </Button>
-      <Button type="button" size="sm" disabled={!postcode.trim() || !address.trim()} onClick={() => {
+      <Button type="button" disabled={!postcode.trim() || !address.trim()} onClick={() => {
         if (isPwa()) window.open(directionsUrl, "_blank", "noopener,noreferrer");
         else void directions();
-      }}><Navigation size={14} /> Directions</Button>
+      }}><Navigation size={16} aria-hidden /> Directions</Button>
     </div>
-    <p className="text-[11px] leading-relaxed text-muted">Map: postcode area only, via Postcodes.io and OpenStreetMap. Directions sends the address to Google Maps.</p>
-    {error && <p role="alert" className="break-words text-xs text-bad">{error}</p>}
-    {location && <div className="w-full min-w-0 space-y-1">
+    <p className="text-label text-ink-2">Map: postcode area only, via Postcodes.io and OpenStreetMap. Directions sends the address to Google Maps.</p>
+    {error && <ErrorText>{error}</ErrorText>}
+    {location && <div className="flex w-full min-w-0 flex-col gap-1">
       {/* Keep the external frame on its own origin so tile requests identify OSM.
           The cross-origin frame still cannot read the app or navigate its window. */}
-      <iframe title={`Postcode area map for ${location.postcode}`} src={source} className="block h-60 w-full rounded-lg border border-line" referrerPolicy="strict-origin-when-cross-origin" sandbox="allow-scripts allow-same-origin" loading="lazy" />
-      <p className="text-xs text-muted">Approximate postcode location. Check the address before travelling.</p>
+      <iframe title={`Postcode area map for ${location.postcode}`} src={source} className="block h-60 w-full rounded-xl border border-line" referrerPolicy="strict-origin-when-cross-origin" sandbox="allow-scripts allow-same-origin" loading="lazy" />
+      <p className="text-small text-ink-2">Approximate postcode location. Check the address before travelling.</p>
     </div>}
   </div>;
 }

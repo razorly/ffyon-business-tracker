@@ -56,6 +56,7 @@ if (url) {
         assert.equal(geometry.barBottom, geometry.sidebarTop);
         assert.equal(geometry.barBottom, geometry.mainTop);
         assert.equal(geometry.sidebarWidth, geometry.splitWidth);
+        assert.equal(geometry.sidebarWidth, width >= 640 ? 232 : 64, "The title bar split follows the redesigned sidebar: 232px with labels, 64px as an icon rail");
         assert.equal(geometry.mainBottom, geometry.height);
         for (const theme of ["light", "dark"]) {
           await page.evaluate(theme => { localStorage.setItem("ffyon-theme", theme); }, theme);
@@ -76,8 +77,8 @@ if (url) {
         const commands = await page.evaluate(() => window.__windowCommands);
         for (const action of ["minimize", "toggle_maximize", "start_dragging", "close"]) assert.ok(commands.includes(`plugin:window|${action}`), action);
         // Modal portals must leave the OS-equivalent window controls accessible.
-        await page.getByRole("button", { name: "New entry", exact: true }).click();
-        await page.getByRole("dialog").waitFor();
+        await page.getByRole("button", { name: "New", exact: true }).click();
+        await page.getByRole("dialog", { name: "New", exact: true }).waitFor();
         assert.ok(await page.getByRole("button", { name: "Close window", exact: true }).isVisible());
         await page.getByRole("button", { name: "Minimize window", exact: true }).click();
         await page.keyboard.press("Escape");

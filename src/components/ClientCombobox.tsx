@@ -45,7 +45,7 @@ export function ClientCombobox({
   };
 
   return (
-    <div className="relative">
+    <div className="relative min-w-0">
       <Input
         ref={inputRef}
         value={value.name}
@@ -58,7 +58,10 @@ export function ClientCombobox({
         aria-activedescendant={open && options.length > 0 ? `${listId}-${Math.min(active, options.length - 1)}` : undefined}
         autoComplete="off"
         maxLength={200}
-        onFocus={() => { setActive(0); setOpen(true); }}
+        // An empty box opens its list on a tap, a click or the down arrow, not on focus alone,
+        // so a form that starts in this box doesn't open with a list over the fields below.
+        onFocus={() => { setActive(0); if (query) setOpen(true); }}
+        onClick={() => setOpen(true)}
         onBlur={() => setTimeout(() => setOpen(false), 120)}
         onChange={(e) => {
           const name = e.target.value;
@@ -86,7 +89,7 @@ export function ClientCombobox({
         }}
       />
       {open && options.length > 0 && (
-        <ul id={listId} role="listbox" aria-label="Matching clients" className="absolute z-10 mt-1 max-h-56 w-full overflow-auto rounded-lg border border-line bg-surface p-1 shadow-lg">
+        <ul id={listId} role="listbox" aria-label="Matching clients" className="absolute z-10 mt-1 max-h-72 w-full overflow-auto rounded-xl border border-line bg-surface p-1 shadow-lg">
           {options.map((o, i) => (
             <li key={o.id ?? "new"} role="none">
               <button
@@ -99,17 +102,17 @@ export function ClientCombobox({
                 onClick={() => choose(o)}
                 onMouseEnter={() => setActive(i)}
                 className={cn(
-                  "flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm cursor-pointer",
-                  i === active && "bg-surface-2",
+                  "flex min-h-11 w-full min-w-0 cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-left text-body text-ink",
+                  i === Math.min(active, options.length - 1) && "bg-surface-2",
                 )}
               >
                 {o.id == null ? (
                   <>
-                    <Plus size={14} className="text-accent" /> Add “{o.name}” as a new client
+                    <Plus size={16} className="shrink-0 text-ink-2" aria-hidden /> <span className="min-w-0 break-words">Add “{o.name}” as a new client</span>
                   </>
                 ) : (
                   <>
-                    <User size={14} className="text-muted" /> {o.name}
+                    <User size={16} className="shrink-0 text-ink-2" aria-hidden /> <span className="min-w-0 break-words">{o.name}</span>
                   </>
                 )}
               </button>
