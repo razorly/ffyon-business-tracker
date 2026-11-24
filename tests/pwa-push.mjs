@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createECDH, createHmac, randomBytes } from "node:crypto";
+import { once } from "node:events";
 import { mkdtemp, readFile, rm, rmdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +9,7 @@ import { runInNewContext } from "node:vm";
 import { generateRequestDetails } from "web-push";
 import { createAlertReader } from "../pwa/push-alerts.mjs";
 import { createPushService, parseAppleSubscription, vapidKeys } from "../pwa/push.mjs";
+import { createPwaServer } from "../pwa/server.mjs";
 import { ledgerFixture } from "./support/ledger-fixture.mjs";
 
 const origin = "https://ffyon.home";
@@ -111,6 +113,92 @@ test("quietly baselines, sends only new counts, survives a restart and removes r
     assert.equal((await service.status(second.id)).enabled, false);
   } finally {
     await rm(join(directory, "push.v1"), { force: true });
+    await rmdir(directory);
+  }
+});
+
+test("background push scans at five-minute intervals and skips remote work with no subscribers", async t => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const directory = await mkdtemp(join(tmpdir(), "ffyon-push-cadence-"));
+  let checks = 0;
+  let scans = 0;
+  const service = createPushService({ directory, key: randomBytes(32), vapid, origin,
+    verify: async () => { checks++; return true; },
+    readAlerts: async () => { scans++; return { requests: [], payments: [], mail: [] }; },
+    send: async () => assert.fail("No new alerts to send"),
+  });
+  try {
+    service.start();
+    await service.poll();
+    assert.equal(checks, 0);
+    await service.subscribe(credential, appleSubscription());
+    service.wake();
+    await service.poll();
+    assert.deepEqual([checks, scans], [1, 1]);
+    t.mock.timers.tick(299_999);
+    assert.deepEqual([checks, scans], [1, 1]);
+    t.mock.timers.tick(1);
+    await service.poll();
+    assert.deepEqual([checks, scans], [2, 2]);
+  } finally {
+    service.stop();
+    await rm(join(directory, "push.v1"), { force: true });
+    await rmdir(directory);
+  }
+});
+
+test("only unchanged ledger checks reuse longer authorization, while data and saves recheck approval", async t => {
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+  const directory = await mkdtemp(join(tmpdir(), "ffyon-ledger-auth-"));
+  const id = "7ca0624c-eb50-4c29-8881-f48cfa824d99";
+  let checks = 0;
+  let revoked = false;
+  const server = createPwaServer({ origin, directory, ledgerDirectory: directory, secret: randomBytes(32).toString("hex"),
+    async fetchUpstream(url) {
+      assert.equal(new URL(url).pathname, "/api/admin/v1/session");
+      checks++;
+      return revoked ? Response.json({ error: "Device revoked." }, { status: 401 }) : Response.json({ device: { id } });
+    },
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const headers = { Authorization: `Bearer ${"a".repeat(64)}`, "X-Ffyon-Device": id };
+  const url = `http://127.0.0.1:${server.address().port}/api/ledger`;
+  const get = revision => fetch(`${url}?revision=${revision}`, { headers });
+  const db = ledgerFixture();
+  const content = Buffer.from(db.export()).toString("base64");
+  db.close();
+  const put = (ledger_id, revision, operation_id) => fetch(url, {
+    method: "PUT", headers: { ...headers, "Content-Type": "application/json" },
+    body: JSON.stringify({ ledger_id, revision, operation_id, content }),
+  });
+  try {
+    const seed = await put(null, 0, "d4cdafd2-a0ed-4f64-9c0b-4ef62fa5c879");
+    assert.equal(seed.status, 200);
+    const { ledger_id } = await seed.json();
+    t.mock.timers.tick(59_999);
+    for (let index = 0; index < 4; index++) {
+      assert.deepEqual(await (await get(1)).json(), { ledger_id, revision: 1, content: null });
+    }
+    assert.equal(checks, 1);
+    t.mock.timers.tick(1);
+    assert.equal((await get(1)).status, 200);
+    assert.equal(checks, 2);
+    t.mock.timers.tick(6000);
+    assert.equal((await (await get(0)).json()).content, content);
+    assert.equal(checks, 3);
+    assert.equal((await put(ledger_id, 1, "347ec314-a8b7-44f7-a0fb-2fc4c578a0b4")).status, 200);
+    assert.equal(checks, 4);
+    t.mock.timers.tick(6000);
+    revoked = true;
+    assert.equal((await get(1)).status, 401, "Returning a changed ledger requires current approval");
+    assert.equal((await get(2)).status, 401, "A revocation clears the unchanged revision cache");
+    assert.equal((await put(ledger_id, 2, "bd8cc228-6627-4105-ba02-8669f573dd52")).status, 401);
+    assert.equal(checks, 7);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    await rm(join(directory, "ledger.v1"), { force: true });
+    await rm(join(directory, "ledger-replica.v1"), { force: true });
     await rmdir(directory);
   }
 });

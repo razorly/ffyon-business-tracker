@@ -16,30 +16,33 @@ export function AccessGate({ children }: { children: ReactNode }) {
   useEffect(() => {
     let alive = true;
     let checking = false;
+    let lastCheck = -Infinity;
     let unsubscribe: (() => void) | undefined;
     const apply = (next: AccessStatus) => { if (alive) setStatus(next); };
     onAccessChanged(apply).then((off) => { if (alive) unsubscribe = off; else off(); }).catch(() => {});
-    const verify = async () => {
-      if (checking) return;
+    const verify = async (force = false) => {
+      if (!alive || checking || (!force && Date.now() - lastCheck < 1000)) return;
       checking = true;
+      lastCheck = Date.now();
       try { apply(await checkAccess()); }
       catch (e) { apply({ ...locked, state: "locked", error: e instanceof Error ? e.message : "Could not verify this computer" }); }
       finally { checking = false; }
     };
     getAccessStatus().then((next) => { apply(next); return verify(); }).catch(() => verify());
     const foreground = () => { if (document.visibilityState === "visible") void verify(); };
-    const timer = setInterval(foreground, 15_000);
+    const reconnect = () => { if (document.visibilityState === "visible") void verify(true); };
+    const timer = setInterval(foreground, 2 * 60_000);
     window.addEventListener("focus", foreground);
-    window.addEventListener("online", foreground);
-    if (isPwa()) window.addEventListener("offline", foreground);
+    window.addEventListener("online", reconnect);
+    if (isPwa()) window.addEventListener("offline", reconnect);
     document.addEventListener("visibilitychange", foreground);
     return () => {
       alive = false;
       unsubscribe?.();
       clearInterval(timer);
       window.removeEventListener("focus", foreground);
-      window.removeEventListener("online", foreground);
-      window.removeEventListener("offline", foreground);
+      window.removeEventListener("online", reconnect);
+      window.removeEventListener("offline", reconnect);
       document.removeEventListener("visibilitychange", foreground);
     };
   }, []);

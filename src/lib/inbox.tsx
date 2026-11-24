@@ -67,26 +67,31 @@ export function InboxProvider({ children }: { children: ReactNode }) {
       }
     })();
     return () => { active = false; };
-  }, [access.state, mailRevision, clock]);
+  }, [access.state, mailRevision]);
 
   useEffect(() => {
-    let lastTick = -Infinity;
-    const tick = () => {
+    let lastMailCheck = -Infinity;
+    const updateClock = () => {
+      if (document.visibilityState === "visible") setClock(value => value + 1);
+    };
+    const checkMail = () => {
       if (document.visibilityState !== "visible") return;
       const now = Date.now();
       // Restoring a window commonly emits both focus and visibilitychange.
-      if (now - lastTick < 1000) return;
-      lastTick = now;
-      setClock(value => value + 1);
+      if (now - lastMailCheck < 1000) return;
+      lastMailCheck = now;
       refreshMail();
     };
-    const timer = setInterval(tick, 60_000);
-    window.addEventListener("focus", tick);
-    document.addEventListener("visibilitychange", tick);
+    const foreground = () => { updateClock(); checkMail(); };
+    const clockTimer = setInterval(updateClock, 60_000);
+    const mailTimer = setInterval(checkMail, 2 * 60_000);
+    window.addEventListener("focus", foreground);
+    document.addEventListener("visibilitychange", foreground);
     return () => {
-      clearInterval(timer);
-      window.removeEventListener("focus", tick);
-      document.removeEventListener("visibilitychange", tick);
+      clearInterval(clockTimer);
+      clearInterval(mailTimer);
+      window.removeEventListener("focus", foreground);
+      document.removeEventListener("visibilitychange", foreground);
     };
   }, [refreshMail]);
 

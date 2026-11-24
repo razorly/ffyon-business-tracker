@@ -2,7 +2,7 @@ import { createECDH, ECDH } from "node:crypto";
 import { encryptedJson } from "./encrypted-json.mjs";
 
 const maxSubscribers = 32;
-const interval = 45_000;
+const interval = 5 * 60_000;
 const emptySeen = () => ({ requests: null, payments: null, mail: null });
 const b64url = /^[A-Za-z0-9_-]+$/;
 
@@ -71,6 +71,7 @@ export function createPushService({ directory, key, vapid, origin, verify, readA
   let stored;
   let queue = Promise.resolve();
   let running;
+  let queuedWake;
   let timer;
 
   function subscriptions() {
@@ -170,7 +171,16 @@ export function createPushService({ directory, key, vapid, origin, verify, readA
     return running ??= scan().finally(() => { running = undefined; });
   }
   function wake() {
-    if (timer) void poll().catch(() => report("Could not check push alerts."));
+    if (!timer) return;
+    if (running) {
+      // A phone enabled during a scan may be missing from that scan's subscription list.
+      queuedWake ??= running.catch(() => {}).then(() => {
+        queuedWake = undefined;
+        wake();
+      });
+      return;
+    }
+    void poll().catch(() => report("Could not check push alerts."));
   }
   return {
     status, subscribe, remove, poll, wake,

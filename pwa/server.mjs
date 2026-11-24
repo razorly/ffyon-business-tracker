@@ -14,6 +14,8 @@ const site = "https://ffyon-customer.razorly.chatgpt.site";
 const installCookie = "__Host-ffyon-install";
 const adminCookie = "__Host-ffyon-admin";
 const cookieLife = 365 * 24 * 60 * 60;
+const deviceVerificationMs = 5_000;
+const unchangedLedgerVerificationMs = 60_000;
 const token = /^[0-9a-f]{64}$/;
 const uuid = "[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}";
 const uuidPattern = new RegExp(`^${uuid}$`);
@@ -76,6 +78,7 @@ export function createPwaServer({ origin, secret, directory, ledgerDirectory, pu
   const sealKey = derive("credential-v1");
   const ledger = ledgerDirectory && createLedger(ledgerDirectory, derive("shared-ledger-v1"));
   const verified = new Map();
+  const verificationKey = credential => derive("ledger-auth-v1", `${credential.id}:${credential.token}`).toString("hex");
   const push = ledgerDirectory && pushSender && createPushService({
     directory: ledgerDirectory, key: derive("push-subscriptions-v1"), vapid: vapidKeys(derive, site), origin,
     send: pushSender,
@@ -131,6 +134,7 @@ export function createPwaServer({ origin, secret, directory, ledgerDirectory, pu
       await result.body?.cancel();
       throw new HttpError(502, "The Tanned by Ffy site returned an unexpected response.");
     }
+    if (result.status === 401 || result.status === 403) verified.delete(verificationKey(credential));
     return result;
   }
 
@@ -147,9 +151,9 @@ export function createPwaServer({ origin, secret, directory, ledgerDirectory, pu
   }
 
   async function verifyDevice(credential, allowCached = true) {
-    const key = derive("ledger-auth-v1", `${credential.id}:${credential.token}`).toString("hex");
+    const key = verificationKey(credential);
     const now = Date.now();
-    if (allowCached && (verified.get(key) ?? 0) > now) return null;
+    if (allowCached && now - (verified.get(key) ?? -Infinity) < deviceVerificationMs) return null;
     const result = await upstream(credential, "session", "GET");
     if (!result.ok) {
       verified.delete(key);
@@ -158,22 +162,31 @@ export function createPwaServer({ origin, secret, directory, ledgerDirectory, pu
     const { device } = await result.json();
     if (device?.id !== credential.id) throw new HttpError(502, "The site returned invalid authorization.");
     if (verified.size >= 128) verified.delete(verified.keys().next().value);
-    verified.set(key, now + 5_000);
+    verified.set(key, now);
     return null;
   }
 
   async function ledgerApi(request, response, url, credential) {
     if (!ledger) throw new HttpError(503, "Shared ledger storage is unavailable.");
     if (request.method !== "GET" && request.method !== "PUT") throw new HttpError(405, "Method not allowed.");
-    const rejected = await verifyDevice(credential);
-    if (rejected) return forward(rejected, response);
     if (request.method === "GET") {
       const known = url.searchParams.get("revision");
       if ([...url.searchParams.keys()].some(name => name !== "revision") ||
           url.searchParams.getAll("revision").length > 1 || (known !== null && !/^\d{1,16}$/.test(known))) throw new HttpError(400, "Invalid ledger revision.");
+      const key = verificationKey(credential);
+      if (known !== null && Date.now() - (verified.get(key) ?? -Infinity) < unchangedLedgerVerificationMs) {
+        const current = await ledger.get(known);
+        // Reuse the longer window only to confirm a revision the device already has.
+        if (known === String(current.revision) &&
+            Date.now() - (verified.get(key) ?? -Infinity) < unchangedLedgerVerificationMs) return json(response, 200, current);
+      }
+      const rejected = await verifyDevice(credential);
+      if (rejected) return forward(rejected, response);
       return json(response, 200, await ledger.get(known));
     }
     if (url.search) throw new HttpError(400, "Invalid ledger request.");
+    const rejected = await verifyDevice(credential, false);
+    if (rejected) return forward(rejected, response);
     let input;
     try { input = JSON.parse(await body(request, ledgerLimit)); }
     catch (error) { if (error instanceof HttpError) throw error; throw new HttpError(400, "Invalid ledger request."); }
@@ -256,6 +269,7 @@ export function createPwaServer({ origin, secret, directory, ledgerDirectory, pu
     }
     const data = method === "GET" ? undefined : await body(request, 1024 * 1024);
     const result = await upstream(credential, operation, method, data, params.size ? `?${params}` : "");
+    if (operation === "devices" && method === "PATCH" && result.ok) verified.clear();
     return forward(result, response);
   }
 
